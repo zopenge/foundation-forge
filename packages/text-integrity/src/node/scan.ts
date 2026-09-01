@@ -1,14 +1,20 @@
 import { readFile } from 'node:fs/promises';
 import { relative, resolve } from 'node:path';
 
+import {
+  filterIgnoredRepositoryPaths,
+  listChangedRepositoryFiles,
+} from '@openge/forge-repository-files';
+
 import { inspectTextIntegrity } from '../inspection.js';
 import type { TextIntegrityIssue, TextIntegrityIssueCode } from '../contracts.js';
 import { createScanConfiguration } from './configuration.js';
 import type { TextIntegrityScanOptions } from './contracts.js';
-import { collectChangedTextFiles, filterGitRelevantFiles } from './git.js';
 import {
   collectTextFiles,
   compareNormalizedPaths,
+  isIgnoredPath,
+  isTextFile,
   normalizeRepoPath,
 } from './paths.js';
 
@@ -28,7 +34,10 @@ export const scanTextIntegrityPaths = async (
   const configuration = createScanConfiguration(options);
   const collectedFiles = await collectTextFiles(paths, cwd, configuration);
   const files = configuration.respectGitIgnore
-    ? await filterGitRelevantFiles(collectedFiles)
+    ? (await filterIgnoredRepositoryPaths(
+      collectedFiles.map((file) => normalizeRepoPath(relative(cwd, file))),
+      { cwd },
+    )).map((file) => resolve(cwd, file))
     : collectedFiles;
 
   return scanFiles(files, cwd, options, configuration.concurrency);
@@ -39,7 +48,10 @@ export const scanChangedTextIntegrityFiles = async (
 ): Promise<readonly TextIntegrityIssue[]> => {
   const cwd = resolve(options.cwd ?? process.cwd());
   const configuration = createScanConfiguration(options);
-  const files = await collectChangedTextFiles(cwd, configuration);
+  const files = (await listChangedRepositoryFiles({ cwd }))
+    .map((filePath) => resolve(cwd, filePath))
+    .filter((filePath) => !isIgnoredPath(filePath, cwd, configuration))
+    .filter((filePath) => isTextFile(filePath, configuration));
 
   return scanFiles(files, cwd, options, configuration.concurrency);
 };

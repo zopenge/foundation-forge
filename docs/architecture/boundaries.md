@@ -45,6 +45,22 @@
 
 ## Text Integrity 边界
 
-`@openge/forge-text-integrity` 的根入口只提供领域中立的纯文本完整性检测，不依赖 Node.js 内置模块或文件系统。`/node` 入口负责路径扫描、Git ignore 与 changed-file 收集，CLI 只将结构化问题格式化为命令行诊断。
+`@openge/forge-text-integrity` 的根入口只提供领域中立的纯文本完整性检测，不依赖 Node.js 内置模块或文件系统。`/node` 入口负责文本路径扫描，并组合 `@openge/forge-repository-files` 完成 Git ignore 与 changed-file 收集；CLI 只将结构化问题格式化为命令行诊断。
 
 公共 contract 不持有 AI Forge 或 Runtime Forge 的仓库目录、默认扫描根和产品特有忽略项。消费者可通过明确选项提供这些配置；检测规则、文本文件类型并集和稳定排序则由 Foundation Forge 维护为唯一实现。
+
+## Repository Files 边界
+
+`@openge/forge-repository-files` 只执行只读 Git 文件发现、changed-file 收集、ignore 过滤、路径规范化和稳定排序。它不提供 commit、branch、push 等写操作，不持有 AI Context 语义，并且 Git 不可用时显式失败而不递归扫描文件系统。
+
+## Deterministic JSON 边界
+
+`@openge/forge-deterministic-json` 只接受严格 JSON 数据，递归复制并按 UTF-16 code-unit 顺序排列对象键。它拒绝循环引用、稀疏数组、访问器、自定义原型和非 JSON 值，不负责摘要、持久化、schema 校验或 RFC canonical JSON。
+
+## Artifact Integrity 边界
+
+`@openge/forge-artifact-integrity` 的根入口只使用 Web Crypto 计算和验证字节长度与 SHA-256；`/node` 入口增加可取消的普通文件流式校验。下载、凭据、缓存、制品来源和业务身份规则仍由消费者持有。
+
+## Archive Safety 边界
+
+`@openge/forge-archive-safety` 只验证归档条目路径、条目类型、展开大小和条目数量。归档格式解析、下载、临时目录、系统命令与实际解压属于 Provider 或消费者，不进入该公共包。

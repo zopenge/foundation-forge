@@ -39,6 +39,26 @@ const packageDefinitions = [
     entries: ['.', './node'],
     name: '@openge/forge-text-integrity',
   },
+  {
+    directory: 'packages/repository-files',
+    entries: ['.'],
+    name: '@openge/forge-repository-files',
+  },
+  {
+    directory: 'packages/deterministic-json',
+    entries: ['.'],
+    name: '@openge/forge-deterministic-json',
+  },
+  {
+    directory: 'packages/artifact-integrity',
+    entries: ['.', './node'],
+    name: '@openge/forge-artifact-integrity',
+  },
+  {
+    directory: 'packages/archive-safety',
+    entries: ['.'],
+    name: '@openge/forge-archive-safety',
+  },
 ];
 
 const run = (command, args, options = {}) => {
@@ -170,6 +190,22 @@ const verifyBrowserBoundary = async () => {
     'packages/text-integrity/src/contracts.ts',
     'packages/text-integrity/src/index.ts',
     'packages/text-integrity/src/inspection.ts',
+    'packages/deterministic-json/src/contracts.ts',
+    'packages/deterministic-json/src/errors.ts',
+    'packages/deterministic-json/src/index.ts',
+    'packages/deterministic-json/src/sorting.ts',
+    'packages/deterministic-json/src/stringify.ts',
+    'packages/deterministic-json/src/validation.ts',
+    'packages/artifact-integrity/src/bytes.ts',
+    'packages/artifact-integrity/src/contracts.ts',
+    'packages/artifact-integrity/src/digest.ts',
+    'packages/artifact-integrity/src/errors.ts',
+    'packages/artifact-integrity/src/index.ts',
+    'packages/archive-safety/src/contracts.ts',
+    'packages/archive-safety/src/entry-path.ts',
+    'packages/archive-safety/src/errors.ts',
+    'packages/archive-safety/src/index.ts',
+    'packages/archive-safety/src/limits.ts',
   ];
   const forbidden = [/from ['"]node:/u, /from ['"]ws['"]/u, /\.\/server\.js/u];
   for (const relativePath of browserFiles) {
@@ -219,6 +255,10 @@ const createConsumer = async (tarballs) => {
   if (typeof coreTarballReference !== 'string') {
     throw new Error('missing Core tarball dependency');
   }
+  const repositoryFilesTarballReference = dependencies['@openge/forge-repository-files'];
+  if (typeof repositoryFilesTarballReference !== 'string') {
+    throw new Error('missing Repository Files tarball dependency');
+  }
   await mkdir(consumerRoot, { recursive: true });
   await writeFile(resolve(consumerRoot, 'package.json'), `${JSON.stringify({
     dependencies,
@@ -226,6 +266,7 @@ const createConsumer = async (tarballs) => {
     pnpm: {
       overrides: {
         '@openge/forge-peer-network': coreTarballReference,
+        '@openge/forge-repository-files': repositoryFilesTarballReference,
       },
     },
     private: true,
@@ -248,6 +289,7 @@ const createConsumer = async (tarballs) => {
     'package-import-method=copy',
     '',
   ].join('\n'), 'utf8');
+  await writeFile(resolve(consumerRoot, '.gitignore'), 'node_modules/\n', 'utf8');
   await writeFile(resolve(consumerRoot, 'verify.mjs'), [
     "await import('@openge/forge-peer-network');",
     "await import('@openge/forge-peer-network-libp2p/node');",
@@ -259,17 +301,27 @@ const createConsumer = async (tarballs) => {
     "const { inspectTextIntegrity } = await import('@openge/forge-text-integrity');",
     "await import('@openge/forge-text-integrity/node');",
     "if (inspectTextIntegrity('broken ???').length !== 1) throw new Error('text inspection failed');",
+    "const { listRepositoryFiles } = await import('@openge/forge-repository-files');",
+    "const { stringifyDeterministicJson } = await import('@openge/forge-deterministic-json');",
+    "const { calculateBytesIntegrity } = await import('@openge/forge-artifact-integrity');",
+    "await import('@openge/forge-artifact-integrity/node');",
+    "const { inspectArchiveEntries } = await import('@openge/forge-archive-safety');",
+    "if (stringifyDeterministicJson({ b: 2, a: 1 }) !== '{\"a\":1,\"b\":2}') throw new Error('deterministic JSON failed');",
+    "if ((await calculateBytesIntegrity(new TextEncoder().encode('abc'))).byteLength !== 3) throw new Error('artifact integrity failed');",
+    "if (inspectArchiveEntries([{ path: 'a.bin', kind: 'file', uncompressedBytes: 3 }]).expandedBytes !== 3) throw new Error('archive safety failed');",
+    "if (!(await listRepositoryFiles({ cwd: process.cwd() })).includes('fixture.ts')) throw new Error('repository discovery failed');",
     "console.log('Clean tarball consumer imported every public entry.');",
     '',
   ].join('\n'), 'utf8');
 
+  run('git', ['init', '--quiet'], { cwd: consumerRoot });
+  const fixturePath = resolve(consumerRoot, 'fixture.ts');
+  await writeFile(fixturePath, 'broken ???\n', 'utf8');
+  run('git', ['add', '.gitignore', 'fixture.ts'], { cwd: consumerRoot });
   runPnpm(['install', '--prefer-offline', '--frozen-lockfile=false'], {
     cwd: consumerRoot,
   });
   const importOutput = run(process.execPath, ['verify.mjs'], { cwd: consumerRoot });
-  run('git', ['init', '--quiet'], { cwd: consumerRoot });
-  const fixturePath = resolve(consumerRoot, 'fixture.ts');
-  await writeFile(fixturePath, 'broken ???\n', 'utf8');
   const cliPath = resolve(
     consumerRoot,
     'node_modules',

@@ -1,7 +1,7 @@
 {
-  "name": "@openge/forge-text-integrity",
-  "version": "0.1.0",
-  "description": "Runtime-neutral text integrity inspection and Node.js repository scanning",
+  "name": "@openge/forge-deterministic-json",
+  "version": "0.1.0-rc.0",
+  "description": "Strict deterministic JSON validation, sorting, and serialization",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -9,14 +9,7 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./node": {
-      "types": "./dist/node.d.ts",
-      "import": "./dist/node.js"
     }
-  },
-  "bin": {
-    "forge-text-integrity": "./dist/cli.js"
   },
   "files": ["dist", "README.md", "LICENSE", "NOTICE"],
   "scripts": {
@@ -27,23 +20,14 @@
     "test:coverage": "vitest run --coverage"
   },
   "sideEffects": false,
-  "engines": {
-    "node": ">=22.14.0"
-  },
+  "engines": { "node": ">=22.14.0" },
   "license": "Apache-2.0",
-  "publishConfig": {
-    "access": "public"
-  },
+  "publishConfig": { "access": "public" },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/zopenge/foundation-forge.git",
-    "directory": "packages/text-integrity"
+    "directory": "packages/deterministic-json"
   },
   "homepage": "https://github.com/zopenge/foundation-forge#readme",
-  "bugs": {
-    "url": "https://github.com/zopenge/foundation-forge/issues"
-  },
-  "dependencies": {
-    "@openge/forge-repository-files": "workspace:^"
-  }
+  "bugs": { "url": "https://github.com/zopenge/foundation-forge/issues" }
 }
