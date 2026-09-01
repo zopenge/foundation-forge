@@ -1,0 +1,7 @@
+Foundation Forge: @openge/forge-peer-network-libp2p
+Copyright 2026 OpenGE contributors
+
+This package uses separately distributed libp2p dependencies licensed under
+Apache-2.0 OR MIT. Its WebRTC dependency graph includes node-datachannel,
+licensed under MPL-2.0. Upstream license and attribution files remain in the
+respective dependency packages.

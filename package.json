@@ -1,0 +1,44 @@
+{
+  "name": "foundation-forge",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Provider-neutral TypeScript foundation libraries for reusable cross-platform capabilities",
+  "license": "Apache-2.0",
+  "type": "module",
+  "packageManager": "pnpm@10.33.2",
+  "engines": {
+    "node": ">=22.14.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zopenge/foundation-forge.git"
+  },
+  "homepage": "https://github.com/zopenge/foundation-forge#readme",
+  "bugs": {
+    "url": "https://github.com/zopenge/foundation-forge/issues"
+  },
+  "scripts": {
+    "build": "pnpm --recursive --if-present run build",
+    "lint": "eslint . --max-warnings 0",
+    "typecheck": "pnpm --recursive --if-present run typecheck",
+    "test": "pnpm --recursive --if-present run test",
+    "test:coverage": "pnpm --recursive --if-present run test:coverage",
+    "pack:check": "node ./scripts/verify-packages.mjs",
+    "check": "pnpm run lint && pnpm run typecheck && pnpm run test:coverage && pnpm run build && pnpm run pack:check",
+    "changeset": "changeset",
+    "version:packages": "changeset version",
+    "release:next": "pnpm run check && changeset publish --tag next",
+    "release": "pnpm run check && changeset publish"
+  },
+  "devDependencies": {
+    "@changesets/cli": "3.0.1",
+    "@eslint/js": "10.0.1",
+    "@types/node": "20.19.43",
+    "@types/ws": "8.18.1",
+    "@vitest/coverage-v8": "4.1.9",
+    "eslint": "10.0.1",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.61.1",
+    "vitest": "4.1.9"
+  }
+}
