@@ -4,16 +4,10 @@ import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 
 import { createReleasePlan, executeReleasePlan } from './release-plan.mjs';
+import { releasePackageDirectories } from './release-package-directories.mjs';
 
 const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
 const packDirectory = resolve(repositoryRoot, '.tmp', 'release-packs');
-
-const packageDirectories = [
-  'packages/peer-network',
-  'packages/peer-network-libp2p',
-  'packages/peer-network-websocket',
-  'packages/text-integrity',
-];
 
 async function readPackage(directory) {
   const packageJsonPath = resolve(repositoryRoot, directory, 'package.json');
@@ -124,7 +118,7 @@ if (tagIndex !== -1 && !tag) {
   throw new Error('Missing value for --tag');
 }
 
-const packages = await Promise.all(packageDirectories.map(readPackage));
+const packages = await Promise.all(releasePackageDirectories.map(readPackage));
 const states = await Promise.all(packages.map(async (packageJson) => ({
   ...packageJson,
   versions: await publishedVersions(packageJson.name),

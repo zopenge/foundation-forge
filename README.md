@@ -14,6 +14,10 @@ capabilities, published as modular `@openge` packages.
 | `@openge/forge-peer-network-libp2p` | Explicit Node.js, browser, and relay providers based on libp2p |
 | `@openge/forge-peer-network-websocket` | WebSocket rendezvous client, hub, and Node.js server adapter |
 | `@openge/forge-text-integrity` | Runtime-neutral text corruption inspection plus explicit Node.js repository scanning and CLI support |
+| `@openge/forge-repository-files` | Deterministic read-only Git repository file discovery and ignore filtering |
+| `@openge/forge-deterministic-json` | Strict deterministic JSON validation, sorting, and serialization |
+| `@openge/forge-artifact-integrity` | Cross-runtime byte integrity plus explicit Node.js file verification |
+| `@openge/forge-archive-safety` | Runtime-neutral archive entry path and resource-limit validation |
 
 ## Installation
 
@@ -57,6 +61,20 @@ pnpm add -D @openge/forge-text-integrity
 The root entry is runtime-neutral. Node.js filesystem, Git, and CLI support is
 available from `@openge/forge-text-integrity/node` and the
 `forge-text-integrity` executable.
+
+For repository-aware development tooling:
+
+```sh
+pnpm add -D @openge/forge-repository-files
+```
+
+For pure deterministic data and artifact validation:
+
+```sh
+pnpm add @openge/forge-deterministic-json \
+  @openge/forge-artifact-integrity \
+  @openge/forge-archive-safety
+```
 
 ## Example
 

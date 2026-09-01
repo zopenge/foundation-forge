@@ -1,0 +1,10 @@
+export const releasePackageDirectories = Object.freeze([
+  'packages/peer-network',
+  'packages/peer-network-libp2p',
+  'packages/peer-network-websocket',
+  'packages/repository-files',
+  'packages/deterministic-json',
+  'packages/artifact-integrity',
+  'packages/archive-safety',
+  'packages/text-integrity',
+]);

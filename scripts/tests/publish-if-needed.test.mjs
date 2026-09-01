@@ -5,6 +5,20 @@ import {
   createReleasePlan,
   executeReleasePlan,
 } from '../release-plan.mjs';
+import { releasePackageDirectories } from '../release-package-directories.mjs';
+
+test('declares every public package in dependency-safe release order', () => {
+  assert.deepEqual(releasePackageDirectories, [
+    'packages/peer-network',
+    'packages/peer-network-libp2p',
+    'packages/peer-network-websocket',
+    'packages/repository-files',
+    'packages/deterministic-json',
+    'packages/artifact-integrity',
+    'packages/archive-safety',
+    'packages/text-integrity',
+  ]);
+});
 
 test('publishes only missing versions in declaration order and creates every local tag', async () => {
   const plan = createReleasePlan([
