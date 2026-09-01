@@ -7,7 +7,7 @@ import {
   createWebSocketRendezvousHub,
   webSocketRendezvousDefaultMaxPayloadBytes,
   type WebSocketRendezvousDiagnostic,
-} from './rendezvous-hub.js';
+} from './hub.js';
 
 export {
   createWebSocketRendezvousHub,
@@ -18,7 +18,7 @@ export {
   type WebSocketRendezvousHub,
   type WebSocketRendezvousRegistrationAuthorization,
   type WebSocketRendezvousSession,
-} from './rendezvous-hub.js';
+} from './hub.js';
 
 export interface CreateWebSocketRendezvousServerOptions {
   readonly host?: string;

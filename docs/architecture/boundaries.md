@@ -41,4 +41,4 @@
 
 `@openge/forge-peer-network-libp2p` 明确区分 Node.js、浏览器和 relay 入口，完整封装 libp2p 类型与依赖。
 
-`@openge/forge-peer-network-websocket` 将浏览器 client 与 Node server 分开；client 使用调用方注入的标准 WebSocket factory，server 才依赖 `ws` 和 Node 内置模块。
+`@openge/forge-peer-network-websocket` 将浏览器 client、跨运行时 hub 与 Node server 分开；client 使用调用方注入的标准 WebSocket factory，hub 只依赖 Foundation Core 与 Web Platform API，只有 server 依赖 `ws` 和 Node 内置模块。server 为兼容既有公开契约继续重导出 hub。

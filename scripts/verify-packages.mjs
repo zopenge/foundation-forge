@@ -31,7 +31,7 @@ const packageDefinitions = [
   },
   {
     directory: 'packages/peer-network-websocket',
-    entries: ['./client', './server'],
+    entries: ['./client', './hub', './server'],
     name: '@openge/forge-peer-network-websocket',
   },
 ];
@@ -99,7 +99,6 @@ const verifyRepositoryHygiene = async () => {
 const verifyDocumentationLinks = async () => {
   const markdownPaths = [
     'README.md',
-    'README.zh-CN.md',
     'CONTRIBUTING.md',
     'SECURITY.md',
     'CODE_OF_CONDUCT.md',
@@ -160,7 +159,9 @@ const verifyBrowserBoundary = async () => {
   const browserFiles = [
     'packages/peer-network-libp2p/src/browser.ts',
     'packages/peer-network-websocket/src/client.ts',
+    'packages/peer-network-websocket/src/hub.ts',
     'packages/peer-network-websocket/src/protocol.ts',
+    'packages/peer-network-websocket/src/rendezvous-hub.ts',
   ];
   const forbidden = [/from ['"]node:/u, /from ['"]ws['"]/u, /\.\/server\.js/u];
   for (const relativePath of browserFiles) {
@@ -240,6 +241,7 @@ const createConsumer = async (tarballs) => {
     "await import('@openge/forge-peer-network-libp2p/browser');",
     "await import('@openge/forge-peer-network-libp2p/relay');",
     "await import('@openge/forge-peer-network-websocket/client');",
+    "await import('@openge/forge-peer-network-websocket/hub');",
     "await import('@openge/forge-peer-network-websocket/server');",
     "console.log('Clean tarball consumer imported every public entry.');",
     '',

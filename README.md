@@ -6,8 +6,6 @@
 Provider-neutral TypeScript foundation libraries for reusable cross-platform
 capabilities, published as modular `@openge` packages.
 
-[简体中文](README.zh-CN.md)
-
 ## Packages
 
 | Package | Purpose |
@@ -44,6 +42,10 @@ For WebSocket-based discovery:
 ```sh
 pnpm add @openge/forge-peer-network @openge/forge-peer-network-websocket
 ```
+
+Import the runtime-neutral rendezvous Hub from
+`@openge/forge-peer-network-websocket/hub`. The `/server` entry is reserved for
+the Node.js `ws` adapter and continues to re-export the Hub API.
 
 ## Example
 

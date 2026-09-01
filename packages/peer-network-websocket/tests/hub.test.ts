@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
-import { createWebSocketRendezvousHub } from '../src/server.js';
+import { createWebSocketRendezvousHub } from '../src/hub.js';
 import {
   FakeRendezvousConnection,
   localAdvertisement,
