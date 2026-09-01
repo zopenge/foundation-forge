@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -12,6 +13,7 @@ permissions:
 
 jobs:
   release:
+    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: npm
     steps:
@@ -28,8 +30,14 @@ jobs:
           registry-url: https://registry.npmjs.org
       - run: npm install --global npm@12.0.2
       - run: pnpm install --frozen-lockfile
-      - run: pnpm check
+      - if: github.event_name == 'workflow_dispatch'
+        run: node ./scripts/verify-prerelease-versions.mjs
+      - if: github.event_name == 'workflow_dispatch'
+        run: pnpm release:next
+      - if: github.event_name == 'workflow_dispatch'
+        run: git push --follow-tags
       - uses: changesets/action@v1
+        if: github.event_name == 'push'
         with:
           version: pnpm version:packages
           publish: pnpm release
