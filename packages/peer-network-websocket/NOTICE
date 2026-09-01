@@ -1,0 +1,5 @@
+Foundation Forge: @openge/forge-peer-network-websocket
+Copyright 2026 OpenGE contributors
+
+The Node.js server adapter uses ws, licensed under MIT. Its upstream license and
+attribution files remain in the separately distributed dependency package.
