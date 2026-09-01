@@ -36,7 +36,7 @@ jobs:
         run: pnpm release:next
       - if: github.event_name == 'workflow_dispatch'
         run: git push --follow-tags
-      - uses: changesets/action@v1
+      - uses: changesets/action@v2
         if: github.event_name == 'push'
         with:
           version: pnpm version:packages
