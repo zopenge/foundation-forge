@@ -91,6 +91,8 @@ importers:
         specifier: 8.21.0
         version: 8.21.0
 
+  packages/text-integrity: {}
+
 packages:
 
   '@babel/helper-string-parser@7.29.7':

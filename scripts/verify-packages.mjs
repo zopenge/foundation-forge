@@ -34,6 +34,11 @@ const packageDefinitions = [
     entries: ['./client', './hub', './server'],
     name: '@openge/forge-peer-network-websocket',
   },
+  {
+    directory: 'packages/text-integrity',
+    entries: ['.', './node'],
+    name: '@openge/forge-text-integrity',
+  },
 ];
 
 const run = (command, args, options = {}) => {
@@ -162,6 +167,9 @@ const verifyBrowserBoundary = async () => {
     'packages/peer-network-websocket/src/hub.ts',
     'packages/peer-network-websocket/src/protocol.ts',
     'packages/peer-network-websocket/src/rendezvous-hub.ts',
+    'packages/text-integrity/src/contracts.ts',
+    'packages/text-integrity/src/index.ts',
+    'packages/text-integrity/src/inspection.ts',
   ];
   const forbidden = [/from ['"]node:/u, /from ['"]ws['"]/u, /\.\/server\.js/u];
   for (const relativePath of browserFiles) {
@@ -235,6 +243,11 @@ const createConsumer = async (tarballs) => {
     '        optional: true',
     '',
   ].join('\n'), 'utf8');
+  await writeFile(resolve(consumerRoot, '.npmrc'), [
+    'node-linker=hoisted',
+    'package-import-method=copy',
+    '',
+  ].join('\n'), 'utf8');
   await writeFile(resolve(consumerRoot, 'verify.mjs'), [
     "await import('@openge/forge-peer-network');",
     "await import('@openge/forge-peer-network-libp2p/node');",
@@ -243,6 +256,9 @@ const createConsumer = async (tarballs) => {
     "await import('@openge/forge-peer-network-websocket/client');",
     "await import('@openge/forge-peer-network-websocket/hub');",
     "await import('@openge/forge-peer-network-websocket/server');",
+    "const { inspectTextIntegrity } = await import('@openge/forge-text-integrity');",
+    "await import('@openge/forge-text-integrity/node');",
+    "if (inspectTextIntegrity('broken ???').length !== 1) throw new Error('text inspection failed');",
     "console.log('Clean tarball consumer imported every public entry.');",
     '',
   ].join('\n'), 'utf8');
@@ -250,7 +266,33 @@ const createConsumer = async (tarballs) => {
   runPnpm(['install', '--prefer-offline', '--frozen-lockfile=false'], {
     cwd: consumerRoot,
   });
-  return run(process.execPath, ['verify.mjs'], { cwd: consumerRoot });
+  const importOutput = run(process.execPath, ['verify.mjs'], { cwd: consumerRoot });
+  run('git', ['init', '--quiet'], { cwd: consumerRoot });
+  const fixturePath = resolve(consumerRoot, 'fixture.ts');
+  await writeFile(fixturePath, 'broken ???\n', 'utf8');
+  const cliPath = resolve(
+    consumerRoot,
+    'node_modules',
+    '@openge',
+    'forge-text-integrity',
+    'dist',
+    'cli.js',
+  );
+  const cliResult = spawnSync(process.execPath, [cliPath, 'fixture.ts'], {
+    cwd: consumerRoot,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (cliResult.status !== 1 || !cliResult.stderr.includes('question-placeholder')) {
+    throw new Error([
+      'text integrity CLI fixture did not report the expected issue',
+      `status: ${String(cliResult.status)}`,
+      `error: ${String(cliResult.error ?? '')}`,
+      `stdout: ${cliResult.stdout}`,
+      `stderr: ${cliResult.stderr}`,
+    ].join('\n'));
+  }
+  return `${importOutput}\nClean tarball consumer executed the text integrity CLI fixture.`;
 };
 
 await rm(verificationRoot, { force: true, recursive: true });

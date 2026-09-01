@@ -42,3 +42,9 @@
 `@openge/forge-peer-network-libp2p` 明确区分 Node.js、浏览器和 relay 入口，完整封装 libp2p 类型与依赖。
 
 `@openge/forge-peer-network-websocket` 将浏览器 client、跨运行时 hub 与 Node server 分开；client 使用调用方注入的标准 WebSocket factory，hub 只依赖 Foundation Core 与 Web Platform API，只有 server 依赖 `ws` 和 Node 内置模块。server 为兼容既有公开契约继续重导出 hub。
+
+## Text Integrity 边界
+
+`@openge/forge-text-integrity` 的根入口只提供领域中立的纯文本完整性检测，不依赖 Node.js 内置模块或文件系统。`/node` 入口负责路径扫描、Git ignore 与 changed-file 收集，CLI 只将结构化问题格式化为命令行诊断。
+
+公共 contract 不持有 AI Forge 或 Runtime Forge 的仓库目录、默认扫描根和产品特有忽略项。消费者可通过明确选项提供这些配置；检测规则、文本文件类型并集和稳定排序则由 Foundation Forge 维护为唯一实现。

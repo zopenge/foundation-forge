@@ -13,6 +13,7 @@ capabilities, published as modular `@openge` packages.
 | `@openge/forge-peer-network` | Provider-neutral peer networking contracts, framing, lifecycle, errors, and discovery scheduling |
 | `@openge/forge-peer-network-libp2p` | Explicit Node.js, browser, and relay providers based on libp2p |
 | `@openge/forge-peer-network-websocket` | WebSocket rendezvous client, hub, and Node.js server adapter |
+| `@openge/forge-text-integrity` | Runtime-neutral text corruption inspection plus explicit Node.js repository scanning and CLI support |
 
 ## Installation
 
@@ -46,6 +47,16 @@ pnpm add @openge/forge-peer-network @openge/forge-peer-network-websocket
 Import the runtime-neutral rendezvous Hub from
 `@openge/forge-peer-network-websocket/hub`. The `/server` entry is reserved for
 the Node.js `ws` adapter and continues to re-export the Hub API.
+
+For text integrity inspection and repository scanning:
+
+```sh
+pnpm add -D @openge/forge-text-integrity
+```
+
+The root entry is runtime-neutral. Node.js filesystem, Git, and CLI support is
+available from `@openge/forge-text-integrity/node` and the
+`forge-text-integrity` executable.
 
 ## Example
 
@@ -98,9 +109,10 @@ pnpm check
 
 ## Versioning and releases
 
-The packages follow Semantic Versioning and are versioned together with
-Changesets. Release candidates use the `next` npm dist-tag. Stable releases use
-`latest`.
+The packages follow Semantic Versioning and use Changesets. The three Peer
+Network packages share a fixed version while unrelated packages can evolve
+independently. Release candidates use the `next` npm dist-tag. Stable releases
+use `latest`.
 
 ## Contributing
 
