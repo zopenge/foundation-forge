@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  assertNextReleasePlan,
   createReleasePlan,
   executeReleasePlan,
+  hasPrereleaseVersion,
 } from '../release-plan.mjs';
 import { releasePackageDirectories } from '../release-package-directories.mjs';
 
@@ -43,6 +45,28 @@ test('publishes only missing versions in declaration order and creates every loc
     'publish:openge-provider.tgz:next',
     'tag:@openge/provider@0.1.0',
   ]);
+});
+
+test('allows published stable packages beside unpublished prereleases for the next tag', () => {
+  const plan = createReleasePlan([
+    { name: '@openge/stable', version: '0.1.0', versions: new Set(['0.1.0']) },
+    { name: '@openge/candidate', version: '0.2.0-rc.1', versions: new Set(['0.2.0-rc.0']) },
+  ]);
+
+  assert.doesNotThrow(() => assertNextReleasePlan(plan));
+  assert.equal(hasPrereleaseVersion(plan), true);
+});
+
+test('rejects unpublished stable versions from the next tag', () => {
+  const plan = createReleasePlan([
+    { name: '@openge/stable', version: '0.2.0', versions: new Set(['0.1.0']) },
+  ]);
+
+  assert.throws(
+    () => assertNextReleasePlan(plan),
+    /@openge\/stable@0\.2\.0 cannot be published with the next tag/u,
+  );
+  assert.equal(hasPrereleaseVersion(plan), false);
 });
 
 test('does not create a tag or continue when publication fails', async () => {

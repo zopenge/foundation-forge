@@ -1,18 +1,22 @@
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
-const packagePaths = [
-  '../packages/peer-network/package.json',
-  '../packages/peer-network-libp2p/package.json',
-  '../packages/peer-network-websocket/package.json',
-];
+import { hasPrereleaseVersion } from './release-plan.mjs';
+import { releasePackageDirectories } from './release-package-directories.mjs';
 
-for (const relativePath of packagePaths) {
+const packages = [];
+for (const directory of releasePackageDirectories) {
+  const relativePath = `../${directory}/package.json`;
   const path = fileURLToPath(new URL(relativePath, import.meta.url));
   const manifest = JSON.parse(await readFile(path, 'utf8'));
-  if (typeof manifest.version !== 'string' || !/^\d+\.\d+\.\d+-.+$/u.test(manifest.version)) {
-    throw new Error(`${manifest.name ?? relativePath} must use a prerelease version`);
+  if (typeof manifest.name !== 'string' || typeof manifest.version !== 'string') {
+    throw new Error(`Invalid package metadata: ${relativePath}`);
   }
+  packages.push({ name: manifest.name, version: manifest.version });
 }
 
-console.log('All publishable packages use prerelease versions.');
+if (!hasPrereleaseVersion(packages)) {
+  throw new Error('At least one publishable package must use a prerelease version');
+}
+
+console.log('Repository contains publishable prerelease versions.');
