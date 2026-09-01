@@ -1,6 +1,6 @@
 {
   "name": "@openge/forge-peer-network-libp2p",
-  "version": "0.1.0-rc.1",
+  "version": "0.1.0",
   "description": "Explicit Node.js, browser, and relay peer network providers based on libp2p",
   "type": "module",
   "exports": {

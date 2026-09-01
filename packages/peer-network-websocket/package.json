@@ -1,6 +1,6 @@
 {
   "name": "@openge/forge-peer-network-websocket",
-  "version": "0.1.0-rc.1",
+  "version": "0.1.0",
   "description": "WebSocket rendezvous client, hub, and Node.js server adapter for peer discovery",
   "type": "module",
   "exports": {
