@@ -12,6 +12,7 @@ const packageDirectories = [
   'packages/peer-network',
   'packages/peer-network-libp2p',
   'packages/peer-network-websocket',
+  'packages/text-integrity',
 ];
 
 async function readPackage(directory) {
