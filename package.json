@@ -27,8 +27,8 @@
     "check": "pnpm run lint && pnpm run typecheck && pnpm run test:coverage && pnpm run pack:check",
     "changeset": "changeset",
     "version:packages": "changeset version",
-    "release:next": "pnpm run check && changeset publish --tag next",
-    "release": "pnpm run check && changeset publish"
+    "release:next": "pnpm run check && node ./scripts/publish-if-needed.mjs --tag next",
+    "release": "pnpm run check && node ./scripts/publish-if-needed.mjs"
   },
   "devDependencies": {
     "@changesets/cli": "3.0.1",
