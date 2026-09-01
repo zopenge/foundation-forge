@@ -3,7 +3,11 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 
-import { createReleasePlan, executeReleasePlan } from './release-plan.mjs';
+import {
+  assertNextReleasePlan,
+  createReleasePlan,
+  executeReleasePlan,
+} from './release-plan.mjs';
 import { releasePackageDirectories } from './release-package-directories.mjs';
 
 const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
@@ -124,6 +128,9 @@ const states = await Promise.all(packages.map(async (packageJson) => ({
   versions: await publishedVersions(packageJson.name),
 })));
 const releasePlan = createReleasePlan(states);
+if (tag === 'next') {
+  assertNextReleasePlan(releasePlan);
+}
 const unpublished = releasePlan.filter((release) => release.needsPublish);
 
 if (unpublished.length === 0) {

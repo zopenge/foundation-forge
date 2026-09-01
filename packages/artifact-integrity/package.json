@@ -1,6 +1,6 @@
 {
   "name": "@openge/forge-artifact-integrity",
-  "version": "0.1.0-rc.0",
+  "version": "0.1.0-rc.1",
   "description": "Cross-runtime byte integrity and explicit Node.js file verification",
   "type": "module",
   "main": "./dist/index.js",
