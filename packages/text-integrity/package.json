@@ -1,6 +1,6 @@
 {
   "name": "@openge/forge-text-integrity",
-  "version": "0.1.0-rc.0",
+  "version": "0.1.0-rc.1",
   "description": "Runtime-neutral text integrity inspection and Node.js repository scanning",
   "type": "module",
   "main": "./dist/index.js",
