@@ -1,6 +1,6 @@
 {
   "name": "@openge/forge-peer-network",
-  "version": "0.1.0-rc.0",
+  "version": "0.1.0-rc.1",
   "description": "Provider-neutral peer networking contracts, framing, lifecycle, errors, and discovery scheduling",
   "type": "module",
   "main": "./dist/index.js",
