@@ -1,0 +1,11 @@
+packages:
+  - "packages/*"
+
+allowBuilds:
+  node-datachannel: true
+
+packageExtensions:
+  "react-native-webrtc@*":
+    peerDependenciesMeta:
+      react-native:
+        optional: true

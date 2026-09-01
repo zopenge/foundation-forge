@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+coverage/
+*.tsbuildinfo
+
+# Tool caches and temporary files
+.cache/
+.tmp/
+tmp/
+.vitest/
+.nyc_output/
+.eslintcache
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment files and local credentials
+.env
+.env.*
+!.env.example
+.npmrc.local
+
+# Locally packed npm packages
+*.tgz
+
+# Editors
+.vscode/
+.idea/
+
+# Operating systems
+.DS_Store
+Thumbs.db
+Desktop.ini
