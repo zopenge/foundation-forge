@@ -5,6 +5,7 @@ import {
   inspectArchiveEntries,
   validateArchiveEntryPath,
 } from '../src/index.js';
+import { PathSafetyError } from '@openge/forge-path-safety';
 
 describe('archive entry paths', () => {
   test.each([
@@ -30,9 +31,14 @@ describe('archive entry paths', () => {
     'directory/./file.txt',
     'directory/\0file.txt',
   ])('rejects an unsafe path: %s', (path) => {
-    expect(() => validateArchiveEntryPath(path)).toThrowError(
-      expect.objectContaining({ code: 'INVALID_ENTRY_PATH' }),
-    );
+    try {
+      validateArchiveEntryPath(path);
+      throw new Error('expected validation failure');
+    } catch (error) {
+      expect(error).toBeInstanceOf(ArchiveSafetyError);
+      expect(error).not.toBeInstanceOf(PathSafetyError);
+      expect(error).toMatchObject({ code: 'INVALID_ENTRY_PATH' });
+    }
   });
 });
 

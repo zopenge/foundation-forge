@@ -6,6 +6,7 @@
 - Do not introduce AI agent, game, room, Lobby, matchmaking, business workflow, rendering, or product-specific storage semantics.
 - Core contracts must not depend on Providers. Providers may depend on Core, but Providers must not depend on one another.
 - Do not introduce circular dependencies, implicit fallbacks, automatic runtime Provider selection, or third-party implementation types in public signatures.
+- Public architecture and boundary documents must describe consumers through abstract layers and roles. Do not encode specific external repository names, local paths, or current consumer topology as Foundation ownership or dependency rules. Concrete consumers may appear only in explicitly scoped migration or release evidence when that identity is required.
 - `index.ts` files and public entries may only aggregate exports or perform extremely thin assembly. Protocol parsing, I/O, and stateful workflows belong in files with explicit responsibilities.
 
 ## TypeScript and text
@@ -20,6 +21,7 @@
 
 - Pin dependencies to exact versions. Public packages declare only the direct dependencies required at runtime.
 - Do not commit npm tokens, authenticated `.npmrc` files, lockfiles from other package managers, or locally packed artifacts.
+- Agent-generated working plans are transient artifacts. Keep them in ignored temporary storage and never force-add `docs/superpowers/` or another tool-owned planning directory to the public documentation tree.
 - Do not commit, push, create tags, or publish npm packages without explicit maintainer authorization.
 - Every version change requires a Changeset. Publish release candidates to `next` and stable releases to `latest`.
 

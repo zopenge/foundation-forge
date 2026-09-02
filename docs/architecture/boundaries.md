@@ -1,22 +1,21 @@
 # 仓库与能力边界
 
-本文面向 Foundation Forge 维护者和跨仓库架构负责人，是能力归属与准入判断的权威文档。公开包的安装和使用从根 [README](../../README.md) 进入。
+本文面向公共基础库维护者和依赖架构负责人，是能力归属与准入判断的权威文档。公开包的安装和使用从根 [README](../../README.md) 进入。
 
-## 仓库职责
+## 分层职责
 
-| 仓库 | 所有权 | 允许依赖 |
+| 层级 | 所有权 | 依赖方向 |
 | --- | --- | --- |
-| Foundation Forge | 领域中立、可独立版本化、跨产品复用的 TypeScript contract 与 Provider | 第三方基础库；不得依赖其他 Forge 产品仓库 |
-| AI Forge | AI 前后端平台、agent、service、模型与 AI 业务编排 | Foundation Forge；需要高性能运行时能力时依赖 Runtime Forge |
-| Runtime Forge | 渲染、Native/WASM、高性能计算和运行时适配 | Foundation Forge 中确有需要的中立 contract |
-| Game Forge | 游戏平台、房间、Lobby、匹配和游戏产品语义 | Foundation Forge、AI Forge、Runtime Forge 中实际需要的公开能力 |
-| Link Light | 业务应用和业务工作流 | Foundation Forge、AI Forge 中实际需要的公开能力 |
+| 公共基础层 | 领域中立、可独立版本化、跨产品复用的 TypeScript contract 与 Provider | 只依赖领域中立的第三方基础库或本仓库中更底层的公开包 |
+| 高性能运行时层 | 渲染、Native/WASM、高性能计算和运行时适配 | 可依赖公共基础层，不得要求公共基础层理解运行时实现语义 |
+| 平台与服务层 | AI、数据、网络服务和平台级编排 | 可依赖公共基础层及明确需要的运行时能力 |
+| 产品与业务层 | 房间、匹配、业务流程、UI 和客户语义 | 可组合下层公开能力，领域规则只能保留在本层 |
 
-依赖方向必须从拥有产品语境的上层仓库指向中立基础层。Foundation Forge 不得反向依赖或复制上层语义。
+依赖必须从拥有领域语境的上层指向中立基础层。公共基础层不得引用具体消费者、反向依赖消费者代码，或复制消费者的配置、术语和业务语义。
 
 ## 准入规则
 
-能力进入 Foundation Forge 前必须同时满足：
+能力进入公共基础层前必须同时满足：
 
 1. 至少两个独立消费者已经共享同一问题与稳定 contract。
 2. contract 不包含 AI、游戏、房间、业务流程、具体 UI 或客户语义。
@@ -30,10 +29,10 @@
 
 - 数据库：连接、迁移和 ORM 装配保留在拥有数据模型的应用；只有稳定的中立 contract 且存在多个消费者时才评估提取。
 - 文件 I/O：产品目录、权限和文件语义保留在应用；纯数据转换可在满足准入规则后提取。
-- 渲染与 Native/WASM：属于 Runtime Forge，不进入 Foundation Forge。
-- 网络：中立连接、消息、发现 contract 可进入 Foundation Forge；具体 Provider 独立封装。
-- 房间通信、Lobby 和匹配：属于 Game Forge；可组合中立网络能力，但不得下沉房间语义。
-- AI service、agent 与模型适配：属于 AI Forge，不进入 Foundation Forge。
+- 渲染与 Native/WASM：属于高性能运行时层，不进入公共基础层。
+- 网络：中立连接、消息、发现 contract 可进入公共基础层；具体 Provider 独立封装。
+- 房间通信、Lobby 和匹配：属于产品与业务层；可组合中立网络能力，但不得下沉房间语义。
+- AI service、agent 与模型适配：属于平台与服务层，不进入公共基础层。
 
 ## Peer Network 首期边界
 
@@ -47,11 +46,11 @@
 
 `@openge/forge-text-integrity` 的根入口只提供领域中立的纯文本完整性检测，不依赖 Node.js 内置模块或文件系统。`/node` 入口负责文本路径扫描，并组合 `@openge/forge-repository-files` 完成 Git ignore 与 changed-file 收集；CLI 只将结构化问题格式化为命令行诊断。
 
-公共 contract 不持有 AI Forge 或 Runtime Forge 的仓库目录、默认扫描根和产品特有忽略项。消费者可通过明确选项提供这些配置；检测规则、文本文件类型并集和稳定排序则由 Foundation Forge 维护为唯一实现。
+公共 contract 不持有具体消费者的仓库目录、默认扫描根和产品特有忽略项。消费者可通过明确选项提供这些配置；检测规则、文本文件类型并集和稳定排序则由公共包维护为唯一实现。
 
 ## Repository Files 边界
 
-`@openge/forge-repository-files` 只执行只读 Git 文件发现、changed-file 收集、ignore 过滤、路径规范化和稳定排序。它不提供 commit、branch、push 等写操作，不持有 AI Context 语义，并且 Git 不可用时显式失败而不递归扫描文件系统。
+`@openge/forge-repository-files` 只执行只读 Git 文件发现、changed-file 收集、ignore 过滤、路径规范化和稳定排序。它不提供 commit、branch、push 等写操作，不持有任何消费者的索引或上下文语义，并且 Git 不可用时显式失败而不递归扫描文件系统。
 
 ## Deterministic JSON 边界
 
@@ -59,8 +58,12 @@
 
 ## Artifact Integrity 边界
 
-`@openge/forge-artifact-integrity` 的根入口只使用 Web Crypto 计算和验证字节长度与 SHA-256；`/node` 入口增加可取消的普通文件流式校验。下载、凭据、缓存、制品来源和业务身份规则仍由消费者持有。
+`@openge/forge-artifact-integrity` 的根入口只使用 Web Crypto 计算和验证字节长度与 SHA-256；`/node` 入口增加可取消的异步普通文件流式校验，以及同步字节和分块文件校验。下载、凭据、缓存、制品来源和业务身份规则仍由消费者持有。
+
+## Path Safety 边界
+
+`@openge/forge-path-safety` 的根入口只验证和规范化使用 `/` 的领域中立相对路径，不依赖 Node.js 内置模块。`/node` 入口区分词法包含与基于 `realpath` 的既有路径包含；前者不声称防止符号链接逃逸。产品目录白名单、权限策略和文件生命周期仍由消费者持有。
 
 ## Archive Safety 边界
 
-`@openge/forge-archive-safety` 只验证归档条目路径、条目类型、展开大小和条目数量。归档格式解析、下载、临时目录、系统命令与实际解压属于 Provider 或消费者，不进入该公共包。
+`@openge/forge-archive-safety` 组合 Path Safety 的便携路径规则，并保留归档目录条目的尾部 `/` contract 与独立错误类型。它只验证归档条目路径、条目类型、展开大小和条目数量。归档格式解析、下载、临时目录、系统命令与实际解压属于 Provider 或消费者，不进入该公共包。

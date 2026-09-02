@@ -4,6 +4,7 @@ export const releasePackageDirectories = Object.freeze([
   'packages/peer-network-websocket',
   'packages/repository-files',
   'packages/deterministic-json',
+  'packages/path-safety',
   'packages/artifact-integrity',
   'packages/archive-safety',
   'packages/text-integrity',

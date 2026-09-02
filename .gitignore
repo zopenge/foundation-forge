@@ -15,6 +15,9 @@ tmp/
 .nyc_output/
 .eslintcache
 
+# Agent planning artifacts
+docs/superpowers/
+
 # Logs
 *.log
 npm-debug.log*
