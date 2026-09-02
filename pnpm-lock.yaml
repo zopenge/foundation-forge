@@ -38,11 +38,17 @@ importers:
         specifier: 4.1.9
         version: 4.1.9(@types/node@20.19.43)(@vitest/coverage-v8@4.1.9)(yaml@2.9.0)
 
-  packages/archive-safety: {}
+  packages/archive-safety:
+    dependencies:
+      '@openge/forge-path-safety':
+        specifier: workspace:^
+        version: link:../path-safety
 
   packages/artifact-integrity: {}
 
   packages/deterministic-json: {}
+
+  packages/path-safety: {}
 
   packages/peer-network: {}
 

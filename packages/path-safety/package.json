@@ -1,12 +1,13 @@
 {
-  "name": "@openge/forge-archive-safety",
-  "version": "0.1.0-rc.1",
-  "description": "Runtime-neutral archive entry path and resource-limit validation",
+  "name": "@openge/forge-path-safety",
+  "version": "0.1.0-rc.0",
+  "description": "Cross-runtime portable path validation and explicit Node.js root containment",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    "./node": { "types": "./dist/node.d.ts", "import": "./dist/node.js" }
   },
   "files": ["dist", "README.md", "LICENSE", "NOTICE"],
   "scripts": {
@@ -23,11 +24,8 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/zopenge/foundation-forge.git",
-    "directory": "packages/archive-safety"
+    "directory": "packages/path-safety"
   },
   "homepage": "https://github.com/zopenge/foundation-forge#readme",
-  "dependencies": {
-    "@openge/forge-path-safety": "workspace:^"
-  },
   "bugs": { "url": "https://github.com/zopenge/foundation-forge/issues" }
 }

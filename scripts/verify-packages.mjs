@@ -50,6 +50,11 @@ const packageDefinitions = [
     name: '@openge/forge-deterministic-json',
   },
   {
+    directory: 'packages/path-safety',
+    entries: ['.', './node'],
+    name: '@openge/forge-path-safety',
+  },
+  {
     directory: 'packages/artifact-integrity',
     entries: ['.', './node'],
     name: '@openge/forge-artifact-integrity',
@@ -196,6 +201,10 @@ const verifyBrowserBoundary = async () => {
     'packages/deterministic-json/src/sorting.ts',
     'packages/deterministic-json/src/stringify.ts',
     'packages/deterministic-json/src/validation.ts',
+    'packages/path-safety/src/contracts.ts',
+    'packages/path-safety/src/errors.ts',
+    'packages/path-safety/src/index.ts',
+    'packages/path-safety/src/portable-path.ts',
     'packages/artifact-integrity/src/bytes.ts',
     'packages/artifact-integrity/src/contracts.ts',
     'packages/artifact-integrity/src/digest.ts',
@@ -259,16 +268,14 @@ const createConsumer = async (tarballs) => {
   if (typeof repositoryFilesTarballReference !== 'string') {
     throw new Error('missing Repository Files tarball dependency');
   }
+  const pathSafetyTarballReference = dependencies['@openge/forge-path-safety'];
+  if (typeof pathSafetyTarballReference !== 'string') {
+    throw new Error('missing Path Safety tarball dependency');
+  }
   await mkdir(consumerRoot, { recursive: true });
   await writeFile(resolve(consumerRoot, 'package.json'), `${JSON.stringify({
     dependencies,
     name: 'foundation-forge-package-consumer',
-    pnpm: {
-      overrides: {
-        '@openge/forge-peer-network': coreTarballReference,
-        '@openge/forge-repository-files': repositoryFilesTarballReference,
-      },
-    },
     private: true,
     type: 'module',
     version: '0.0.0',
@@ -276,6 +283,11 @@ const createConsumer = async (tarballs) => {
   await writeFile(resolve(consumerRoot, 'pnpm-workspace.yaml'), [
     'allowBuilds:',
     '  node-datachannel: true',
+    '',
+    'overrides:',
+    `  "@openge/forge-peer-network": "${coreTarballReference}"`,
+    `  "@openge/forge-repository-files": "${repositoryFilesTarballReference}"`,
+    `  "@openge/forge-path-safety": "${pathSafetyTarballReference}"`,
     '',
     'packageExtensions:',
     '  "react-native-webrtc@*":',
@@ -287,6 +299,8 @@ const createConsumer = async (tarballs) => {
   await writeFile(resolve(consumerRoot, '.npmrc'), [
     'node-linker=hoisted',
     'package-import-method=copy',
+    'registry=https://registry.npmjs.org/',
+    '@openge:registry=https://registry.npmjs.org/',
     '',
   ].join('\n'), 'utf8');
   await writeFile(resolve(consumerRoot, '.gitignore'), 'node_modules/\n', 'utf8');
@@ -303,10 +317,14 @@ const createConsumer = async (tarballs) => {
     "if (inspectTextIntegrity('broken ???').length !== 1) throw new Error('text inspection failed');",
     "const { listRepositoryFiles } = await import('@openge/forge-repository-files');",
     "const { stringifyDeterministicJson } = await import('@openge/forge-deterministic-json');",
+    "const { validatePortableRelativePath } = await import('@openge/forge-path-safety');",
+    "const { resolvePathWithinRoot } = await import('@openge/forge-path-safety/node');",
     "const { calculateBytesIntegrity } = await import('@openge/forge-artifact-integrity');",
     "await import('@openge/forge-artifact-integrity/node');",
     "const { inspectArchiveEntries } = await import('@openge/forge-archive-safety');",
     "if (stringifyDeterministicJson({ b: 2, a: 1 }) !== '{\"a\":1,\"b\":2}') throw new Error('deterministic JSON failed');",
+    "if (validatePortableRelativePath('assets/file.bin') !== 'assets/file.bin') throw new Error('portable path validation failed');",
+    "if (!resolvePathWithinRoot(process.cwd(), 'assets/file.bin').endsWith('assets\\\\file.bin') && !resolvePathWithinRoot(process.cwd(), 'assets/file.bin').endsWith('assets/file.bin')) throw new Error('root containment failed');",
     "if ((await calculateBytesIntegrity(new TextEncoder().encode('abc'))).byteLength !== 3) throw new Error('artifact integrity failed');",
     "if (inspectArchiveEntries([{ path: 'a.bin', kind: 'file', uncompressedBytes: 3 }]).expandedBytes !== 3) throw new Error('archive safety failed');",
     "if (!(await listRepositoryFiles({ cwd: process.cwd() })).includes('fixture.ts')) throw new Error('repository discovery failed');",
