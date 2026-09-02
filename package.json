@@ -22,7 +22,7 @@
     "lint": "eslint . --max-warnings 0",
     "typecheck": "pnpm run build && pnpm --recursive --if-present run typecheck",
     "test": "pnpm --recursive --if-present run test",
-    "test:scripts": "node --test scripts/tests/publish-if-needed.test.mjs",
+    "test:scripts": "node --test scripts/tests/publish-if-needed.test.mjs scripts/tests/release-workflow.test.mjs",
     "test:coverage": "pnpm --recursive --if-present run test:coverage",
     "pack:check": "node ./scripts/verify-packages.mjs",
     "check": "pnpm run lint && pnpm run typecheck && pnpm run test:scripts && pnpm run test:coverage && pnpm run pack:check",
