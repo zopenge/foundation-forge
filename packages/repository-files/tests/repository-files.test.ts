@@ -62,6 +62,32 @@ describe('repository discovery', () => {
       else process.env.GIT_CEILING_DIRECTORIES = previousCeiling;
     }
   });
+
+  test('recursively lists tracked and untracked files from initialized submodules', async () => {
+    const root = await createRoot();
+    const submodule = await createRoot();
+    await writeFile(join(submodule, 'tracked.ts'), '', 'utf8');
+    await runGit(submodule, ['add', 'tracked.ts']);
+    await runGit(submodule, ['commit', '--quiet', '-m', 'initial']);
+    await runGit(root, [
+      '-c',
+      'protocol.file.allow=always',
+      'submodule',
+      'add',
+      '--quiet',
+      submodule,
+      'modules/nested',
+    ]);
+    await writeFile(join(root, 'root-untracked.ts'), '', 'utf8');
+    await writeFile(join(root, 'modules', 'nested', 'nested-untracked.ts'), '', 'utf8');
+
+    await expect(listRepositoryFiles({ cwd: root, recurseSubmodules: true })).resolves.toEqual([
+      '.gitmodules',
+      'modules/nested/nested-untracked.ts',
+      'modules/nested/tracked.ts',
+      'root-untracked.ts',
+    ]);
+  });
 });
 
 describe('changed repository files', () => {

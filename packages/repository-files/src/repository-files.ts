@@ -55,13 +55,53 @@ export const listRepositoryFiles = async (
   const cwd = resolve(options.cwd ?? process.cwd());
   const root = await findRepositoryRoot(cwd, options);
   const args = ['ls-files', '--cached', '--others', '--exclude-standard', '-z'];
-  if (options.recurseSubmodules === true) args.push('--recurse-submodules');
   const output = await runGitCommand(args, {
     cwd: root,
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
-  return uniqueSortedRepositoryPaths(output.split('\0').filter((path) => path.length > 0));
+  const files = new Set(output.split('\0').filter((path) => path.length > 0));
+  if (options.recurseSubmodules !== true) return uniqueSortedRepositoryPaths([...files]);
+
+  const staged = await runGitCommand(['ls-files', '--stage', '-z'], {
+    cwd: root,
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+  });
+  for (const submodulePath of parseSubmodulePaths(staged)) {
+    const absolutePath = resolve(root, submodulePath);
+    let submoduleRoot: string;
+    try {
+      submoduleRoot = await findRepositoryRoot(absolutePath, options);
+    } catch (error) {
+      if (
+        error instanceof RepositoryFilesError
+        && (
+          error.code === repositoryFilesErrorCodes.invalidPath
+          || error.code === repositoryFilesErrorCodes.repositoryNotFound
+        )
+      ) {
+        continue;
+      }
+      throw error;
+    }
+    if (submoduleRoot !== absolutePath) continue;
+    files.delete(submodulePath);
+    const nestedFiles = await listRepositoryFiles({
+      cwd: submoduleRoot,
+      recurseSubmodules: true,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+    for (const nestedFile of nestedFiles) files.add(`${submodulePath}/${nestedFile}`);
+  }
+  return uniqueSortedRepositoryPaths([...files]);
 };
+
+const parseSubmodulePaths = (output: string): readonly string[] => output
+  .split('\0')
+  .flatMap((entry) => {
+    if (!entry.startsWith('160000 ')) return [];
+    const separator = entry.indexOf('\t');
+    return separator < 0 ? [] : [normalizeRepositoryPath(entry.slice(separator + 1))];
+  });
 
 export const listChangedRepositoryFiles = async (
   options: ChangedRepositoryFilesOptions = {},
