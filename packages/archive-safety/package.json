@@ -1,6 +1,6 @@
 {
   "name": "@openge/forge-archive-safety",
-  "version": "0.1.0-rc.2",
+  "version": "0.1.0",
   "description": "Runtime-neutral archive entry path and resource-limit validation",
   "type": "module",
   "main": "./dist/index.js",
