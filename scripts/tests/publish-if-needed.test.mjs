@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { readFile, rm } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import test from 'node:test';
 
+import { createChangesetsOutputReporter } from '../changesets-output.mjs';
 import {
   assertNextReleasePlan,
   createReleasePlan,
@@ -8,6 +12,24 @@ import {
   hasPrereleaseVersion,
 } from '../release-plan.mjs';
 import { releasePackageDirectories } from '../release-package-directories.mjs';
+
+test('writes Changesets v2 git-tag events to the configured output file', async (context) => {
+  const outputPath = resolve('.tmp', `changesets-output-${randomUUID()}.ndjson`);
+  context.after(async () => rm(outputPath, { force: true }));
+  const reporter = await createChangesetsOutputReporter(outputPath);
+
+  await reporter.recordGitTag({ name: '@openge/example', version: '1.2.3' });
+
+  assert.equal(
+    await readFile(outputPath, 'utf8'),
+    '{"type":"git-tag","tag":"@openge/example@1.2.3","packageName":"@openge/example"}\n',
+  );
+});
+
+test('does not require a Changesets output file outside the action', async () => {
+  const reporter = await createChangesetsOutputReporter(undefined);
+  await reporter.recordGitTag({ name: '@openge/example', version: '1.2.3' });
+});
 
 test('declares every public package in dependency-safe release order', () => {
   assert.deepEqual(releasePackageDirectories, [

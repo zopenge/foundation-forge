@@ -50,8 +50,9 @@ metadata, dist-tags, provenance, and remote Git tags before migrating consumers.
    internal dependency ranges, and the absence of unintended packages.
 2. Merge the Version PR into `main`.
 3. The push-triggered Release workflow runs `pnpm release`, publishes missing
-   stable versions to `latest`, creates provenance, and creates or updates Git
-   tags.
+   stable versions to `latest`, creates provenance, and reports every newly
+   created package tag through the Changesets v2 `CHANGESETS_OUTPUT` NDJSON
+   file. Changesets Action then pushes those tags and creates GitHub Releases.
 4. Verify npm and GitHub before updating consumers.
 
 Do not manually publish a stable version and do not dispatch the prerelease
@@ -116,10 +117,22 @@ republish with another version merely to work around propagation delay.
 - If `npm trust` is unknown, use the pinned npm 11 command from the bootstrap
   section; do not add an npm token as a workaround.
 - If package tags are missing, confirm the workflow uses `git push origin
-  --tags`. `--follow-tags` does not push the lightweight tags created by the
-  release script. If npm already contains the version, recover the exact source
-  commit from its provenance attestation and repair only that tag; never attach
-  a published version to the current commit by assumption.
+  --tags` for manually dispatched prereleases. `--follow-tags` does not push
+  the lightweight tags created by the release script.
+- If Changesets Action warns that it failed to read `CHANGESETS_OUTPUT`, npm
+  publication may have succeeded while stable tags and GitHub Releases were
+  skipped. The custom publish script must initialize that file and append one
+  NDJSON event per newly published package in this exact shape:
+
+  ```json
+  {"type":"git-tag","tag":"@openge/example@1.2.3","packageName":"@openge/example"}
+  ```
+
+  Do not paper over this warning with a general post-action tag push: the Action
+  needs these events to identify packages and create GitHub Releases. If npm
+  already contains the version, recover the exact source commit from its
+  provenance attestation and repair only the missing tag; never attach a
+  published version to the current commit by assumption.
 - If any package publish, provenance, tarball, or consumer verification fails,
   stop downstream migrations. Fix the root cause and rerun the idempotent
   workflow; do not unpublish a package or silently move a dist-tag.
