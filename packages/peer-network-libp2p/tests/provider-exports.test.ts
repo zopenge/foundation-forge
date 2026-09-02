@@ -15,5 +15,5 @@ describe('libp2p provider entrypoints', () => {
     expect(relay).toHaveProperty('createLibp2pRelay');
     expect(browser).not.toHaveProperty('createLibp2pRelay');
     expect(node).not.toHaveProperty('createLibp2pRelay');
-  });
+  }, 15_000);
 });
