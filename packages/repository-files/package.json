@@ -1,6 +1,6 @@
 {
   "name": "@openge/forge-repository-files",
-  "version": "0.1.0-rc.2",
+  "version": "0.1.0",
   "description": "Deterministic read-only Git repository file discovery",
   "type": "module",
   "main": "./dist/index.js",
