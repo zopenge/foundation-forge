@@ -8,6 +8,7 @@ import {
   createReleasePlan,
   executeReleasePlan,
 } from './release-plan.mjs';
+import { createChangesetsOutputReporter } from './changesets-output.mjs';
 import { releasePackageDirectories } from './release-package-directories.mjs';
 
 const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
@@ -73,6 +74,9 @@ function capture(command, args) {
 
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+const changesetsOutputReporter = await createChangesetsOutputReporter(
+  process.env.CHANGESETS_OUTPUT,
+);
 
 async function packPackage(release) {
   const before = new Set(await readdir(packDirectory));
@@ -110,10 +114,12 @@ async function ensureTag(release) {
       throw new Error(`Git tag ${tagName} points to a different commit`);
     }
     process.stdout.write(`Existing tag: ${tagName}\n`);
+    await changesetsOutputReporter.recordGitTag(release);
     return;
   }
   await run('git', ['tag', tagName]);
   process.stdout.write(`New tag: ${tagName}\n`);
+  await changesetsOutputReporter.recordGitTag(release);
 }
 
 async function verifyTag(release) {

@@ -41,3 +41,5 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           version-script: pnpm version:packages
           publish-script: pnpm release
+          push-git-tags: true
+          create-github-releases: true
