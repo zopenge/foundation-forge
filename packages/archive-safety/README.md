@@ -25,6 +25,10 @@ expanded byte totals. It does not download, inspect archive formats, invoke
 system tools, or extract files; consumers and Provider adapters retain those
 responsibilities.
 
+Portable entry validation is shared with `@openge/forge-path-safety`, while
+this package preserves archive directory paths ending in `/` and maps failures
+to its own `ArchiveSafetyError` contract.
+
 ## License
 
 Licensed under the Apache License 2.0.

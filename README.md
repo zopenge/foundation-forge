@@ -17,7 +17,7 @@ capabilities, published as modular `@openge` packages.
 | `@openge/forge-repository-files` | Deterministic read-only Git repository file discovery and ignore filtering |
 | `@openge/forge-deterministic-json` | Strict deterministic JSON validation, sorting, and serialization |
 | `@openge/forge-path-safety` | Cross-runtime portable relative-path validation plus explicit Node.js root containment |
-| `@openge/forge-artifact-integrity` | Cross-runtime byte integrity plus explicit Node.js file verification |
+| `@openge/forge-artifact-integrity` | Cross-runtime byte integrity plus explicit asynchronous and synchronous Node.js file verification |
 | `@openge/forge-archive-safety` | Runtime-neutral archive entry path and resource-limit validation |
 
 ## Installation
