@@ -23,13 +23,15 @@ export const assertNextReleasePlan = (releases) => {
 
 export const executeReleasePlan = async (
   releases,
-  { ensureTag, pack, publish, tag },
+  { ensureTag, pack, publish, tag, verifyTag },
 ) => {
   for (const release of releases) {
     if (release.needsPublish) {
       const tarball = await pack(release);
       await publish(tarball, tag);
+      await ensureTag(release);
+    } else {
+      await verifyTag(release);
     }
-    await ensureTag(release);
   }
 };

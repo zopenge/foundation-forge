@@ -116,6 +116,17 @@ async function ensureTag(release) {
   process.stdout.write(`New tag: ${tagName}\n`);
 }
 
+async function verifyTag(release) {
+  const tagName = `${release.name}@${release.version}`;
+  const existing = await capture('git', ['rev-list', '-n', '1', tagName]);
+  if (existing.code !== 0 || existing.stdout.trim() === '') {
+    throw new Error(
+      `Published version ${release.name}@${release.version} is missing Git tag ${tagName}`,
+    );
+  }
+  process.stdout.write(`Existing tag: ${tagName}\n`);
+}
+
 const tagIndex = process.argv.indexOf('--tag');
 const tag = tagIndex === -1 ? undefined : process.argv[tagIndex + 1];
 if (tagIndex !== -1 && !tag) {
@@ -147,6 +158,7 @@ try {
     pack: packPackage,
     publish: publishTarball,
     tag,
+    verifyTag,
   });
 } finally {
   await rm(packDirectory, { force: true, recursive: true });
