@@ -23,7 +23,7 @@ test('declares every public package in dependency-safe release order', () => {
   ]);
 });
 
-test('publishes only missing versions in declaration order and creates every local tag', async () => {
+test('publishes only missing versions and verifies tags for published versions', async () => {
   const plan = createReleasePlan([
     { name: '@openge/core', version: '0.1.0', versions: new Set(['0.1.0']) },
     { name: '@openge/provider', version: '0.1.0', versions: new Set() },
@@ -38,14 +38,39 @@ test('publishes only missing versions in declaration order and creates every loc
     },
     publish: async (tarball, tag) => calls.push(`publish:${tarball}:${tag}`),
     tag: 'next',
+    verifyTag: async (release) => calls.push(`verify:${release.name}@${release.version}`),
   });
 
   assert.deepEqual(calls, [
-    'tag:@openge/core@0.1.0',
+    'verify:@openge/core@0.1.0',
     'pack:@openge/provider',
     'publish:openge-provider.tgz:next',
     'tag:@openge/provider@0.1.0',
   ]);
+});
+
+test('fails instead of guessing a tag commit for a published version', async () => {
+  const plan = createReleasePlan([
+    { name: '@openge/core', version: '0.1.0', versions: new Set(['0.1.0']) },
+    { name: '@openge/provider', version: '0.1.0', versions: new Set() },
+  ]);
+  const calls = [];
+
+  await assert.rejects(executeReleasePlan(plan, {
+    ensureTag: async (release) => calls.push(`tag:${release.name}`),
+    pack: async (release) => {
+      calls.push(`pack:${release.name}`);
+      return `${release.name}.tgz`;
+    },
+    publish: async () => calls.push('publish'),
+    tag: undefined,
+    verifyTag: async (release) => {
+      calls.push(`verify:${release.name}`);
+      throw new Error('published version is missing its tag');
+    },
+  }), /published version is missing its tag/u);
+
+  assert.deepEqual(calls, ['verify:@openge/core']);
 });
 
 test('allows published stable packages beside unpublished prereleases for the next tag', () => {
@@ -88,6 +113,7 @@ test('does not create a tag or continue when publication fails', async () => {
       throw new Error('publish failed');
     },
     tag: undefined,
+    verifyTag: async () => undefined,
   }), /publish failed/u);
 
   assert.deepEqual(calls, ['pack:@openge/core', 'publish']);

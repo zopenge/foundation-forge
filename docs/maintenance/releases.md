@@ -38,10 +38,11 @@ The release workflow must retain `contents: write`, `pull-requests: write`, and
    - signs npm provenance through GitHub OIDC;
    - pushes the lightweight package tags with `git push origin --tags`.
 
-The release script is idempotent. Re-running the same commit skips versions
-already present in npm and repairs missing local package tags. A successful job
-is not sufficient evidence by itself: verify registry metadata, dist-tags,
-provenance, and remote Git tags before migrating consumers.
+Package publication is idempotent. Re-running the same commit skips versions
+already present in npm and verifies that their package tags already exist. It
+must fail when a published version has no tag instead of guessing which commit
+to tag. A successful job is not sufficient evidence by itself: verify registry
+metadata, dist-tags, provenance, and remote Git tags before migrating consumers.
 
 ## Publish a stable release
 
@@ -116,7 +117,9 @@ republish with another version merely to work around propagation delay.
   section; do not add an npm token as a workaround.
 - If package tags are missing, confirm the workflow uses `git push origin
   --tags`. `--follow-tags` does not push the lightweight tags created by the
-  release script.
+  release script. If npm already contains the version, recover the exact source
+  commit from its provenance attestation and repair only that tag; never attach
+  a published version to the current commit by assumption.
 - If any package publish, provenance, tarball, or consumer verification fails,
   stop downstream migrations. Fix the root cause and rerun the idempotent
   workflow; do not unpublish a package or silently move a dist-tag.
