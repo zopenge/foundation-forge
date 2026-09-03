@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import test from 'node:test';
 
 import { createChangesetsOutputReporter } from '../changesets-output.mjs';
+import { parseOneTimePassword } from '../bootstrap-otp.mjs';
 import { createPackageManagerInvocation } from '../package-manager-command.mjs';
 import {
   assertBootstrapReleasePlan,
@@ -33,6 +34,12 @@ test('writes Changesets v2 git-tag events to the configured output file', async 
 test('does not require a Changesets output file outside the action', async () => {
   const reporter = await createChangesetsOutputReporter(undefined);
   await reporter.recordGitTag({ name: '@openge/example', version: '1.2.3' });
+});
+
+test('accepts only a six-digit bootstrap one-time password', () => {
+  assert.equal(parseOneTimePassword('123456'), '123456');
+  assert.throws(() => parseOneTimePassword('12345'), /six digits/u);
+  assert.throws(() => parseOneTimePassword('12345x'), /six digits/u);
 });
 
 test('runs Windows pnpm through its JavaScript CLI instead of a cmd shim', () => {

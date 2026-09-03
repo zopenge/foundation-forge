@@ -37,7 +37,7 @@ test('documents and exposes the guarded new-package bootstrap command', async ()
 
   assert.equal(
     packageJson.scripts['release:bootstrap'],
-    'pnpm run check && node ./scripts/publish-if-needed.mjs --tag next --bootstrap',
+    'pnpm run check && node ./scripts/bootstrap-publish.mjs',
   );
   assert.match(runbook, /pnpm release:bootstrap/u);
   assert.match(runbook, /spawn\('pnpm\.cmd'.*shell: false/u);

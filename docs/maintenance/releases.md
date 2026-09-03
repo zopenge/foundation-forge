@@ -73,7 +73,9 @@ exists. The first package version is therefore a one-time exception:
    pnpm release:bootstrap
    ```
 
-   Consumers must not adopt this bootstrap version.
+   完整检查结束后，命令会在交互式终端中以掩码方式读取六位 OTP；验证码只通过
+   子进程环境传给 npm，不进入命令参数、Git 或日志。Consumers must not
+   adopt this bootstrap version.
 3. Configure Trusted Publishing. The verified command is:
 
    ```sh

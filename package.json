@@ -28,7 +28,7 @@
     "check": "pnpm run lint && pnpm run typecheck && pnpm run test:scripts && pnpm run test:coverage && pnpm run pack:check",
     "changeset": "changeset",
     "version:packages": "changeset version",
-    "release:bootstrap": "pnpm run check && node ./scripts/publish-if-needed.mjs --tag next --bootstrap",
+    "release:bootstrap": "pnpm run check && node ./scripts/bootstrap-publish.mjs",
     "release:next": "pnpm run check && node ./scripts/publish-if-needed.mjs --tag next",
     "release": "pnpm run check && node ./scripts/publish-if-needed.mjs"
   },
