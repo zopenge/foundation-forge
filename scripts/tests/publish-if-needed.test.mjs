@@ -41,7 +41,14 @@ test('declares every public package in dependency-safe release order', () => {
     'packages/path-safety',
     'packages/artifact-integrity',
     'packages/archive-safety',
+    'packages/archive-zip',
     'packages/text-integrity',
+    'packages/json-lines',
+    'packages/server-sent-events',
+    'packages/workspace-graph',
+    'packages/workspace-pnpm',
+    'packages/process-control',
+    'packages/process-control-node',
   ]);
 });
 

@@ -64,6 +64,41 @@ const packageDefinitions = [
     entries: ['.'],
     name: '@openge/forge-archive-safety',
   },
+  {
+    directory: 'packages/archive-zip',
+    entries: ['.'],
+    name: '@openge/forge-archive-zip',
+  },
+  {
+    directory: 'packages/json-lines',
+    entries: ['.'],
+    name: '@openge/forge-json-lines',
+  },
+  {
+    directory: 'packages/server-sent-events',
+    entries: ['.'],
+    name: '@openge/forge-server-sent-events',
+  },
+  {
+    directory: 'packages/workspace-graph',
+    entries: ['.'],
+    name: '@openge/forge-workspace-graph',
+  },
+  {
+    directory: 'packages/workspace-pnpm',
+    entries: ['.'],
+    name: '@openge/forge-workspace-pnpm',
+  },
+  {
+    directory: 'packages/process-control',
+    entries: ['.'],
+    name: '@openge/forge-process-control',
+  },
+  {
+    directory: 'packages/process-control-node',
+    entries: ['.'],
+    name: '@openge/forge-process-control-node',
+  },
 ];
 
 const run = (command, args, options = {}) => {
@@ -215,6 +250,29 @@ const verifyBrowserBoundary = async () => {
     'packages/archive-safety/src/errors.ts',
     'packages/archive-safety/src/index.ts',
     'packages/archive-safety/src/limits.ts',
+    'packages/archive-zip/src/central-directory.ts',
+    'packages/archive-zip/src/codec.ts',
+    'packages/archive-zip/src/contracts.ts',
+    'packages/archive-zip/src/errors.ts',
+    'packages/archive-zip/src/index.ts',
+    'packages/json-lines/src/codec.ts',
+    'packages/json-lines/src/contracts.ts',
+    'packages/json-lines/src/decoder.ts',
+    'packages/json-lines/src/errors.ts',
+    'packages/json-lines/src/index.ts',
+    'packages/process-control/src/contracts.ts',
+    'packages/process-control/src/errors.ts',
+    'packages/process-control/src/index.ts',
+    'packages/process-control/src/listeners.ts',
+    'packages/server-sent-events/src/contracts.ts',
+    'packages/server-sent-events/src/decoder.ts',
+    'packages/server-sent-events/src/encoder.ts',
+    'packages/server-sent-events/src/errors.ts',
+    'packages/server-sent-events/src/index.ts',
+    'packages/workspace-graph/src/contracts.ts',
+    'packages/workspace-graph/src/errors.ts',
+    'packages/workspace-graph/src/graph.ts',
+    'packages/workspace-graph/src/index.ts',
   ];
   const forbidden = [/from ['"]node:/u, /from ['"]ws['"]/u, /\.\/server\.js/u];
   for (const relativePath of browserFiles) {
@@ -272,6 +330,14 @@ const createConsumer = async (tarballs) => {
   if (typeof pathSafetyTarballReference !== 'string') {
     throw new Error('missing Path Safety tarball dependency');
   }
+  const workspaceGraphTarballReference = dependencies['@openge/forge-workspace-graph'];
+  if (typeof workspaceGraphTarballReference !== 'string') {
+    throw new Error('missing Workspace Graph tarball dependency');
+  }
+  const processControlTarballReference = dependencies['@openge/forge-process-control'];
+  if (typeof processControlTarballReference !== 'string') {
+    throw new Error('missing Process Control tarball dependency');
+  }
   await mkdir(consumerRoot, { recursive: true });
   await writeFile(resolve(consumerRoot, 'package.json'), `${JSON.stringify({
     dependencies,
@@ -281,6 +347,8 @@ const createConsumer = async (tarballs) => {
     version: '0.0.0',
   }, null, 2)}\n`, 'utf8');
   await writeFile(resolve(consumerRoot, 'pnpm-workspace.yaml'), [
+    'packages: []',
+    '',
     'allowBuilds:',
     '  node-datachannel: true',
     '',
@@ -288,6 +356,8 @@ const createConsumer = async (tarballs) => {
     `  "@openge/forge-peer-network": "${coreTarballReference}"`,
     `  "@openge/forge-repository-files": "${repositoryFilesTarballReference}"`,
     `  "@openge/forge-path-safety": "${pathSafetyTarballReference}"`,
+    `  "@openge/forge-workspace-graph": "${workspaceGraphTarballReference}"`,
+    `  "@openge/forge-process-control": "${processControlTarballReference}"`,
     '',
     'packageExtensions:',
     '  "react-native-webrtc@*":',
@@ -322,12 +392,28 @@ const createConsumer = async (tarballs) => {
     "const { calculateBytesIntegrity } = await import('@openge/forge-artifact-integrity');",
     "const { calculateBytesIntegritySync } = await import('@openge/forge-artifact-integrity/node');",
     "const { inspectArchiveEntries } = await import('@openge/forge-archive-safety');",
+    "const { decodeZipArchive, encodeZipArchive } = await import('@openge/forge-archive-zip');",
+    "const { parseJsonLines } = await import('@openge/forge-json-lines');",
+    "const { createServerSentEventDecoder } = await import('@openge/forge-server-sent-events');",
+    "const { createWorkspaceGraph, sortWorkspacePackages } = await import('@openge/forge-workspace-graph');",
+    "const { readPnpmWorkspace } = await import('@openge/forge-workspace-pnpm');",
+    "const { selectTcpListeners } = await import('@openge/forge-process-control');",
+    "await import('@openge/forge-process-control-node');",
     "if (stringifyDeterministicJson({ b: 2, a: 1 }) !== '{\"a\":1,\"b\":2}') throw new Error('deterministic JSON failed');",
     "if (validatePortableRelativePath('assets/file.bin') !== 'assets/file.bin') throw new Error('portable path validation failed');",
     "if (!resolvePathWithinRoot(process.cwd(), 'assets/file.bin').endsWith('assets\\\\file.bin') && !resolvePathWithinRoot(process.cwd(), 'assets/file.bin').endsWith('assets/file.bin')) throw new Error('root containment failed');",
     "if ((await calculateBytesIntegrity(new TextEncoder().encode('abc'))).byteLength !== 3) throw new Error('artifact integrity failed');",
     "if (calculateBytesIntegritySync(new TextEncoder().encode('abc')).byteLength !== 3) throw new Error('synchronous artifact integrity failed');",
     "if (inspectArchiveEntries([{ path: 'a.bin', kind: 'file', uncompressedBytes: 3 }]).expandedBytes !== 3) throw new Error('archive safety failed');",
+    "const zip = encodeZipArchive([{ bytes: new TextEncoder().encode('a'), kind: 'file', path: 'a.txt' }], { compression: 'store' });",
+    "if (new TextDecoder().decode(decodeZipArchive(zip).entries[0].bytes) !== 'a') throw new Error('ZIP archive failed');",
+    "if (parseJsonLines('{\"a\":1}\\n').length !== 1) throw new Error('JSON Lines failed');",
+    "const eventDecoder = createServerSentEventDecoder();",
+    "if (eventDecoder.push(new TextEncoder().encode('data: ok\\n\\n'))[0]?.data !== 'ok') throw new Error('SSE failed');",
+    "const workspaceGraph = createWorkspaceGraph([{ name: 'a', relativeDirectory: 'a', dependencies: [] }]);",
+    "if (sortWorkspacePackages(workspaceGraph, { dependencyKinds: ['dependencies'] })[0] !== 'a') throw new Error('workspace graph failed');",
+    "if ((await readPnpmWorkspace({ cwd: process.cwd() })).packages.length !== 0) throw new Error('pnpm workspace failed');",
+    "if (selectTcpListeners([], { ports: [3000] }).length !== 0) throw new Error('process control failed');",
     "if (!(await listRepositoryFiles({ cwd: process.cwd() })).includes('fixture.ts')) throw new Error('repository discovery failed');",
     "console.log('Clean tarball consumer imported every public entry.');",
     '',

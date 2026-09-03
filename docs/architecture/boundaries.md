@@ -67,3 +67,23 @@
 ## Archive Safety 边界
 
 `@openge/forge-archive-safety` 组合 Path Safety 的便携路径规则，并保留归档目录条目的尾部 `/` contract 与独立错误类型。它只验证归档条目路径、条目类型、展开大小和条目数量。归档格式解析、下载、临时目录、系统命令与实际解压属于 Provider 或消费者，不进入该公共包。
+
+`@openge/forge-archive-zip` 是显式 ZIP32 Provider。它在解压前解析中央目录并执行 Archive Safety 检查，拒绝 ZIP64、加密、不支持的压缩方法、符号链接、重复路径和不一致的本地文件头。它只处理内存中的字节，不拥有下载、文件系统写入、缓存或产品制品语义。
+
+## 流式文本协议边界
+
+`@openge/forge-json-lines` 只负责 UTF-8 JSON Lines 的增量分帧、编码、解析和字节上限。它不拥有进程标准流、HTTP 响应、日志语义、重试策略或消息 schema。
+
+`@openge/forge-server-sent-events` 只实现 SSE 字段、事件边界、注释忽略、UTF-8 解码和事件大小上限。HTTP 连接、鉴权、重连、心跳、业务事件类型和 UI 展示仍由消费者持有。
+
+## Workspace Graph 边界
+
+`@openge/forge-workspace-graph` 是无文件系统依赖的 Core，只表达包、依赖种类、未解析 workspace 依赖诊断、环检测、可达性和拓扑排序。它不执行构建、发布、版本计算或任务调度。
+
+`@openge/forge-workspace-pnpm` 是显式 Node.js Provider，只读取调用方指定的 `pnpm-workspace.yaml` 与包清单，并转换为 Core contract。它不自动尝试其他包管理器，也不修改 manifest、lockfile 或 workspace 配置。
+
+## Process Control 边界
+
+`@openge/forge-process-control` 只定义进程身份、TCP 监听项、显式终止策略、稳定筛选和结构化错误，不访问操作系统。
+
+`@openge/forge-process-control-node` 提供显式 Windows 与 Posix Provider；调用方必须选择平台和监听发现后端，不存在运行时自动选择或失败回退。终止前必须重新校验 PID 与启动标识，避免 PID 复用导致误杀。服务管理、端口归属策略、进程启动、日志和产品恢复流程仍由消费者持有。

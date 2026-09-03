@@ -19,6 +19,13 @@ capabilities, published as modular `@openge` packages.
 | `@openge/forge-path-safety` | Cross-runtime portable relative-path validation plus explicit Node.js root containment |
 | `@openge/forge-artifact-integrity` | Cross-runtime byte integrity plus explicit asynchronous and synchronous Node.js file verification |
 | `@openge/forge-archive-safety` | Runtime-neutral archive entry path and resource-limit validation |
+| `@openge/forge-archive-zip` | Runtime-neutral deterministic ZIP32 encoding, inspection, and bounded decoding |
+| `@openge/forge-json-lines` | Incremental, bounded JSON Lines encoding and decoding across arbitrary byte chunks |
+| `@openge/forge-server-sent-events` | Incremental Server-Sent Events framing and parsing without transport ownership |
+| `@openge/forge-workspace-graph` | Pure deterministic workspace dependency graph construction and traversal |
+| `@openge/forge-workspace-pnpm` | Explicit Node.js provider for reading pnpm workspaces into neutral graphs |
+| `@openge/forge-process-control` | Provider-neutral process identity, listener selection, and termination contracts |
+| `@openge/forge-process-control-node` | Explicit Windows and Posix process discovery and termination providers |
 
 ## Installation
 
@@ -76,6 +83,26 @@ pnpm add @openge/forge-deterministic-json \
   @openge/forge-path-safety \
   @openge/forge-artifact-integrity \
   @openge/forge-archive-safety
+```
+
+For bounded streaming protocols:
+
+```sh
+pnpm add @openge/forge-json-lines @openge/forge-server-sent-events
+```
+
+For ZIP32 archives with pre-decompression safety checks:
+
+```sh
+pnpm add @openge/forge-archive-zip
+```
+
+For workspace tooling or process control, install the neutral Core together with
+the explicit Node.js provider you use:
+
+```sh
+pnpm add -D @openge/forge-workspace-graph @openge/forge-workspace-pnpm
+pnpm add -D @openge/forge-process-control @openge/forge-process-control-node
 ```
 
 ## Example
