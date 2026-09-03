@@ -1,6 +1,6 @@
 {
   "name": "@openge/forge-json-lines",
-  "version": "0.1.0-rc.0",
+  "version": "0.1.0-rc.1",
   "description": "Runtime-neutral incremental JSON Lines encoding and decoding",
   "type": "module",
   "main": "./dist/index.js",

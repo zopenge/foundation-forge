@@ -109,9 +109,11 @@ Windows 下不要使用 `spawn('pnpm.cmd', args, { shell: false })` 或同类 np
 启动 pnpm/npm 的 JavaScript CLI，相关跨平台行为由脚本测试锁定。不能假定
 `pnpm exec` 一定设置 `npm_execpath`；缺少该变量时，应从 `PNPM_HOME` 或
 `PATH` 中的 `pnpm.cmd` shim 解析实际 `pnpm.cjs`，并继续用 `shell: false`
-启动。若 Codex 内置 Node 因当前 Windows 不支持 CET 而无法启动，保留系统
-`PATH`，在仓库目录运行 `pnpm exec node .\scripts\bootstrap-publish.mjs`，
-不要把不兼容的内置 Node 目录写到 `PATH` 前部。
+启动。若 Codex 内置 Node 因当前 Windows 不支持 CET 而无法启动，应选择本机
+另一个满足根 `engines.node` 的 Node，并先确认 `node --version` 与
+`pnpm exec node --version` 均符合要求，再在同一终端和仓库目录运行引导命令；
+不要使用低于版本门槛的系统 Node，也不要把不兼容的内置 Node 目录写到
+`PATH` 前部。
 
 Only the first package creation and publisher registration may require
 interactive npm authentication. Later release candidates and stable releases
