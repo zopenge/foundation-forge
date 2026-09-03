@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -11,6 +11,7 @@ import {
   loadPackageVerification,
   verifyBrowserBoundaries,
 } from '../package-verification.mjs';
+import { preparePackagesForPacking } from '../package-consumer-runner.mjs';
 
 const createPackage = async (context, {
   bins = [],
@@ -146,4 +147,22 @@ test('preserves workspace policy while appending generated overrides', () => {
     '  "@example/core": "file:../core.tgz"',
     '',
   ].join('\n'));
+});
+
+test('removes stale build output before rebuilding packages for packing', async (context) => {
+  const packageRoot = await mkdtemp(join(tmpdir(), 'foundation-forge-clean-build-'));
+  context.after(() => rm(packageRoot, { force: true, recursive: true }));
+  await mkdir(join(packageRoot, 'dist'), { recursive: true });
+  await writeFile(join(packageRoot, 'dist', 'stale.js'), 'stale\n');
+
+  await preparePackagesForPacking({
+    build: async () => {
+      await assert.rejects(readdir(join(packageRoot, 'dist')), { code: 'ENOENT' });
+      await mkdir(join(packageRoot, 'dist'), { recursive: true });
+      await writeFile(join(packageRoot, 'dist', 'fresh.js'), 'fresh\n');
+    },
+    model: { packages: [{ packageRoot }] },
+  });
+
+  assert.deepEqual(await readdir(join(packageRoot, 'dist')), ['fresh.js']);
 });

@@ -210,6 +210,16 @@ const packPackages = async (model, verificationRoot) => {
   return { extractedPackages, tarballs };
 };
 
+export const preparePackagesForPacking = async ({
+  build = async () => runPnpm(['run', 'build'], { cwd: model.repositoryRoot }),
+  model,
+}) => {
+  await Promise.all(model.packages.map(({ packageRoot }) => (
+    rm(resolve(packageRoot, 'dist'), { force: true, recursive: true })
+  )));
+  await build();
+};
+
 const packageInstallationPath = (consumerRoot, packageName) => resolve(
   consumerRoot,
   'node_modules',
@@ -278,6 +288,7 @@ export const verifyLocalPackages = async ({ repositoryRoot, verificationRoot }) 
     await verifyRepositoryHygiene(repositoryRoot);
     await verifyDocumentationLinks(repositoryRoot);
     for (const packageValue of model.packages) await verifyManifest(packageValue, model.rootManifest);
+    await preparePackagesForPacking({ model });
     const { extractedPackages, tarballs } = await packPackages(model, verificationRoot);
     await verifyBrowserBoundaries(extractedPackages);
     const consumerRoot = resolve(verificationRoot, 'consumer');
