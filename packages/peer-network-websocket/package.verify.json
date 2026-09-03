@@ -1,0 +1,6 @@
+{
+  "browserExports": [
+    "./client",
+    "./hub"
+  ]
+}

@@ -20,7 +20,6 @@ import {
   executeReleasePlan,
   hasPrereleaseVersion,
 } from '../release-plan.mjs';
-import { releasePackageDirectories } from '../release-package-directories.mjs';
 
 test('writes Changesets v2 git-tag events to the configured output file', async (context) => {
   const outputPath = resolve('.tmp', `changesets-output-${randomUUID()}.ndjson`);
@@ -93,29 +92,6 @@ test('uses package-manager executables directly outside Windows', () => {
     args: ['publish'],
     command: 'npm',
   });
-});
-
-test('declares every public package in dependency-safe release order', () => {
-  assert.deepEqual(releasePackageDirectories, [
-    'packages/peer-network',
-    'packages/peer-network-libp2p',
-    'packages/peer-network-websocket',
-    'packages/repository-files',
-    'packages/deterministic-json',
-    'packages/path-safety',
-    'packages/artifact-integrity',
-    'packages/archive-safety',
-    'packages/archive-zip',
-    'packages/text-integrity',
-    'packages/json-lines',
-    'packages/server-sent-events',
-    'packages/workspace-graph',
-    'packages/workspace-checks',
-    'packages/workspace-pnpm',
-    'packages/workspace-checks-pnpm',
-    'packages/process-control',
-    'packages/process-control-node',
-  ]);
 });
 
 test('publishes only missing versions and verifies tags for published versions', async () => {

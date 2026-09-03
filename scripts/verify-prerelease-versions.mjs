@@ -1,26 +1,22 @@
-import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 import {
   assertTrustedPublishingReady,
   hasPrereleaseVersion,
 } from './release-plan.mjs';
-import { releasePackageDirectories } from './release-package-directories.mjs';
+import { loadReleasePolicy } from './release-policy.mjs';
+import { discoverWorkspacePackageModel } from './workspace-packages.mjs';
 
-const packages = [];
-for (const directory of releasePackageDirectories) {
-  const relativePath = `../${directory}/package.json`;
-  const path = fileURLToPath(new URL(relativePath, import.meta.url));
-  const manifest = JSON.parse(await readFile(path, 'utf8'));
-  if (typeof manifest.name !== 'string' || typeof manifest.version !== 'string') {
-    throw new Error(`Invalid package metadata: ${relativePath}`);
-  }
-  packages.push({ name: manifest.name, version: manifest.version });
-}
+const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
+const [policy, workspace] = await Promise.all([
+  loadReleasePolicy(repositoryRoot),
+  discoverWorkspacePackageModel({ repositoryRoot }),
+]);
+const packages = workspace.packages.map(({ name, version }) => ({ name, version }));
 
 const packageStates = await Promise.all(packages.map(async (manifest) => {
   const response = await globalThis.fetch(
-    `https://registry.npmjs.org/${encodeURIComponent(manifest.name)}`,
+    `${policy.registry}/${encodeURIComponent(manifest.name)}`,
     { headers: { accept: 'application/json' } },
   );
   if (response.status === 404) {

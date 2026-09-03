@@ -20,6 +20,7 @@
 
 ## Dependencies and releases
 
+- Repository automation must be metadata- and convention-driven. Central scripts must not duplicate package names, public entries, dependency mappings, release order, versions, or repository coordinates when they can be derived from authoritative manifests, workspace configuration, Git metadata, or workflow configuration. Irreducible package-specific verification must live with the package and be discovered by convention.
 - Pin dependencies to exact versions. Public packages declare only the direct dependencies required at runtime.
 - Do not commit npm tokens, authenticated `.npmrc` files, lockfiles from other package managers, or locally packed artifacts.
 - Agent-generated working plans are transient artifacts. Keep them in ignored temporary storage and never force-add `docs/superpowers/` or another tool-owned planning directory to the public documentation tree.

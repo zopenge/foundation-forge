@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdir, readdir, rm } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
@@ -15,22 +15,14 @@ import {
   createPackageManagerInvocation,
   findNpmCliPath,
 } from './package-manager-command.mjs';
-import { releasePackageDirectories } from './release-package-directories.mjs';
+import { loadReleasePolicy } from './release-policy.mjs';
+import { discoverWorkspacePackageModel } from './workspace-packages.mjs';
 
 const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
 const packDirectory = resolve(repositoryRoot, '.tmp', 'release-packs');
 
-async function readPackage(directory) {
-  const packageJsonPath = resolve(repositoryRoot, directory, 'package.json');
-  const packageJson = JSON.parse(await readFile(packageJsonPath, 'utf8'));
-  if (typeof packageJson.name !== 'string' || typeof packageJson.version !== 'string') {
-    throw new Error(`Invalid package metadata: ${packageJsonPath}`);
-  }
-  return { name: packageJson.name, version: packageJson.version };
-}
-
-async function publishedVersions(packageName) {
-  const response = await globalThis.fetch(`https://registry.npmjs.org/${encodeURIComponent(packageName)}`, {
+async function publishedVersions(packageName, registry) {
+  const response = await globalThis.fetch(`${registry}/${encodeURIComponent(packageName)}`, {
     headers: { accept: 'application/json' },
   });
   if (response.status === 404) {
@@ -156,10 +148,14 @@ if (bootstrap && tag !== 'next') {
   throw new Error('Bootstrap publishing requires --tag next');
 }
 
-const packages = await Promise.all(releasePackageDirectories.map(readPackage));
+const [policy, workspace] = await Promise.all([
+  loadReleasePolicy(repositoryRoot),
+  discoverWorkspacePackageModel({ repositoryRoot }),
+]);
+const packages = workspace.packages.map(({ name, version }) => ({ name, version }));
 const states = await Promise.all(packages.map(async (packageJson) => ({
   ...packageJson,
-  versions: await publishedVersions(packageJson.name),
+  versions: await publishedVersions(packageJson.name, policy.registry),
 })));
 const releasePlan = createReleasePlan(states);
 if (bootstrap) {
