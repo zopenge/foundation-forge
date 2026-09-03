@@ -118,7 +118,13 @@ async function readWorkspacePackage(cwd: string, directory: string): Promise<Wor
 }
 
 function readWorkspacePatterns(value: unknown, path: string): readonly string[] {
-  if (!isRecord(value) || !Array.isArray(value.packages)) {
+  if (!isRecord(value)) {
+    throw new WorkspacePnpmError(workspacePnpmErrorCodes.invalidWorkspaceManifest, { path });
+  }
+  if (value.packages === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value.packages)) {
     throw new WorkspacePnpmError(workspacePnpmErrorCodes.invalidWorkspaceManifest, { path });
   }
   const patterns: string[] = [];

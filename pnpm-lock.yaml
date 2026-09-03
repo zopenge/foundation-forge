@@ -132,6 +132,24 @@ importers:
         specifier: workspace:^
         version: link:../repository-files
 
+  packages/workspace-checks:
+    dependencies:
+      '@openge/forge-deterministic-json':
+        specifier: workspace:^
+        version: link:../deterministic-json
+      '@openge/forge-workspace-graph':
+        specifier: workspace:^
+        version: link:../workspace-graph
+
+  packages/workspace-checks-pnpm:
+    dependencies:
+      '@openge/forge-workspace-checks':
+        specifier: workspace:^
+        version: link:../workspace-checks
+      '@openge/forge-workspace-pnpm':
+        specifier: workspace:^
+        version: link:../workspace-pnpm
+
   packages/workspace-graph: {}
 
   packages/workspace-pnpm:

@@ -85,9 +85,19 @@ const packageDefinitions = [
     name: '@openge/forge-workspace-graph',
   },
   {
+    directory: 'packages/workspace-checks',
+    entries: ['.'],
+    name: '@openge/forge-workspace-checks',
+  },
+  {
     directory: 'packages/workspace-pnpm',
     entries: ['.'],
     name: '@openge/forge-workspace-pnpm',
+  },
+  {
+    directory: 'packages/workspace-checks-pnpm',
+    entries: ['.'],
+    name: '@openge/forge-workspace-checks-pnpm',
   },
   {
     directory: 'packages/process-control',
@@ -273,6 +283,11 @@ const verifyBrowserBoundary = async () => {
     'packages/workspace-graph/src/errors.ts',
     'packages/workspace-graph/src/graph.ts',
     'packages/workspace-graph/src/index.ts',
+    'packages/workspace-checks/src/contracts.ts',
+    'packages/workspace-checks/src/errors.ts',
+    'packages/workspace-checks/src/index.ts',
+    'packages/workspace-checks/src/package-cycle-check.ts',
+    'packages/workspace-checks/src/run.ts',
   ];
   const forbidden = [/from ['"]node:/u, /from ['"]ws['"]/u, /\.\/server\.js/u];
   for (const relativePath of browserFiles) {
@@ -334,6 +349,14 @@ const createConsumer = async (tarballs) => {
   if (typeof workspaceGraphTarballReference !== 'string') {
     throw new Error('missing Workspace Graph tarball dependency');
   }
+  const workspaceChecksTarballReference = dependencies['@openge/forge-workspace-checks'];
+  if (typeof workspaceChecksTarballReference !== 'string') {
+    throw new Error('missing Workspace Checks tarball dependency');
+  }
+  const workspaceChecksPnpmTarballReference = dependencies['@openge/forge-workspace-checks-pnpm'];
+  if (typeof workspaceChecksPnpmTarballReference !== 'string') {
+    throw new Error('missing Workspace Checks pnpm tarball dependency');
+  }
   const processControlTarballReference = dependencies['@openge/forge-process-control'];
   if (typeof processControlTarballReference !== 'string') {
     throw new Error('missing Process Control tarball dependency');
@@ -357,6 +380,8 @@ const createConsumer = async (tarballs) => {
     `  "@openge/forge-repository-files": "${repositoryFilesTarballReference}"`,
     `  "@openge/forge-path-safety": "${pathSafetyTarballReference}"`,
     `  "@openge/forge-workspace-graph": "${workspaceGraphTarballReference}"`,
+    `  "@openge/forge-workspace-checks": "${workspaceChecksTarballReference}"`,
+    `  "@openge/forge-workspace-checks-pnpm": "${workspaceChecksPnpmTarballReference}"`,
     `  "@openge/forge-process-control": "${processControlTarballReference}"`,
     '',
     'packageExtensions:',
@@ -384,7 +409,7 @@ const createConsumer = async (tarballs) => {
     "await import('@openge/forge-peer-network-websocket/server');",
     "const { inspectTextIntegrity } = await import('@openge/forge-text-integrity');",
     "await import('@openge/forge-text-integrity/node');",
-    "if (inspectTextIntegrity('broken ???').length !== 1) throw new Error('text inspection failed');",
+    "if (inspectTextIntegrity('broken ???').length !== 1) throw new Error('text inspection failed');", // check-mojibake-ignore-line
     "const { listRepositoryFiles } = await import('@openge/forge-repository-files');",
     "const { stringifyDeterministicJson } = await import('@openge/forge-deterministic-json');",
     "const { validatePortableRelativePath } = await import('@openge/forge-path-safety');",
@@ -396,7 +421,9 @@ const createConsumer = async (tarballs) => {
     "const { parseJsonLines } = await import('@openge/forge-json-lines');",
     "const { createServerSentEventDecoder } = await import('@openge/forge-server-sent-events');",
     "const { createWorkspaceGraph, sortWorkspacePackages } = await import('@openge/forge-workspace-graph');",
+    "const { createPackageCycleCheck, runWorkspaceChecks } = await import('@openge/forge-workspace-checks');",
     "const { readPnpmWorkspace } = await import('@openge/forge-workspace-pnpm');",
+    "const { checkPnpmWorkspace } = await import('@openge/forge-workspace-checks-pnpm');",
     "const { selectTcpListeners } = await import('@openge/forge-process-control');",
     "await import('@openge/forge-process-control-node');",
     "if (stringifyDeterministicJson({ b: 2, a: 1 }) !== '{\"a\":1,\"b\":2}') throw new Error('deterministic JSON failed');",
@@ -412,7 +439,9 @@ const createConsumer = async (tarballs) => {
     "if (eventDecoder.push(new TextEncoder().encode('data: ok\\n\\n'))[0]?.data !== 'ok') throw new Error('SSE failed');",
     "const workspaceGraph = createWorkspaceGraph([{ name: 'a', relativeDirectory: 'a', dependencies: [] }]);",
     "if (sortWorkspacePackages(workspaceGraph, { dependencyKinds: ['dependencies'] })[0] !== 'a') throw new Error('workspace graph failed');",
+    "if (!runWorkspaceChecks(workspaceGraph, [createPackageCycleCheck()]).passed) throw new Error('workspace checks failed');",
     "if ((await readPnpmWorkspace({ cwd: process.cwd() })).packages.length !== 0) throw new Error('pnpm workspace failed');",
+    "if (!(await checkPnpmWorkspace({ cwd: process.cwd() })).passed) throw new Error('pnpm workspace checks failed');",
     "if (selectTcpListeners([], { ports: [3000] }).length !== 0) throw new Error('process control failed');",
     "if (!(await listRepositoryFiles({ cwd: process.cwd() })).includes('fixture.ts')) throw new Error('repository discovery failed');",
     "console.log('Clean tarball consumer imported every public entry.');",
@@ -421,7 +450,7 @@ const createConsumer = async (tarballs) => {
 
   run('git', ['init', '--quiet'], { cwd: consumerRoot });
   const fixturePath = resolve(consumerRoot, 'fixture.ts');
-  await writeFile(fixturePath, 'broken ???\n', 'utf8');
+  await writeFile(fixturePath, 'broken ???\n', 'utf8'); // check-mojibake-ignore-line
   run('git', ['add', '.gitignore', 'fixture.ts'], { cwd: consumerRoot });
   runPnpm(['install', '--prefer-offline', '--frozen-lockfile=false'], {
     cwd: consumerRoot,
@@ -449,7 +478,42 @@ const createConsumer = async (tarballs) => {
       `stderr: ${cliResult.stderr}`,
     ].join('\n'));
   }
-  return `${importOutput}\nClean tarball consumer executed the text integrity CLI fixture.`;
+  const cleanWorkspacePath = resolve(consumerRoot, 'workspace-checks-clean');
+  await mkdir(resolve(cleanWorkspacePath, 'packages', 'a'), { recursive: true });
+  await writeFile(resolve(cleanWorkspacePath, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n', 'utf8');
+  await writeFile(resolve(cleanWorkspacePath, 'packages', 'a', 'package.json'), JSON.stringify({
+    name: 'a',
+  }), 'utf8');
+  const cycleWorkspacePath = resolve(consumerRoot, 'workspace-checks-cycle');
+  await mkdir(resolve(cycleWorkspacePath, 'packages', 'a'), { recursive: true });
+  await mkdir(resolve(cycleWorkspacePath, 'packages', 'b'), { recursive: true });
+  await writeFile(resolve(cycleWorkspacePath, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n', 'utf8');
+  await writeFile(resolve(cycleWorkspacePath, 'packages', 'a', 'package.json'), JSON.stringify({
+    dependencies: { b: 'workspace:*' },
+    name: 'a',
+  }), 'utf8');
+  await writeFile(resolve(cycleWorkspacePath, 'packages', 'b', 'package.json'), JSON.stringify({
+    dependencies: { a: 'workspace:*' },
+    name: 'b',
+  }), 'utf8');
+  const cleanWorkspaceOutput = runPnpm([
+    'exec',
+    'forge-workspace-checks',
+    '--cwd', cleanWorkspacePath,
+    '--check', 'package-cycles',
+  ], { cwd: consumerRoot });
+  if (!cleanWorkspaceOutput.includes('Workspace checks passed.')) {
+    throw new Error('workspace checks CLI clean fixture did not write the expected stdout');
+  }
+  const cycleWorkspaceResult = spawnSync(process.execPath, [pnpmCli, 'exec', 'forge-workspace-checks', '--cwd', cycleWorkspacePath, '--check', 'package-cycles'], {
+    cwd: consumerRoot,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (cycleWorkspaceResult.status !== 1 || cycleWorkspaceResult.stdout.length !== 0 || !cycleWorkspaceResult.stderr.includes('a -> b -> a')) {
+    throw new Error('workspace checks CLI cycle fixture did not report the expected stderr');
+  }
+  return `${importOutput}\nClean tarball consumer executed CLI fixtures.`;
 };
 
 await rm(verificationRoot, { force: true, recursive: true });

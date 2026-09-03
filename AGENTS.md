@@ -3,9 +3,10 @@
 ## Capability boundaries
 
 - This repository accepts only domain-neutral capabilities that can be versioned independently and have at least two independent consumers.
+- Dependencies among packages must form a directed acyclic graph and follow the documented dependency direction. Reverse dependencies and dependency cycles, whether direct or transitive, are strictly forbidden.
 - Do not introduce AI agent, game, room, Lobby, matchmaking, business workflow, rendering, or product-specific storage semantics.
 - Core contracts must not depend on Providers. Providers may depend on Core, but Providers must not depend on one another.
-- Do not introduce circular dependencies, implicit fallbacks, automatic runtime Provider selection, or third-party implementation types in public signatures.
+- Do not introduce implicit fallbacks, automatic runtime Provider selection, or third-party implementation types in public signatures.
 - Public architecture and boundary documents must describe consumers through abstract layers and roles. Do not encode specific external repository names, local paths, or current consumer topology as Foundation ownership or dependency rules. Concrete consumers may appear only in explicitly scoped migration or release evidence when that identity is required.
 - `index.ts` files and public entries may only aggregate exports or perform extremely thin assembly. Protocol parsing, I/O, and stateful workflows belong in files with explicit responsibilities.
 

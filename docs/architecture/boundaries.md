@@ -80,6 +80,10 @@
 
 `@openge/forge-workspace-graph` 是无文件系统依赖的 Core，只表达包、依赖种类、未解析 workspace 依赖诊断、环检测、可达性和拓扑排序。它不执行构建、发布、版本计算或任务调度。
 
+`@openge/forge-workspace-checks` 是纯 Core：它只接收中立的 workspace graph 并产生稳定排序的结构化诊断，不读取文件系统、不选择包管理器、也不执行命令。包循环规则是一个可组合检查，不为任何具体业务或发布流程定义语义。
+
+`@openge/forge-workspace-checks-pnpm` 是 pnpm CLI 组装与集成 facade：它组合唯一的 pnpm Provider 与 Core 检查，并把结构化诊断转换为进程退出码与标准流输出。它不是 Provider；`@openge/forge-workspace-pnpm` 仍是唯一的 pnpm Provider。所有包依赖必须构成有向无环图，禁止反向依赖与直接或传递循环。
+
 `@openge/forge-workspace-pnpm` 是显式 Node.js Provider，只读取调用方指定的 `pnpm-workspace.yaml` 与包清单，并转换为 Core contract。它不自动尝试其他包管理器，也不修改 manifest、lockfile 或 workspace 配置。
 
 ## Process Control 边界

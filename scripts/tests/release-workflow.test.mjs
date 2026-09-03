@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
+import { releasePackageDirectories } from '../release-package-directories.mjs';
+
 const releaseWorkflowUrl = new URL('../../.github/workflows/release.yml', import.meta.url);
 const ciWorkflowUrl = new URL('../../.github/workflows/ci.yml', import.meta.url);
 const packageJsonUrl = new URL('../../package.json', import.meta.url);
@@ -42,4 +44,17 @@ test('documents and exposes the guarded new-package bootstrap command', async ()
   assert.match(runbook, /pnpm release:bootstrap/u);
   assert.match(runbook, /spawn\('pnpm\.cmd'.*shell: false/u);
   assert.match(runbook, /Automatic provenance generation not\s+supported/u);
+});
+
+test('releases workspace checks after their graph and Provider dependencies', () => {
+  const graphIndex = releasePackageDirectories.indexOf('packages/workspace-graph');
+  const checksIndex = releasePackageDirectories.indexOf('packages/workspace-checks');
+  const pnpmIndex = releasePackageDirectories.indexOf('packages/workspace-pnpm');
+  const checksPnpmIndex = releasePackageDirectories.indexOf('packages/workspace-checks-pnpm');
+
+  assert.ok(graphIndex >= 0);
+  assert.ok(checksIndex > graphIndex);
+  assert.ok(pnpmIndex > graphIndex);
+  assert.ok(checksPnpmIndex > checksIndex);
+  assert.ok(checksPnpmIndex > pnpmIndex);
 });

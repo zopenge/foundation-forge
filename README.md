@@ -23,7 +23,9 @@ capabilities, published as modular `@openge` packages.
 | `@openge/forge-json-lines` | Incremental, bounded JSON Lines encoding and decoding across arbitrary byte chunks |
 | `@openge/forge-server-sent-events` | Incremental Server-Sent Events framing and parsing without transport ownership |
 | `@openge/forge-workspace-graph` | Pure deterministic workspace dependency graph construction and traversal |
+| `@openge/forge-workspace-checks` | Pure reusable workspace graph checks and package-cycle diagnostics |
 | `@openge/forge-workspace-pnpm` | Explicit Node.js provider for reading pnpm workspaces into neutral graphs |
+| `@openge/forge-workspace-checks-pnpm` | pnpm workspace checks CLI assembly and integration facade |
 | `@openge/forge-process-control` | Provider-neutral process identity, listener selection, and termination contracts |
 | `@openge/forge-process-control-node` | Explicit Windows and Posix process discovery and termination providers |
 
@@ -98,11 +100,18 @@ pnpm add @openge/forge-archive-zip
 ```
 
 For workspace tooling or process control, install the neutral Core together with
-the explicit Node.js provider you use:
+the explicit Node.js integration or Provider you use:
 
 ```sh
 pnpm add -D @openge/forge-workspace-graph @openge/forge-workspace-pnpm
+pnpm add -D @openge/forge-workspace-checks @openge/forge-workspace-checks-pnpm
 pnpm add -D @openge/forge-process-control @openge/forge-process-control-node
+```
+
+Run the package-cycle gate for a pnpm workspace:
+
+```sh
+forge-workspace-checks --cwd . --check package-cycles
 ```
 
 ## Example

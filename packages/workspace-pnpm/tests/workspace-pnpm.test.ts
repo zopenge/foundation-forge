@@ -63,3 +63,16 @@ test('reads pnpm members and preserves tagged dependency declarations determinis
     ],
   });
 });
+
+test('treats an object workspace manifest without packages as an empty workspace', async () => {
+  const root = resolve(testRoot, randomUUID());
+  createdDirectories.push(root);
+  await mkdir(root, { recursive: true });
+  await writeFile(resolve(root, 'pnpm-workspace.yaml'), 'allowBuilds: {}\n', 'utf8');
+  await writeFile(resolve(root, 'package.json'), JSON.stringify({ name: 'root-package' }), 'utf8');
+
+  await expect(readPnpmWorkspace({ cwd: root })).resolves.toEqual({
+    diagnostics: [],
+    packages: [],
+  });
+});

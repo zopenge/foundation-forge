@@ -110,7 +110,9 @@ test('declares every public package in dependency-safe release order', () => {
     'packages/json-lines',
     'packages/server-sent-events',
     'packages/workspace-graph',
+    'packages/workspace-checks',
     'packages/workspace-pnpm',
+    'packages/workspace-checks-pnpm',
     'packages/process-control',
     'packages/process-control-node',
   ]);
