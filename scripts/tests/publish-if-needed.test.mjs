@@ -6,7 +6,11 @@ import test from 'node:test';
 
 import { createChangesetsOutputReporter } from '../changesets-output.mjs';
 import { parseOneTimePassword } from '../bootstrap-otp.mjs';
-import { createPackageManagerInvocation } from '../package-manager-command.mjs';
+import {
+  createPackageManagerInvocation,
+  extractPnpmCliPathFromWindowsShim,
+  findPnpmCliPath,
+} from '../package-manager-command.mjs';
 import {
   assertBootstrapReleasePlan,
   assertNextReleasePlan,
@@ -51,6 +55,23 @@ test('runs Windows pnpm through its JavaScript CLI instead of a cmd shim', () =>
     args: ['C:\\pnpm\\pnpm.cjs', 'pack'],
     command: 'C:\\node\\node.exe',
   });
+});
+
+test('resolves the pnpm JavaScript CLI from the Windows command shim', () => {
+  const shim = String.raw`@IF EXIST "%~dp0\node.exe" (
+  "%~dp0\node.exe" "%~dp0\.tools\pnpm\10.33.2\node_modules\pnpm\bin\pnpm.cjs" %*
+)`;
+
+  assert.equal(
+    extractPnpmCliPathFromWindowsShim(shim, 'C:\\Users\\example\\AppData\\Local\\pnpm'),
+    'C:\\Users\\example\\AppData\\Local\\pnpm\\.tools\\pnpm\\10.33.2\\node_modules\\pnpm\\bin\\pnpm.cjs',
+  );
+});
+
+test('finds the installed pnpm JavaScript CLI on Windows', {
+  skip: process.platform !== 'win32',
+}, () => {
+  assert.match(findPnpmCliPath(), /pnpm\.cjs$/iu);
 });
 
 test('runs Windows npm through its JavaScript CLI instead of a cmd shim', () => {
