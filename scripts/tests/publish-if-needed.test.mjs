@@ -5,10 +5,13 @@ import { resolve } from 'node:path';
 import test from 'node:test';
 
 import { createChangesetsOutputReporter } from '../changesets-output.mjs';
+import { createPackageManagerInvocation } from '../package-manager-command.mjs';
 import {
+  assertBootstrapReleasePlan,
   assertNextReleasePlan,
   assertTrustedPublishingReady,
   createReleasePlan,
+  createNpmPublishArguments,
   executeReleasePlan,
   hasPrereleaseVersion,
 } from '../release-plan.mjs';
@@ -30,6 +33,38 @@ test('writes Changesets v2 git-tag events to the configured output file', async 
 test('does not require a Changesets output file outside the action', async () => {
   const reporter = await createChangesetsOutputReporter(undefined);
   await reporter.recordGitTag({ name: '@openge/example', version: '1.2.3' });
+});
+
+test('runs Windows pnpm through its JavaScript CLI instead of a cmd shim', () => {
+  assert.deepEqual(createPackageManagerInvocation('pnpm', ['pack'], {
+    nodeExecutable: 'C:\\node\\node.exe',
+    platform: 'win32',
+    pnpmCliPath: 'C:\\pnpm\\pnpm.cjs',
+  }), {
+    args: ['C:\\pnpm\\pnpm.cjs', 'pack'],
+    command: 'C:\\node\\node.exe',
+  });
+});
+
+test('runs Windows npm through its JavaScript CLI instead of a cmd shim', () => {
+  assert.deepEqual(createPackageManagerInvocation('npm', ['publish'], {
+    nodeExecutable: 'C:\\node\\node.exe',
+    npmCliPath: 'C:\\node\\node_modules\\npm\\bin\\npm-cli.js',
+    platform: 'win32',
+  }), {
+    args: ['C:\\node\\node_modules\\npm\\bin\\npm-cli.js', 'publish'],
+    command: 'C:\\node\\node.exe',
+  });
+});
+
+test('uses package-manager executables directly outside Windows', () => {
+  assert.deepEqual(createPackageManagerInvocation('npm', ['publish'], {
+    nodeExecutable: '/usr/bin/node',
+    platform: 'linux',
+  }), {
+    args: ['publish'],
+    command: 'npm',
+  });
 });
 
 test('declares every public package in dependency-safe release order', () => {
@@ -144,6 +179,50 @@ test('allows workflow publishing after every package has a registry version', ()
   ];
 
   assert.doesNotThrow(() => assertTrustedPublishingReady(packageStates));
+});
+
+test('allows bootstrap publishing only for brand-new rc.0 packages', () => {
+  const bootstrapPlan = createReleasePlan([
+    { name: '@openge/existing', version: '0.1.0', versions: new Set(['0.1.0']) },
+    { name: '@openge/new-package', version: '0.1.0-rc.0', versions: new Set() },
+  ]);
+
+  assert.doesNotThrow(() => assertBootstrapReleasePlan(bootstrapPlan));
+  assert.throws(
+    () => assertBootstrapReleasePlan(createReleasePlan([
+      { name: '@openge/new-package', version: '0.1.0-rc.1', versions: new Set() },
+    ])),
+    /bootstrap publishing requires a brand-new rc\.0 package/u,
+  );
+  assert.throws(
+    () => assertBootstrapReleasePlan(createReleasePlan([
+      { name: '@openge/existing', version: '0.2.0-rc.0', versions: new Set(['0.1.0']) },
+    ])),
+    /bootstrap publishing requires a brand-new rc\.0 package/u,
+  );
+});
+
+test('omits provenance only for the explicit bootstrap publication', () => {
+  assert.deepEqual(createNpmPublishArguments('package.tgz', { tag: 'next' }), [
+    'publish',
+    'package.tgz',
+    '--access',
+    'public',
+    '--provenance',
+    '--tag',
+    'next',
+  ]);
+  assert.deepEqual(createNpmPublishArguments('package.tgz', {
+    provenance: false,
+    tag: 'next',
+  }), [
+    'publish',
+    'package.tgz',
+    '--access',
+    'public',
+    '--tag',
+    'next',
+  ]);
 });
 
 test('does not create a tag or continue when publication fails', async () => {

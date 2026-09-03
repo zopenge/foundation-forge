@@ -1,4 +1,5 @@
 export const createReleasePlan = (packageStates) => packageStates.map((state) => ({
+  isBootstrapped: state.versions.size > 0,
   name: state.name,
   needsPublish: !state.versions.has(state.version),
   version: state.version,
@@ -28,6 +29,34 @@ export const assertTrustedPublishingReady = (packageStates) => {
       `${unbootstrappedPackage.name}@${unbootstrappedPackage.version} must be bootstrapped before workflow publishing`,
     );
   }
+};
+
+const bootstrapVersionPattern = /^\d+\.\d+\.\d+-rc\.0$/u;
+
+export const assertBootstrapReleasePlan = (releases) => {
+  const invalidRelease = releases.find(
+    ({ isBootstrapped, needsPublish, version }) => needsPublish
+      && (isBootstrapped || !bootstrapVersionPattern.test(version)),
+  );
+  if (invalidRelease !== undefined) {
+    throw new Error(
+      `${invalidRelease.name}@${invalidRelease.version}: bootstrap publishing requires a brand-new rc.0 package`,
+    );
+  }
+};
+
+export const createNpmPublishArguments = (
+  tarball,
+  { provenance = true, tag } = {},
+) => {
+  const args = ['publish', tarball, '--access', 'public'];
+  if (provenance) {
+    args.push('--provenance');
+  }
+  if (tag !== undefined) {
+    args.push('--tag', tag);
+  }
+  return args;
 };
 
 export const executeReleasePlan = async (

@@ -4,11 +4,17 @@ import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 
 import {
+  assertBootstrapReleasePlan,
   assertNextReleasePlan,
+  createNpmPublishArguments,
   createReleasePlan,
   executeReleasePlan,
 } from './release-plan.mjs';
 import { createChangesetsOutputReporter } from './changesets-output.mjs';
+import {
+  createPackageManagerInvocation,
+  findNpmCliPath,
+} from './package-manager-command.mjs';
 import { releasePackageDirectories } from './release-package-directories.mjs';
 
 const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
@@ -72,15 +78,22 @@ function capture(command, args) {
   });
 }
 
-const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
-const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const changesetsOutputReporter = await createChangesetsOutputReporter(
   process.env.CHANGESETS_OUTPUT,
 );
 
+async function runPackageManager(manager, args) {
+  const invocation = createPackageManagerInvocation(manager, args, {
+    npmCliPath: process.platform === 'win32' && manager === 'npm'
+      ? findNpmCliPath()
+      : undefined,
+  });
+  await run(invocation.command, invocation.args);
+}
+
 async function packPackage(release) {
   const before = new Set(await readdir(packDirectory));
-  await run(pnpmCommand, [
+  await runPackageManager('pnpm', [
     '--filter',
     release.name,
     'pack',
@@ -95,11 +108,11 @@ async function packPackage(release) {
 }
 
 async function publishTarball(tarball, tag) {
-  const args = ['publish', tarball, '--access', 'public', '--provenance'];
-  if (tag !== undefined) {
-    args.push('--tag', tag);
-  }
-  await run(npmCommand, args);
+  const args = createNpmPublishArguments(tarball, {
+    provenance: !bootstrap,
+    tag,
+  });
+  await runPackageManager('npm', args);
 }
 
 async function ensureTag(release) {
@@ -135,8 +148,12 @@ async function verifyTag(release) {
 
 const tagIndex = process.argv.indexOf('--tag');
 const tag = tagIndex === -1 ? undefined : process.argv[tagIndex + 1];
+const bootstrap = process.argv.includes('--bootstrap');
 if (tagIndex !== -1 && !tag) {
   throw new Error('Missing value for --tag');
+}
+if (bootstrap && tag !== 'next') {
+  throw new Error('Bootstrap publishing requires --tag next');
 }
 
 const packages = await Promise.all(releasePackageDirectories.map(readPackage));
@@ -145,7 +162,9 @@ const states = await Promise.all(packages.map(async (packageJson) => ({
   versions: await publishedVersions(packageJson.name),
 })));
 const releasePlan = createReleasePlan(states);
-if (tag === 'next') {
+if (bootstrap) {
+  assertBootstrapReleasePlan(releasePlan);
+} else if (tag === 'next') {
   assertNextReleasePlan(releasePlan);
 }
 const unpublished = releasePlan.filter((release) => release.needsPublish);

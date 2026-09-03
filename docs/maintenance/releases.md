@@ -67,8 +67,13 @@ exists. The first package version is therefore a one-time exception:
 1. From a clean, reviewed, tagged `main` commit, build and pack the new package
    under the ignored `.tmp/` directory.
 2. Publish `0.1.0-rc.0` to `next` with maintainer authentication, 2FA, public
-   access, and no repository token. Consumers must not adopt this bootstrap
-   version.
+   access, and no repository token by running:
+
+   ```sh
+   pnpm release:bootstrap
+   ```
+
+   Consumers must not adopt this bootstrap version.
 3. Configure Trusted Publishing. The verified command is:
 
    ```sh
@@ -87,6 +92,19 @@ exists. The first package version is therefore a one-time exception:
    the normal GitHub workflow before any consumer adopts the package.
 5. After OIDC provenance is verified, disallow traditional publishing tokens
    for the package where npm settings permit it.
+
+### 本地引导发布实现约束
+
+`release:bootstrap` 只允许发布 registry 中不存在的 `rc.0`，并且只在这条
+一次性本地路径中省略 provenance。普通 `release:next` 和稳定发布继续强制
+provenance；本地执行普通发布时出现 `Automatic provenance generation not
+supported for provider: null`，表示误用了常规发布命令，不应通过关闭常规
+provenance 来绕过。
+
+Windows 下不要使用 `spawn('pnpm.cmd', args, { shell: false })` 或同类 npm
+调用；Node 会在创建子进程时返回 `spawn EINVAL`。也不要改成 `shell: true`，
+因为 Node 24 会报告未转义参数的注入风险。发布脚本必须使用当前 Node 直接
+启动 pnpm/npm 的 JavaScript CLI，相关跨平台行为由脚本测试锁定。
 
 Only the first package creation and publisher registration may require
 interactive npm authentication. Later release candidates and stable releases

@@ -4,6 +4,8 @@ import test from 'node:test';
 
 const releaseWorkflowUrl = new URL('../../.github/workflows/release.yml', import.meta.url);
 const ciWorkflowUrl = new URL('../../.github/workflows/ci.yml', import.meta.url);
+const packageJsonUrl = new URL('../../package.json', import.meta.url);
+const releaseRunbookUrl = new URL('../../docs/maintenance/releases.md', import.meta.url);
 
 test('pushes package tags for manual and action-driven releases', async () => {
   const workflow = await readFile(releaseWorkflowUrl, 'utf8');
@@ -25,4 +27,19 @@ test('runs pnpm setup on the supported GitHub Actions runtime', async () => {
     assert.match(workflow, /pnpm\/action-setup@v6/u);
     assert.doesNotMatch(workflow, /pnpm\/action-setup@v4/u);
   }
+});
+
+test('documents and exposes the guarded new-package bootstrap command', async () => {
+  const [packageJson, runbook] = await Promise.all([
+    readFile(packageJsonUrl, 'utf8').then(JSON.parse),
+    readFile(releaseRunbookUrl, 'utf8'),
+  ]);
+
+  assert.equal(
+    packageJson.scripts['release:bootstrap'],
+    'pnpm run check && node ./scripts/publish-if-needed.mjs --tag next --bootstrap',
+  );
+  assert.match(runbook, /pnpm release:bootstrap/u);
+  assert.match(runbook, /spawn\('pnpm\.cmd'.*shell: false/u);
+  assert.match(runbook, /Automatic provenance generation not\s+supported/u);
 });
