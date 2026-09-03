@@ -1,5 +1,11 @@
 # @openge/forge-process-control-node
 
+## 0.1.0-rc.2
+
+### Minor Changes
+
+- Add Windows and Posix process enumeration and explicit single-process termination.
+
 ## 0.1.0-rc.1
 
 ### Minor Changes

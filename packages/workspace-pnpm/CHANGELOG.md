@@ -1,5 +1,11 @@
 # @openge/forge-workspace-pnpm
 
+## 0.1.0-rc.2
+
+### Minor Changes
+
+- Resolve workspace directory patterns through package manifests so nested containers and overlapping patterns are handled correctly.
+
 ## 0.1.0-rc.1
 
 ### Minor Changes

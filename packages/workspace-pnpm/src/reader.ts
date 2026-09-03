@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, relative, resolve } from 'node:path';
 
 import {
   createWorkspaceGraph,
@@ -45,17 +45,25 @@ export async function readPnpmWorkspace(
     );
   }
   const patterns = readWorkspacePatterns(workspaceValue, workspacePath);
-  const directories = await glob(patterns, {
+  const manifestPaths = await glob(patterns.map(toPackageManifestPattern), {
     absolute: true,
     cwd,
     expandDirectories: false,
     followSymbolicLinks: false,
-    onlyDirectories: true,
+    onlyFiles: true,
   });
-  const packages = await Promise.all(directories.toSorted().map((directory) => (
+  const directories = [...new Set(manifestPaths.map(dirname))].toSorted();
+  const packages = await Promise.all(directories.map((directory) => (
     readWorkspacePackage(cwd, directory)
   )));
   return createWorkspaceGraph(packages);
+}
+
+function toPackageManifestPattern(pattern: string): string {
+  const negated = pattern.startsWith('!');
+  const directoryPattern = negated ? pattern.slice(1) : pattern;
+  const manifestPattern = `${directoryPattern.replace(/\/+$/u, '')}/package.json`;
+  return negated ? `!${manifestPattern}` : manifestPattern;
 }
 
 async function readWorkspacePackage(cwd: string, directory: string): Promise<WorkspacePackage> {

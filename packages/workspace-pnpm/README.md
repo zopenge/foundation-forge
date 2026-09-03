@@ -17,8 +17,10 @@ const graph = await readPnpmWorkspace({ cwd: process.cwd() });
 ```
 
 This Node.js provider reads an explicitly selected `pnpm-workspace.yaml`,
-expands its package patterns, and converts package manifests into the neutral
-workspace graph contract. Missing or malformed inputs produce structured
+resolves its directory patterns to package manifests, and converts those
+manifests into the neutral workspace graph contract. Overlapping patterns are
+deduplicated, while matching container directories without a `package.json` are
+ignored. Missing or malformed required inputs produce structured
 `WorkspacePnpmError` instances.
 
 There is no package-manager auto-detection or fallback. Manifest editing,

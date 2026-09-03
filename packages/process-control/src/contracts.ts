@@ -4,10 +4,21 @@ export interface ProcessIdentity {
   readonly startToken: string;
 }
 
+export interface ProcessDescriptor extends ProcessIdentity {
+  readonly commandLine?: string;
+  readonly name?: string;
+  readonly parentPid?: number;
+}
+
 export interface TcpListener {
   readonly address: string;
   readonly port: number;
-  readonly process: ProcessIdentity;
+  readonly process: ProcessDescriptor;
+}
+
+export interface ListProcessesRequest {
+  readonly pids?: readonly number[];
+  readonly signal?: AbortSignal;
 }
 
 export interface SelectTcpListenersOptions {
@@ -34,13 +45,21 @@ export interface TerminateProcessTreeRequest {
   readonly signal?: AbortSignal;
 }
 
+export interface TerminateProcessRequest {
+  readonly process: ProcessIdentity;
+  readonly policy: ProcessTerminationPolicy;
+  readonly signal?: AbortSignal;
+}
+
 export interface ProcessTerminationResult {
   readonly forced: boolean;
   readonly pid: number;
 }
 
 export interface ProcessControlProvider {
+  listProcesses(request?: ListProcessesRequest): Promise<readonly ProcessDescriptor[]>;
   listTcpListeners(request?: ListTcpListenersRequest): Promise<readonly TcpListener[]>;
+  terminateProcess(request: TerminateProcessRequest): Promise<ProcessTerminationResult>;
   terminateProcessTree(request: TerminateProcessTreeRequest): Promise<ProcessTerminationResult>;
 }
 

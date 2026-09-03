@@ -20,10 +20,12 @@ test('reads pnpm members and preserves tagged dependency declarations determinis
   createdDirectories.push(root);
   await mkdir(resolve(root, 'packages', 'app'), { recursive: true });
   await mkdir(resolve(root, 'packages', 'core'), { recursive: true });
+  await mkdir(resolve(root, 'packages', 'groups', 'tool'), { recursive: true });
   await mkdir(resolve(root, 'packages', 'ignored'), { recursive: true });
   await writeFile(resolve(root, 'pnpm-workspace.yaml'), [
     'packages:',
     '  - "packages/*"',
+    '  - "packages/groups/*"',
     '  - "!packages/ignored"',
     '',
   ].join('\n'), 'utf8');
@@ -34,6 +36,9 @@ test('reads pnpm members and preserves tagged dependency declarations determinis
   }), 'utf8');
   await writeFile(resolve(root, 'packages', 'core', 'package.json'), JSON.stringify({
     name: '@scope/core',
+  }), 'utf8');
+  await writeFile(resolve(root, 'packages', 'groups', 'tool', 'package.json'), JSON.stringify({
+    name: '@scope/tool',
   }), 'utf8');
   await writeFile(resolve(root, 'packages', 'ignored', 'package.json'), JSON.stringify({
     name: '@scope/ignored',
@@ -54,6 +59,7 @@ test('reads pnpm members and preserves tagged dependency declarations determinis
         relativeDirectory: 'packages/app',
       },
       { dependencies: [], name: '@scope/core', relativeDirectory: 'packages/core' },
+      { dependencies: [], name: '@scope/tool', relativeDirectory: 'packages/groups/tool' },
     ],
   });
 });

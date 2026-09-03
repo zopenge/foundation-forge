@@ -2,11 +2,14 @@ import {
   ProcessControlError,
   processControlErrorCodes,
   selectTcpListeners,
+  type ListProcessesRequest,
   type ListTcpListenersRequest,
   type ProcessControlProvider,
+  type ProcessDescriptor,
   type ProcessIdentity,
   type ProcessTerminationResult,
   type TcpListener,
+  type TerminateProcessRequest,
   type TerminateProcessTreeRequest,
 } from '@openge/forge-process-control';
 
@@ -37,9 +40,26 @@ type ProviderOptions =
 function createProvider(options: ProviderOptions): ProcessControlProvider {
   const runner = options.runner ?? runProcessCommand;
   return {
+    listProcesses: (request = {}) => listProcesses(options, runner, request),
     listTcpListeners: (request = {}) => listTcpListeners(options, runner, request),
-    terminateProcessTree: (request) => terminateProcessTree(options, runner, request),
+    terminateProcess: (request) => terminateProcess(options, runner, request, false),
+    terminateProcessTree: (request) => terminateProcess(options, runner, request, true),
   };
+}
+
+async function listProcesses(
+  options: ProviderOptions,
+  runner: ProcessCommandRunner,
+  request: ListProcessesRequest,
+): Promise<readonly ProcessDescriptor[]> {
+  const pids = request.pids === undefined ? undefined : validateProcessIds(request.pids);
+  if (pids?.length === 0) {
+    return [];
+  }
+  const descriptors = options.platform === 'windows'
+    ? await describeWindowsProcesses(pids, runner, request.signal)
+    : await describePosixProcesses(pids, runner, request.signal);
+  return [...descriptors.values()].toSorted((left, right) => left.pid - right.pid);
 }
 
 async function listTcpListeners(
@@ -56,9 +76,10 @@ async function listTcpListeners(
     return [];
   }
   const pids = [...new Set(filteredCandidates.map((listener) => listener.pid))].toSorted((a, b) => a - b);
-  const identities = options.platform === 'windows'
-    ? await describeWindowsProcesses(pids, runner, request.signal)
-    : await describePosixProcesses(pids, runner, request.signal);
+  const identities = new Map((await listProcesses(options, runner, {
+    pids,
+    ...(request.signal === undefined ? {} : { signal: request.signal }),
+  })).map((process) => [process.pid, process]));
   const listeners = filteredCandidates.map((listener): TcpListener => {
     const process = identities.get(listener.pid);
     if (process === undefined) {
@@ -122,24 +143,26 @@ async function listPosixCandidates(
 }
 
 async function describeWindowsProcesses(
-  pids: readonly number[],
+  pids: readonly number[] | undefined,
   runner: ProcessCommandRunner,
   signal: AbortSignal | undefined,
-): Promise<ReadonlyMap<number, ProcessIdentity>> {
-  const pidFilter = pids.map((pid) => `ProcessId=${String(pid)}`).join(' OR ');
+): Promise<ReadonlyMap<number, ProcessDescriptor>> {
+  const processCommand = pids === undefined
+    ? 'Get-CimInstance Win32_Process'
+    : `Get-CimInstance Win32_Process -Filter "${pids.map((pid) => `ProcessId=${String(pid)}`).join(' OR ')}"`;
   const result = await runner({
     args: [
       '-NoProfile',
       '-NonInteractive',
       '-Command',
-      `Get-CimInstance Win32_Process -Filter "${pidFilter}" | Select-Object ProcessId,CreationDate,Name,ExecutablePath | ConvertTo-Json -Compress`,
+      `${processCommand} | Select-Object ProcessId,ParentProcessId,CreationDate,Name,ExecutablePath,CommandLine | ConvertTo-Json -Compress`,
     ],
     command: 'powershell.exe',
     ...(signal === undefined ? {} : { signal }),
   });
   assertCommandSucceeded(result, 'powershell.exe');
   const values = parseJsonObjects(result.stdout);
-  const identities = new Map<number, ProcessIdentity>();
+  const identities = new Map<number, ProcessDescriptor>();
   for (const value of values) {
     const pid = readPositiveInteger(value.ProcessId);
     const startToken = readNonEmptyString(value.CreationDate);
@@ -147,18 +170,30 @@ async function describeWindowsProcesses(
       continue;
     }
     const command = readNonEmptyString(value.ExecutablePath) ?? readNonEmptyString(value.Name);
-    identities.set(pid, { ...(command === undefined ? {} : { command }), pid, startToken });
+    const commandLine = readNonEmptyString(value.CommandLine);
+    const name = readNonEmptyString(value.Name);
+    const parentPid = readNonNegativeInteger(value.ParentProcessId);
+    identities.set(pid, {
+      ...(command === undefined ? {} : { command }),
+      ...(commandLine === undefined ? {} : { commandLine }),
+      ...(name === undefined ? {} : { name }),
+      ...(parentPid === undefined ? {} : { parentPid }),
+      pid,
+      startToken,
+    });
   }
   return identities;
 }
 
 async function describePosixProcesses(
-  pids: readonly number[],
+  pids: readonly number[] | undefined,
   runner: ProcessCommandRunner,
   signal: AbortSignal | undefined,
-): Promise<ReadonlyMap<number, ProcessIdentity>> {
+): Promise<ReadonlyMap<number, ProcessDescriptor>> {
   const result = await runner({
-    args: ['-o', 'pid=', '-o', 'lstart=', '-o', 'comm=', '-p', pids.join(',')],
+    args: pids === undefined
+      ? ['-eo', 'pid=,ppid=,lstart=,comm=,args=']
+      : ['-o', 'pid=', '-o', 'ppid=', '-o', 'lstart=', '-o', 'comm=', '-o', 'args=', '-p', pids.join(',')],
     command: 'ps',
     ...(signal === undefined ? {} : { signal }),
   });
@@ -166,18 +201,26 @@ async function describePosixProcesses(
     return new Map();
   }
   assertCommandSucceeded(result, 'ps');
-  const identities = new Map<number, ProcessIdentity>();
-  const pattern = /^\s*(\d+)\s+(.{24})\s+(.+)$/u;
+  const identities = new Map<number, ProcessDescriptor>();
+  const pattern = /^\s*(\d+)\s+(\d+)\s+(.{24})\s+(\S+)(?:\s+(.*))?$/u;
   for (const line of result.stdout.split(/\r?\n/u)) {
     const match = pattern.exec(line);
     if (match === null) {
       continue;
     }
     const pid = Number(match[1]);
-    const startToken = match[2]?.trim() ?? '';
-    const command = match[3]?.trim() ?? '';
+    const parentPid = Number(match[2]);
+    const startToken = match[3]?.trim() ?? '';
+    const command = match[4]?.trim() ?? '';
+    const commandLine = match[5]?.trim() ?? '';
     if (Number.isSafeInteger(pid) && pid > 0 && startToken.length > 0) {
-      identities.set(pid, { ...(command.length === 0 ? {} : { command }), pid, startToken });
+      identities.set(pid, {
+        ...(command.length === 0 ? {} : { command, name: command }),
+        ...(commandLine.length === 0 ? {} : { commandLine }),
+        ...(Number.isSafeInteger(parentPid) && parentPid >= 0 ? { parentPid } : {}),
+        pid,
+        startToken,
+      });
     }
   }
   return identities;
@@ -239,21 +282,22 @@ function parsePosixLsofListeners(output: string): readonly ListenerCandidate[] {
   return listeners;
 }
 
-async function terminateProcessTree(
+async function terminateProcess(
   options: ProviderOptions,
   runner: ProcessCommandRunner,
-  request: TerminateProcessTreeRequest,
+  request: TerminateProcessRequest | TerminateProcessTreeRequest,
+  tree: boolean,
 ): Promise<ProcessTerminationResult> {
   validateTerminationRequest(request);
   assertNotAborted(request.signal);
   await assertProcessIdentity(options, runner, request.process, request.signal);
 
   if (request.policy.mode === 'force') {
-    await sendTerminationSignal(options, runner, request.process.pid, true, request.signal);
+    await sendTerminationSignal(options, runner, request.process.pid, true, tree, request.signal);
     return { forced: true, pid: request.process.pid };
   }
 
-  await sendTerminationSignal(options, runner, request.process.pid, false, request.signal);
+  await sendTerminationSignal(options, runner, request.process.pid, false, tree, request.signal);
   if (request.policy.mode === 'graceful') {
     return { forced: false, pid: request.process.pid };
   }
@@ -268,7 +312,7 @@ async function terminateProcessTree(
     assertSameProcessIdentity(request.process, current);
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) {
-      await sendTerminationSignal(options, runner, request.process.pid, true, request.signal);
+      await sendTerminationSignal(options, runner, request.process.pid, true, tree, request.signal);
       return { forced: true, pid: request.process.pid };
     }
     await delay(Math.min(request.policy.pollIntervalMs, remainingMs), request.signal);
@@ -338,16 +382,22 @@ async function sendTerminationSignal(
   runner: ProcessCommandRunner,
   pid: number,
   force: boolean,
+  tree: boolean,
   signal: AbortSignal | undefined,
 ): Promise<void> {
   const request = options.platform === 'windows'
     ? {
-      args: force ? ['/PID', String(pid), '/T', '/F'] : ['/PID', String(pid), '/T'],
+      args: [
+        '/PID',
+        String(pid),
+        ...(tree ? ['/T'] : []),
+        ...(force ? ['/F'] : []),
+      ],
       command: 'taskkill.exe',
       ...(signal === undefined ? {} : { signal }),
     }
     : {
-      args: [force ? '-KILL' : '-TERM', '--', `-${String(pid)}`],
+      args: [force ? '-KILL' : '-TERM', '--', tree ? `-${String(pid)}` : String(pid)],
       command: 'kill',
       ...(signal === undefined ? {} : { signal }),
     };
@@ -410,6 +460,22 @@ function readNonEmptyString(value: unknown): string | undefined {
 function readPositiveInteger(value: unknown): number | undefined {
   const number = typeof value === 'number' ? value : Number(value);
   return Number.isSafeInteger(number) && number > 0 ? number : undefined;
+}
+
+function readNonNegativeInteger(value: unknown): number | undefined {
+  const number = typeof value === 'number' ? value : Number(value);
+  return Number.isSafeInteger(number) && number >= 0 ? number : undefined;
+}
+
+function validateProcessIds(pids: readonly number[]): readonly number[] {
+  const validated = new Set<number>();
+  for (const pid of pids) {
+    if (!Number.isSafeInteger(pid) || pid <= 0) {
+      throw new ProcessControlError(processControlErrorCodes.invalidInput, { pid });
+    }
+    validated.add(pid);
+  }
+  return [...validated].toSorted((left, right) => left - right);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
