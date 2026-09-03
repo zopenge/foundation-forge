@@ -7,6 +7,7 @@ import test from 'node:test';
 import { createChangesetsOutputReporter } from '../changesets-output.mjs';
 import {
   assertNextReleasePlan,
+  assertTrustedPublishingReady,
   createReleasePlan,
   executeReleasePlan,
   hasPrereleaseVersion,
@@ -122,6 +123,27 @@ test('rejects unpublished stable versions from the next tag', () => {
     /@openge\/stable@0\.2\.0 cannot be published with the next tag/u,
   );
   assert.equal(hasPrereleaseVersion(plan), false);
+});
+
+test('rejects workflow publishing before a package has been bootstrapped', () => {
+  const packageStates = [
+    { name: '@openge/existing', version: '0.2.0-rc.1', versions: new Set(['0.1.0']) },
+    { name: '@openge/new-package', version: '0.1.0-rc.0', versions: new Set() },
+  ];
+
+  assert.throws(
+    () => assertTrustedPublishingReady(packageStates),
+    /@openge\/new-package@0\.1\.0-rc\.0 must be bootstrapped before workflow publishing/u,
+  );
+});
+
+test('allows workflow publishing after every package has a registry version', () => {
+  const packageStates = [
+    { name: '@openge/existing', version: '0.2.0-rc.1', versions: new Set(['0.1.0']) },
+    { name: '@openge/new-package', version: '0.1.0-rc.1', versions: new Set(['0.1.0-rc.0']) },
+  ];
+
+  assert.doesNotThrow(() => assertTrustedPublishingReady(packageStates));
 });
 
 test('does not create a tag or continue when publication fails', async () => {

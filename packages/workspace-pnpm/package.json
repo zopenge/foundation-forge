@@ -1,6 +1,6 @@
 {
   "name": "@openge/forge-workspace-pnpm",
-  "version": "0.1.0-rc.1",
+  "version": "0.1.0-rc.0",
   "description": "Explicit pnpm workspace discovery Provider for Foundation workspace graphs",
   "type": "module",
   "main": "./dist/index.js",

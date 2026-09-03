@@ -1,6 +1,6 @@
 # @openge/forge-server-sent-events
 
-## 0.1.0-rc.1
+## 0.1.0-rc.0
 
 ### Minor Changes
 

@@ -21,6 +21,15 @@ export const assertNextReleasePlan = (releases) => {
   }
 };
 
+export const assertTrustedPublishingReady = (packageStates) => {
+  const unbootstrappedPackage = packageStates.find(({ versions }) => versions.size === 0);
+  if (unbootstrappedPackage !== undefined) {
+    throw new Error(
+      `${unbootstrappedPackage.name}@${unbootstrappedPackage.version} must be bootstrapped before workflow publishing`,
+    );
+  }
+};
+
 export const executeReleasePlan = async (
   releases,
   { ensureTag, pack, publish, tag, verifyTag },

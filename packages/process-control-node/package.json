@@ -1,6 +1,6 @@
 {
   "name": "@openge/forge-process-control-node",
-  "version": "0.1.0-rc.1",
+  "version": "0.1.0-rc.0",
   "description": "Explicit Windows and Posix Node.js Providers for process control",
   "type": "module",
   "main": "./dist/index.js",
