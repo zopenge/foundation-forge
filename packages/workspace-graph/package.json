@@ -1,6 +1,6 @@
 {
   "name": "@openge/forge-workspace-graph",
-  "version": "0.1.0-rc.1",
+  "version": "0.1.0",
   "description": "Deterministic workspace package dependency graphs",
   "type": "module",
   "main": "./dist/index.js",
