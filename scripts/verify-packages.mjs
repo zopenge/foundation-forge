@@ -353,6 +353,10 @@ const createConsumer = async (tarballs) => {
   if (typeof workspaceChecksTarballReference !== 'string') {
     throw new Error('missing Workspace Checks tarball dependency');
   }
+  const workspacePnpmTarballReference = dependencies['@openge/forge-workspace-pnpm'];
+  if (typeof workspacePnpmTarballReference !== 'string') {
+    throw new Error('missing Workspace pnpm tarball dependency');
+  }
   const workspaceChecksPnpmTarballReference = dependencies['@openge/forge-workspace-checks-pnpm'];
   if (typeof workspaceChecksPnpmTarballReference !== 'string') {
     throw new Error('missing Workspace Checks pnpm tarball dependency');
@@ -381,6 +385,7 @@ const createConsumer = async (tarballs) => {
     `  "@openge/forge-path-safety": "${pathSafetyTarballReference}"`,
     `  "@openge/forge-workspace-graph": "${workspaceGraphTarballReference}"`,
     `  "@openge/forge-workspace-checks": "${workspaceChecksTarballReference}"`,
+    `  "@openge/forge-workspace-pnpm": "${workspacePnpmTarballReference}"`,
     `  "@openge/forge-workspace-checks-pnpm": "${workspaceChecksPnpmTarballReference}"`,
     `  "@openge/forge-process-control": "${processControlTarballReference}"`,
     '',

@@ -1,6 +1,6 @@
 {
   "name": "@openge/forge-workspace-checks-pnpm",
-  "version": "0.1.0-rc.1",
+  "version": "0.1.0-rc.2",
   "description": "pnpm workspace checks command-line assembly and integration facade",
   "type": "module",
   "main": "./dist/index.js",
