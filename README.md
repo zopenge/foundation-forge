@@ -135,9 +135,10 @@ are exported only from `/node`. Filesystem callers choose path case sensitivity
 explicitly. Product file selection, secret checks, service ordering, and log
 formatting remain in the consuming application.
 
-The initial `0.1.0-rc.0` manifests are bootstrap candidates. Follow the
-[release procedure](docs/maintenance/releases.md) before adopting a published
-version in a consumer. Workspace packaging checks do not publish these packages.
+Consumer versions must complete the GitHub Trusted Publishing
+[release procedure](docs/maintenance/releases.md), including provenance and clean
+registry consumer verification. Do not adopt the initial bootstrap `0.1.0-rc.0`
+versions. Workspace packaging checks do not publish packages.
 
 ## Example
 

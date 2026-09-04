@@ -1,5 +1,9 @@
 # @openge/forge-command-runner
 
+## 0.1.0-rc.1
+
+- 准备通过 GitHub Actions Trusted Publishing 发布带 provenance 的 RC，保留已验证的异步命令契约与生命周期行为。
+
 ## 0.1.0-rc.0
 
 ### 新增

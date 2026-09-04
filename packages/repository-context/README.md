@@ -5,7 +5,7 @@ Pure, deterministic repository context planning and validation primitives for No
 ## Install
 
 ```sh
-pnpm add --save-exact @openge/forge-repository-context@0.1.0-rc.0
+pnpm add --save-exact @openge/forge-repository-context@0.1.0-rc.1
 ```
 
 ## Select a bounded context

@@ -1,5 +1,9 @@
 # 更新日志
 
+## 0.1.0-rc.1
+
+- 准备通过 GitHub Actions Trusted Publishing 发布带 provenance 的 RC；精确依赖修复孤立代理码元路径校验的 Path Safety 版本。
+
 ## 0.1.0-rc.0
 
 - 新增显式生成物计划、防御性复制、确定性排序及字节或文本换行比较。

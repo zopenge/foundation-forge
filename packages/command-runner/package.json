@@ -1,6 +1,6 @@
 {
   "name": "@openge/forge-command-runner",
-  "version": "0.1.0-rc.0",
+  "version": "0.1.0-rc.1",
   "description": "Provider-neutral asynchronous command execution with bounded Node process lifecycle",
   "type": "module",
   "main": "./dist/index.js",

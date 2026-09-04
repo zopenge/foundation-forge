@@ -1,6 +1,6 @@
 {
   "name": "@openge/forge-repository-context",
-  "version": "0.1.0-rc.0",
+  "version": "0.1.0-rc.1",
   "description": "Deterministic repository context planning and validation primitives",
   "type": "module",
   "main": "./dist/index.js",
@@ -43,6 +43,6 @@
   },
   "dependencies": {
     "@openge/forge-deterministic-json": "workspace:*",
-    "@openge/forge-generated-artifacts": "workspace:*"
+    "@openge/forge-generated-artifacts": "workspace:0.1.0-rc.1"
   }
 }

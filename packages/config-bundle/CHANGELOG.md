@@ -1,5 +1,9 @@
 # 变更记录
 
+## 0.1.0-rc.1
+
+- 准备通过 GitHub Actions Trusted Publishing 发布带 provenance 的 RC；精确依赖修复文件名身份和路径校验的 Archive ZIP、Archive Safety 与 Path Safety 版本。
+
 ## 0.1.0-rc.0
 
 - 新增确定性 ZIP 与 Manifest V1、路径及资源限制、条目集合和 SHA-256 验证。

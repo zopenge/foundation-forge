@@ -1,6 +1,6 @@
 {
   "name": "@openge/forge-archive-safety",
-  "version": "0.1.0",
+  "version": "0.1.1-rc.0",
   "description": "Runtime-neutral archive entry path and resource-limit validation",
   "type": "module",
   "main": "./dist/index.js",
@@ -27,7 +27,7 @@
   },
   "homepage": "https://github.com/zopenge/foundation-forge#readme",
   "dependencies": {
-    "@openge/forge-path-safety": "workspace:^"
+    "@openge/forge-path-safety": "workspace:0.1.1-rc.0"
   },
   "bugs": { "url": "https://github.com/zopenge/foundation-forge/issues" }
 }

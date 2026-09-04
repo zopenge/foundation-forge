@@ -1,6 +1,6 @@
 # @openge/forge-path-safety
 
-## 未发布
+## 0.1.1-rc.0
 
 - 拒绝含孤立 UTF-16 代理码元的 portable path，避免文件系统编码导致路径别名；合法代理对保持不变。
 

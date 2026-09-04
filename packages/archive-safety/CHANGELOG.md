@@ -1,5 +1,9 @@
 # @openge/forge-archive-safety
 
+## 0.1.1-rc.0
+
+- 升级并精确固定 Path Safety 依赖，使归档校验使用拒绝孤立 UTF-16 代理码元的路径规则。
+
 ## 0.1.0
 
 ### Patch Changes
