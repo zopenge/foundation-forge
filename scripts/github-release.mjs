@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
+import { stripVTControlCharacters } from 'node:util';
 
 import { redactKnownTokens } from './release-redaction.mjs';
 
@@ -26,11 +27,19 @@ export const assertReleasePreflight = ({
   if (headSha !== remoteSha) throw new Error('release HEAD must be pushed to the configured remote branch');
 };
 
-export const filterReleaseLogs = (contents) => contents
-  .split(/\r?\n/u)
-  .filter((line) => /Publishing|published|npm error|ERR_|New tag|Existing tag/iu.test(line))
-  .map(redactKnownTokens)
-  .join('\n');
+export const filterReleaseLogs = (contents) => {
+  const lines = stripVTControlCharacters(contents).split(/\r?\n/u);
+  const selected = new Set();
+  for (const [index, line] of lines.entries()) {
+    if (/Publishing|published|npm error|ERR_|New tag|Existing tag/iu.test(line)) selected.add(index);
+    if (/\bFAIL(?:\s|$)|\b\w*Error(?:\s+\[[^\]]+\])?:|::error\b|\berror\s+TS\d+|Unhandled Errors|ELIFECYCLE|Process completed with exit code [1-9]/iu.test(line)) {
+      for (let cursor = index; cursor < Math.min(lines.length, index + 9); cursor += 1) {
+        selected.add(cursor);
+      }
+    }
+  }
+  return lines.filter((_, index) => selected.has(index)).map(redactKnownTokens).join('\n');
+};
 
 const captureGit = (args, { cwd, input } = {}) => {
   const result = spawnSync('git', args, {

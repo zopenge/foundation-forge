@@ -203,6 +203,24 @@ Git tag 和源 commit。已发布版本不能再次 publish，也不能把对应
 随后为本次改动准备下一版 RC，经 main workflow 发布并验证新版本的 provenance 与 tag。
 旧版元数据缺口必须保留在交付证据中，不得将其描述为已修复。
 
+### workflow 在 publish 之前失败
+
+先运行 `pnpm release:status --sha <commit> --logs`，查看失败步骤和最早的实际错误。
+日志摘要会去除终端控制码，并保留测试失败、断言位置、编译错误及有限的后续上下文，
+同时继续脱敏 npm 和 GitHub 凭据。只有 `ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL`
+或退出码不能说明根因，也不能据此要求用户重新输入 OTP。
+
+`release:next` 先执行完整 `pnpm check`，检查失败时尚未调用 publish。修复前仍应
+核对 registry，区分尚未发布与部分发布。代码或测试需要修复时，提交并推送新 commit
+后重新运行 `pnpm release:request-next`；只有确认同一 commit 可以安全重试时才使用
+`pnpm release:request-next --retry`。不得跳过门禁或重新发布已经存在的版本。
+
+Linux 的进程退出检查不能把 `SIGKILL` 已发送等同于 PID 已回收：进程可能短暂处于
+`Z` 状态，`process.kill(pid, 0)` 此时仍成功。对于文档已允许系统继续完成 teardown
+的失败结果，测试应在独立、有限的清理等待期内确认 PID 最终消失；不能修改返回契约
+或跳过清理断言来消除失败。测试使用的 marker 目录也必须在启动子进程前自行创建，
+并在结束后清理；不得依赖开发机已经存在的 `.tmp/logs` 等目录。
+
 ### bootstrap 自动生成 `latest`
 
 npm 创建全新 package 时要求存在 `latest`，即使明确以 `--tag next` 发布

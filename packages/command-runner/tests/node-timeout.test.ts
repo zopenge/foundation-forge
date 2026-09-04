@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { readFile, rm } from 'node:fs/promises';
+import { mkdir, readFile, rm } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import process from 'node:process';
@@ -8,6 +9,13 @@ import { expect, it, vi } from 'vitest';
 import type { ProcessControlProvider } from '@openge/forge-process-control';
 import type { CommandEvent } from '../src/index.js';
 import { command, makeRunner, trackPid } from './helpers.js';
+
+async function expectChildExited(pid: number): Promise<void> {
+  // 失败结果交付时，操作系统可能仍在回收已经终止的子进程。
+  await vi.waitFor(() => {
+    expect(() => process.kill(pid, 0)).toThrowError(expect.objectContaining({ code: 'ESRCH' }));
+  }, { timeout: 1000, interval: 10 });
+}
 
 it('times out once, emits live heartbeats and cleans up its timers', async () => {
   const timeoutSpy = vi.spyOn(globalThis, 'setTimeout');
@@ -68,7 +76,7 @@ it.each(['missing', 'reject', 'hang'] as const)('bounds %s identity acquisition 
   expect(result.terminationReason).toBe('start-failure');
   expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: 'COMMAND_IDENTITY_UNAVAILABLE' }));
   expect(base.terminations).toHaveLength(0);
-  expect(() => process.kill(pid, 0)).toThrow();
+  await expectChildExited(pid);
 });
 
 it.each(['reject', 'hang', 'no-exit'] as const)('bounds Provider termination %s and cleans the child', async mode => {
@@ -89,7 +97,7 @@ it.each(['reject', 'hang', 'no-exit'] as const)('bounds Provider termination %s 
   expect(result.terminationReason).toBe('termination-failure');
   expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: 'COMMAND_TERMINATION_FAILED' }));
   expect(providerSignal?.aborted).toBe(true);
-  expect(() => process.kill(pid, 0)).toThrow();
+  await expectChildExited(pid);
 });
 
 it('includes identity waiting in the total manual termination budget', async () => {
@@ -101,11 +109,12 @@ it('includes identity waiting in the total manual termination budget', async () 
   await running.terminate();
   expect((await running.result).terminationReason).toBe('termination-failure');
   expect(base.terminations).toHaveLength(0);
-  expect(() => process.kill(pid, 0)).toThrow();
+  await expectChildExited(pid);
 });
 
 it('bounds pipe closure after natural exit while its descendant owns inherited output', async () => {
   const marker = fileURLToPath(new URL('../../../.tmp/logs/command-runner-pipe-' + randomUUID() + '.txt', import.meta.url));
+  await mkdir(dirname(marker), { recursive: true });
   try {
     const { runner, terminations } = makeRunner({ terminationTimeoutMs: 60 });
     const result = await runner.run(command('hold-pipe', [marker]));

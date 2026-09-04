@@ -159,6 +159,31 @@ test('filters release logs and redacts credentials', () => {
   ].join('\n'));
 });
 
+test('includes pre-publish check failures and nearby diagnostics without exposing credentials', () => {
+  const output = filterReleaseLogs([
+    'setup noise',
+    '\u001b[41m FAIL \u001b[0m tests/process.test.ts > waits for child exit',
+    'AssertionError: expected child to stop',
+    '  expected: stopped',
+    '  received: running',
+    '  at tests/process.test.ts:92:38',
+    '  authorization: Bearer example-secret',
+    ...Array.from({ length: 20 }, () => 'unrelated progress'),
+    'distant setup noise',
+    'src/config.ts(4,1): error TS2322: value is not assignable',
+    'Process completed with exit code 1.',
+  ].join('\n'));
+
+  assert.match(output, /FAIL\s+tests\/process.test.ts/u);
+  assert.match(output, /AssertionError: expected child to stop/u);
+  assert.match(output, /at tests\/process.test.ts:92:38/u);
+  assert.match(output, /authorization: Bearer \[REDACTED\]/u);
+  assert.match(output, /error TS2322/u);
+  assert.match(output, /Process completed with exit code 1/u);
+  assert.doesNotMatch(output, /example-secret|setup noise/u);
+  assert.equal(output.includes('\u001b'), false);
+});
+
 test('configures only missing trusted publishers and verifies the result', async () => {
   const configurations = new Map([
     ['@example/configured', [{ environment: 'npm', file: 'release.yml', repository: 'example/project', type: 'github' }]],
