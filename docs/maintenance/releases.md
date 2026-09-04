@@ -190,6 +190,17 @@ cd /d "%~dp0..\.."
 call pnpm release:bootstrap
 ```
 
+上面的 `call pnpm` 示例适用于已经在该终端核对过 Node 和 pnpm 版本的环境。
+本次实际成功的自动化会话使用正常安装的 Node 24.11.1 启动
+`.tmp/release/bootstrap-session.cjs`；包装器再以 `process.execPath` 和已确认版本为
+10.33.2 的 pnpm JavaScript CLI 绝对路径启动 `release:bootstrap`，使用参数数组、
+`shell: false` 和 `stdio: ['inherit', 'pipe', 'pipe']`。入口不依赖 PATH 中先命中的
+pnpm shim；CLI 路径应从本机已核实的安装解析，不能复制其它机器的安装目录。
+包装器只补入该正常 Node 与 pnpm 安装目录，并合并 Windows 的 PATH/Path 键，
+保留原 PATH；输出写入日志，`close` 后写入真实退出码。本仓
+`scripts/package-manager-command.mjs` 已提供 shim 解析与命令参数构造，临时包装器
+应复用该职责，不再维护另一套候选路径查找逻辑。
+
 自动化用真实 Node 脚本执行下面的启动片段。工具 REPL 若没有 process 全局，先把
 片段保存到忽略的 .tmp 文件，再用正常安装的 Node 执行，不在受限 REPL 内拼接 shell。
 
@@ -239,6 +250,15 @@ Linux 的进程退出检查不能把 `SIGKILL` 已发送等同于 PID 已回收�
 的失败结果，测试应在独立、有限的清理等待期内确认 PID 最终消失；不能修改返回契约
 或跳过清理断言来消除失败。测试使用的 marker 目录也必须在启动子进程前自行创建，
 并在结束后清理；不得依赖开发机已经存在的 `.tmp/logs` 等目录。
+
+### WSL 验证找不到 Node
+
+Windows 上能运行 Node 不代表默认 WSL 发行版内也能运行。`wsl -- node --version`
+返回 command not found 或 exit 127 时，先确认已配置的验证发行版，再在该发行版
+核对已有 Node 入口与版本；不要反复尝试同一个不存在的默认入口。后续命令应显式
+使用同一发行版、同一已验证的 Linux Node 入口，并保留仓库工作目录。已存在可用的
+验证运行时就直接复用，不因 PATH 缺项重复下载或安装。具体本机入口与版本保存在
+忽略的验证报告，公开手册只保留可重复的定位步骤。
 
 ### bootstrap 自动生成 `latest`
 
