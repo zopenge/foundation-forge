@@ -125,6 +125,25 @@ shim 解析出的 JavaScript CLI，并始终使用 `shell: false`。Windows 下
 满足 `engines.node` 的正常安装，并确认 `node --version` 与
 `pnpm exec node --version` 一致。不要把一次性的运行时目录塞到 `PATH` 前部。
 
+### 无交互安装等待重装确认
+
+先核对仓库 `packageManager`、实际 `pnpm --version` 和现有
+`node_modules/.modules.yaml` 的 `packageManager`。同一机器可能同时装有多个 pnpm；
+本次遇到 `%APPDATA%/npm` 中的 pnpm 8.6.11 被选中，而现有依赖目录由 10.33.2
+生成，安装因 `node_modules will be removed and reinstalled` 确认而停住。
+应使用与仓库及依赖目录匹配的正常安装入口，不把“能执行 pnpm”当成版本正确。
+
+先读取日志确认真正的等待点，再决定是否停止本次自有安装进程。非交互安装在确认
+工具版本、目标工作目录和锁文件预期后，可只给该安装子进程传入 `CI=true`；新增或
+更新依赖完成后，再执行 `pnpm install --frozen-lockfile` 验证可重复安装。
+OTP 步骤仍连接真实交互终端。不得同时启动多次安装去试探，也不得把配置了第三方
+registry 本身当作镜像故障证据；只有实际 HTTP 错误或版本查询差异才能支持该判断。
+
+自动化 REPL 中只观察未完成的 Promise，无法区分等待交互、缓冲输出和进程失败。
+长命令宜用 `spawn`，将 stdout/stderr 直接写入已打开的日志文件描述符，并在
+`close` 事件写入退出码和完成状态。读取日志与状态文件后再继续依赖它的测试；
+PID 已生成或日志没有新行都不能代替退出状态。
+
 ### Windows 自动化启动交互式 OTP 终端
 
 Bootstrap 与 Trusted Publisher 配置必须连接真实控制台的标准输入。普通工具进程的
