@@ -53,3 +53,14 @@ describe('portable relative paths', () => {
     expect(() => normalizePortableRelativePath(path)).toThrowError(PathSafetyError);
   });
 });
+
+describe('UTF-16 path integrity', () => {
+  test.each(['\ud800', '\udfff', 'folder/\ud801.txt', '\ud800\ud800', '\udc00\ud800'])('rejects unpaired surrogate path %j', path => {
+    expect(() => validatePortableRelativePath(path)).toThrowError(expect.objectContaining({ code: pathSafetyErrorCodes.invalidRelativePath }));
+    expect(() => normalizePortableRelativePath(path)).toThrowError(expect.objectContaining({ code: pathSafetyErrorCodes.invalidRelativePath }));
+  });
+  test('preserves paired surrogate characters through validation and normalization', () => {
+    expect(validatePortableRelativePath('folder/\ud83d\ude80.txt')).toBe('folder/\ud83d\ude80.txt');
+    expect(normalizePortableRelativePath('folder\\\ud83d\ude80.txt')).toBe('folder/\ud83d\ude80.txt');
+  });
+});

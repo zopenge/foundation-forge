@@ -3,7 +3,7 @@ import {
   inspectArchiveEntries,
   type ArchiveInspectionSummary,
 } from '@openge/forge-archive-safety';
-import { unzipSync, zipSync, type Zippable } from 'fflate';
+import { inflateSync, zipSync, type Zippable } from 'fflate';
 
 import { parseZipCentralDirectory, type ParsedZipArchiveEntry } from './central-directory.js';
 import {
@@ -67,17 +67,18 @@ export function decodeZipArchive(
   options: ZipArchiveReadOptions = {},
 ): DecodedZipArchive {
   const inspection = inspectInternal(archive, options);
-  let decoded: Record<string, Uint8Array>;
-  try {
-    decoded = unzipSync(archive);
-  } catch (error) {
-    throw new ZipArchiveError(zipArchiveErrorCodes.decompressionFailed, {}, error);
-  }
   const entries = inspection.parsedEntries.map((entry): ZipArchiveSourceEntry => {
-    const bytes = Object.prototype.hasOwnProperty.call(decoded, entry.path)
-      ? decoded[entry.path]
-      : undefined;
-    if (bytes === undefined || bytes.length !== entry.uncompressedBytes) {
+    const compressed = archive.subarray(entry.dataOffset, entry.dataOffset + entry.compressedBytes);
+    let bytes: Uint8Array;
+    try {
+      // 复用已校验的路径与偏移，避免 Provider 再次解码文件名而改变路径身份。
+      bytes = entry.compression === 'store'
+        ? compressed.slice()
+        : inflateSync(compressed, { out: new Uint8Array(entry.uncompressedBytes) });
+    } catch (error) {
+      throw new ZipArchiveError(zipArchiveErrorCodes.decompressionFailed, { path: entry.path }, error);
+    }
+    if (bytes.length !== entry.uncompressedBytes) {
       throw new ZipArchiveError(zipArchiveErrorCodes.decompressionFailed, { path: entry.path });
     }
     if (calculateCrc32(bytes) !== entry.crc32) {

@@ -16,11 +16,13 @@ capabilities, published as modular `@openge` packages.
 | `@openge/forge-text-integrity` | Runtime-neutral text corruption inspection plus explicit Node.js repository scanning and CLI support |
 | `@openge/forge-repository-files` | Deterministic read-only Git repository file discovery and ignore filtering |
 | `@openge/forge-repository-context` | Pure registry validation, bounded context selection, impact closure, budget diagnostics, and deterministic output comparison |
+| `@openge/forge-generated-artifacts` | Explicit artifact plans, deterministic comparison, and safe Node.js atomic publication |
 | `@openge/forge-deterministic-json` | Strict deterministic JSON validation, sorting, and serialization |
 | `@openge/forge-path-safety` | Cross-runtime portable relative-path validation plus explicit Node.js root containment |
 | `@openge/forge-artifact-integrity` | Cross-runtime byte integrity plus explicit asynchronous and synchronous Node.js file verification |
 | `@openge/forge-archive-safety` | Runtime-neutral archive entry path and resource-limit validation |
 | `@openge/forge-archive-zip` | Runtime-neutral deterministic ZIP32 encoding, inspection, and bounded decoding |
+| `@openge/forge-config-bundle` | Deterministic manifest-backed configuration bundles with staged Node.js import, backups, and rollback reporting |
 | `@openge/forge-json-lines` | Incremental, bounded JSON Lines encoding and decoding across arbitrary byte chunks |
 | `@openge/forge-server-sent-events` | Incremental Server-Sent Events framing and parsing without transport ownership |
 | `@openge/forge-workspace-graph` | Pure deterministic workspace dependency graph construction and traversal |
@@ -29,6 +31,7 @@ capabilities, published as modular `@openge` packages.
 | `@openge/forge-workspace-checks-pnpm` | pnpm workspace checks CLI assembly and integration facade |
 | `@openge/forge-process-control` | Provider-neutral process identity, listener selection, and termination contracts |
 | `@openge/forge-process-control-node` | Explicit Windows and Posix process discovery and termination providers |
+| `@openge/forge-command-runner` | Bounded asynchronous command execution with explicit process identity and termination providers |
 
 ## Installation
 
@@ -114,6 +117,27 @@ Run the package-cycle gate for a pnpm workspace:
 ```sh
 forge-workspace-checks --cwd . --check package-cycles
 ```
+
+## Generated artifacts, commands, and configuration bundles
+
+Three independently versioned packages cover shared tooling lifecycles:
+
+- [Generated Artifacts](packages/generated-artifacts/README.md) compares explicit
+  plans and publishes changed files atomically. It never owns an entire output directory.
+- [Command Runner](packages/command-runner/README.md) starts one asynchronous
+  command with bounded capture, timeout, heartbeat, and cancellation. Callers inject
+  their Process Control provider and explicit termination budgets.
+- [Config Bundle](packages/config-bundle/README.md) defines a deterministic ZIP
+  manifest format and supports staged imports with explicit conflict policies.
+
+Their root entries are runtime-neutral; filesystem and child-process operations
+are exported only from `/node`. Filesystem callers choose path case sensitivity
+explicitly. Product file selection, secret checks, service ordering, and log
+formatting remain in the consuming application.
+
+The initial `0.1.0-rc.0` manifests are bootstrap candidates. Follow the
+[release procedure](docs/maintenance/releases.md) before adopting a published
+version in a consumer. Workspace packaging checks do not publish these packages.
 
 ## Example
 

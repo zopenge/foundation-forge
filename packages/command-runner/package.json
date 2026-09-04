@@ -1,0 +1,52 @@
+{
+  "name": "@openge/forge-command-runner",
+  "version": "0.1.0-rc.0",
+  "description": "Provider-neutral asynchronous command execution with bounded Node process lifecycle",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "browser": null,
+      "import": "./dist/node.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "eslint . --max-warnings 0",
+    "typecheck": "tsc -p tsconfig.json --noEmit --pretty false",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22.14.0"
+  },
+  "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zopenge/foundation-forge.git",
+    "directory": "packages/command-runner"
+  },
+  "homepage": "https://github.com/zopenge/foundation-forge#readme",
+  "bugs": {
+    "url": "https://github.com/zopenge/foundation-forge/issues"
+  },
+  "dependencies": {
+    "@openge/forge-process-control": "workspace:*"
+  }
+}

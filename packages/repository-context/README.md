@@ -42,7 +42,7 @@ Validation failures use `RepositoryContextError` with a stable `code` and struct
 
 ## Ownership
 
-This package has no filesystem discovery, parser, tokenizer, command runner, telemetry, query engine or runtime provider selection. Consumers own identifiers, semantic rules, candidate ranking, file access, output schemas and paths, and quality thresholds. The only runtime dependency is `@openge/forge-deterministic-json`.
+This package has no filesystem discovery, parser, tokenizer, command runner, telemetry, query engine or runtime provider selection. Consumers own identifiers, semantic rules, candidate ranking, file access, output schemas and paths, and quality thresholds. Its runtime dependencies are `@openge/forge-deterministic-json` and the runtime-neutral core of `@openge/forge-generated-artifacts`. Generic comparison is delegated internally without imposing artifact filesystem path rules on caller-owned output keys. Filesystem publication remains in Generated Artifacts `/node`.
 
 ## License
 

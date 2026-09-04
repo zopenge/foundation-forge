@@ -42,6 +42,7 @@
     "url": "https://github.com/zopenge/foundation-forge/issues"
   },
   "dependencies": {
-    "@openge/forge-deterministic-json": "workspace:*"
+    "@openge/forge-deterministic-json": "workspace:*",
+    "@openge/forge-generated-artifacts": "workspace:*"
   }
 }

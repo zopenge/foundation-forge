@@ -1,5 +1,9 @@
 # @openge/forge-archive-zip
 
+## 未发布
+
+- 保留 UTF-8 文件名前导 BOM，并复用已验证的中央目录路径逐项解码，避免合法文件名别名和配置归档往返失败。
+
 ## 0.1.0
 
 ### Minor Changes

@@ -94,6 +94,24 @@
 
 ## Repository Context 边界
 
-`@openge/forge-repository-context` 只接受调用方提供的 profile、recipe、候选文件、符号、依赖节点和预算数值，执行结构校验、稳定去重、选择、闭包与结构化诊断。它组合 Deterministic JSON 完成序列化，并对调用方已读取的输出文本进行换行一致化比较。
+`@openge/forge-repository-context` 只接受调用方提供的 profile、recipe、候选文件、符号、依赖节点和预算数值，执行结构校验、稳定去重、选择、闭包与结构化诊断。它组合 Deterministic JSON 完成序列化，内部委托 Generated Artifacts 比较调用方已读取的输出，保留原有文本换行语义和领域返回结构。
 
 候选排序、业务分类、风险等级、分片映射、文件发现、解析、token 计算、输出 schema 和路径属于消费者。公共包不读取文件、不运行命令，不拥有查询、遥测或基准测试流程。详见 [Repository Context](repository-context.md)。
+
+## Generated Artifacts 边界
+
+`@openge/forge-generated-artifacts` 的根入口只接受显式生成物计划，验证便携相对路径并比较预期内容与快照。它依赖 Path Safety，不依赖 Repository Context。Repository Context 可以向下委托通用比较，但不引入文件系统操作。
+
+`/node` 入口在显式绝对根目录中检查与发布计划内文件。调用者必须选择路径大小写策略；目标及现有祖先的符号链接和 junction 无条件拒绝，提交与退休删除前重新检查。内容相同时保持 mtime；只有全部预期文件写入成功后才删除显式退休文件。计划外文件不属于本包，目录发现、产品输出 schema、状态文件、目录清扫和 CLI 由上层持有。单文件 rename 不构成跨文件事务或跨进程锁。
+
+## Command Runner 边界
+
+`@openge/forge-command-runner` 的根入口提供纯命令契约和校验，只依赖 Process Control 中立契约。`/node` 入口负责单命令异步启动、原始字节事件、有界捕获、超时、心跳、取消与资源释放；它不依赖 Process Control Node Provider。
+
+调用者显式提供平台、Process Control Provider、终止策略、身份获取预算与终止总预算。PID 启动事件与身份观察事件分开；终止进程树只能使用已捕获身份。存活子进程身份不可用或 Provider 无法在预算内完成时，返回结构化失败并受控清理直接子进程，不退化为裸 PID 进程树操作。观察者同步执行，其异常转为有界诊断。全局信号、shell 组装、服务顺序、就绪探测、重启、日志展示与持久化留在上层。
+
+## Config Bundle 边界
+
+`@openge/forge-config-bundle` 组合 Archive ZIP、Archive Safety、Artifact Integrity、Deterministic JSON 和 Path Safety，定义稳定的 Manifest V1 配置归档格式；它是格式与流程组合，不引入 Bundle Provider 层。三个生命周期包互不依赖，依赖图始终从组合层指向低层原语。
+
+根入口只处理内存字节，使用调用者提供的 UTC 时间生成确定性归档，校验保留路径、条目集合、大小和 SHA-256。缺少 V1 manifest 的旧归档明确拒绝，不推测其来源。`/node` 入口基于显式路径大小写与冲突策略完成所有目标预检查、staging、同目录 rename、备份和尽力回滚；备份目录由调用者提供且不得与目标文件冲突。目标与祖先 symlink/junction 均拒绝。失败结果区分预检查、staging、备份、提交及逐路径回滚不完整，不声称提供强事务或抵抗任意并发目录置换。产品文件选择、Secret 规则、配置键、业务时间戳和 CLI 文案仍由上层持有。

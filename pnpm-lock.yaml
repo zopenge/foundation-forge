@@ -55,7 +55,37 @@ importers:
 
   packages/artifact-integrity: {}
 
+  packages/command-runner:
+    dependencies:
+      '@openge/forge-process-control':
+        specifier: workspace:*
+        version: link:../process-control
+
+  packages/config-bundle:
+    dependencies:
+      '@openge/forge-archive-safety':
+        specifier: workspace:0.1.0
+        version: link:../archive-safety
+      '@openge/forge-archive-zip':
+        specifier: workspace:0.1.0
+        version: link:../archive-zip
+      '@openge/forge-artifact-integrity':
+        specifier: workspace:0.1.0
+        version: link:../artifact-integrity
+      '@openge/forge-deterministic-json':
+        specifier: workspace:0.1.0-rc.1
+        version: link:../deterministic-json
+      '@openge/forge-path-safety':
+        specifier: workspace:0.1.0
+        version: link:../path-safety
+
   packages/deterministic-json: {}
+
+  packages/generated-artifacts:
+    dependencies:
+      '@openge/forge-path-safety':
+        specifier: workspace:*
+        version: link:../path-safety
 
   packages/json-lines: {}
 
@@ -127,6 +157,9 @@ importers:
       '@openge/forge-deterministic-json':
         specifier: workspace:*
         version: link:../deterministic-json
+      '@openge/forge-generated-artifacts':
+        specifier: workspace:*
+        version: link:../generated-artifacts
 
   packages/repository-files: {}
 

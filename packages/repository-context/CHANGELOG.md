@@ -1,5 +1,9 @@
 # @openge/forge-repository-context
 
+## 未发布
+
+- 通用输出比较委托 Generated Artifacts Core，保留任意字符串输出键、CRLF/CR/LF 比较、missing/stale/unexpected 以及原始字符串区别。
+
 ## 0.1.0-rc.0
 
 ### Minor Changes

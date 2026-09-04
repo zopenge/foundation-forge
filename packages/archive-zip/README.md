@@ -25,7 +25,8 @@ const decoded = decodeZipArchive(archive, {
 The provider creates deterministic ZIP32 archives and validates the central
 directory before decompression. It rejects encryption, ZIP64, unsupported
 methods, unsafe paths and entry kinds, duplicate names, inconsistent headers,
-CRC mismatches, and configured resource-limit violations.
+CRC mismatches, and configured resource-limit violations. UTF-8 filenames retain
+all characters, including a leading BOM; they are not normalized during decoding.
 
 Only in-memory bytes are handled. Downloading, filesystem extraction, cache
 policy, credentials, and product artifact semantics belong to the consumer.

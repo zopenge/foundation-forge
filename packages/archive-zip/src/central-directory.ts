@@ -178,7 +178,7 @@ function readEntryKind(
 
 function decodeName(bytes: Uint8Array): string {
   try {
-    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
   } catch (error) {
     throw new ZipArchiveError(zipArchiveErrorCodes.invalidZip, {}, error);
   }

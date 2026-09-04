@@ -30,7 +30,9 @@ const existingPath = await resolveExistingPathWithinRoot(inputRoot, logicalPath)
 
 The root entry accepts canonical slash-separated relative paths and has no
 Node.js or third-party runtime dependencies. It rejects absolute paths, drive
-paths, UNC and device paths, NUL bytes, empty segments, and traversal segments.
+paths, UNC and device paths, NUL bytes, empty segments, traversal segments, and
+unpaired UTF-16 surrogates. Valid surrogate pairs are preserved; malformed paths
+are rejected rather than silently replaced during filesystem encoding.
 
 `resolvePathWithinRoot` provides lexical containment only and does not claim to
 prevent symbolic-link escapes. Use `resolveExistingPathWithinRoot` when both the
