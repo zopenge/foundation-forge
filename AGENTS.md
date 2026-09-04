@@ -18,6 +18,10 @@
 - New or revised code comments, architecture documents, and delivery notes default to Simplified Chinese and must be saved as UTF-8.
 - The repository README and public package READMEs use English.
 
+## Git 工作目录
+
+- 默认在当前 Git 分支和现有工作目录中修改。只有用户明确要求创建或切换分支、创建 worktree 时，才执行对应操作；不得因技能默认流程、隔离习惯或并行执行而自行创建分支或 worktree。
+
 ## Dependencies and releases
 
 - Repository automation must be metadata- and convention-driven. Central scripts must not duplicate package names, public entries, dependency mappings, release order, versions, or repository coordinates when they can be derived from authoritative manifests, workspace configuration, Git metadata, or workflow configuration. Irreducible package-specific verification must live with the package and be discovered by convention.
