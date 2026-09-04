@@ -91,3 +91,9 @@
 `@openge/forge-process-control` 只定义进程身份、TCP 监听项、显式终止策略、稳定筛选和结构化错误，不访问操作系统。
 
 `@openge/forge-process-control-node` 提供显式 Windows 与 Posix Provider；调用方必须选择平台和监听发现后端，不存在运行时自动选择或失败回退。终止前必须重新校验 PID 与启动标识，避免 PID 复用导致误杀。服务管理、端口归属策略、进程启动、日志和产品恢复流程仍由消费者持有。
+
+## Repository Context 边界
+
+`@openge/forge-repository-context` 只接受调用方提供的 profile、recipe、候选文件、符号、依赖节点和预算数值，执行结构校验、稳定去重、选择、闭包与结构化诊断。它组合 Deterministic JSON 完成序列化，并对调用方已读取的输出文本进行换行一致化比较。
+
+候选排序、业务分类、风险等级、分片映射、文件发现、解析、token 计算、输出 schema 和路径属于消费者。公共包不读取文件、不运行命令，不拥有查询、遥测或基准测试流程。详见 [Repository Context](repository-context.md)。

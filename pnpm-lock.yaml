@@ -122,6 +122,12 @@ importers:
         specifier: workspace:^
         version: link:../process-control
 
+  packages/repository-context:
+    dependencies:
+      '@openge/forge-deterministic-json':
+        specifier: workspace:*
+        version: link:../deterministic-json
+
   packages/repository-files: {}
 
   packages/server-sent-events: {}
