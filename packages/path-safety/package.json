@@ -1,6 +1,6 @@
 {
   "name": "@openge/forge-path-safety",
-  "version": "0.1.1-rc.0",
+  "version": "0.1.1",
   "description": "Cross-runtime portable path validation and explicit Node.js root containment",
   "type": "module",
   "main": "./dist/index.js",
