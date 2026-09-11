@@ -2,34 +2,8 @@
 
 pnpm workspace checks command-line assembly and integration facade.
 
-## Installation
+Complete CLI and programmatic usage, exit codes, examples, and package relationships are maintained in the [中文使用文档](https://github.com/zopenge/foundation-forge/blob/main/docs/packages/workspace-tooling/workspace-checks-pnpm.md).
 
-```sh
-pnpm add -D @openge/forge-workspace-checks-pnpm
-```
-
-## CLI
-
-```sh
-forge-workspace-checks --cwd . --check package-cycles
-```
-
-The command returns 0 when checks pass, 1 for findings, and 2 for invalid
-arguments or workspace read errors. It reads only the requested pnpm workspace
-and does not modify workspace files or lockfiles.
-
-## Programmatic usage
-
-```ts
-import { checkPnpmWorkspace } from '@openge/forge-workspace-checks-pnpm';
-
-const report = await checkPnpmWorkspace({ cwd: process.cwd() });
-```
-
-`checkPnpmWorkspace({ cwd, workspaceFile?, checks? })` uses the built-in
-`package-cycles` rule when `checks` is omitted. The facade assembles the CLI
-and Core checks; `@openge/forge-workspace-pnpm` remains the pnpm Provider.
-
-## License
+For repository-wide capability discovery, see the [Foundation Forge documentation](https://github.com/zopenge/foundation-forge/blob/main/docs/README.md).
 
 Licensed under the Apache License 2.0.

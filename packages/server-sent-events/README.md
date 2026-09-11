@@ -2,32 +2,8 @@
 
 Runtime-neutral incremental Server-Sent Events encoding and decoding.
 
-## Installation
+Complete usage, examples, limits, and protocol boundaries are maintained in the [中文使用文档](https://github.com/zopenge/foundation-forge/blob/main/docs/packages/data-formats/server-sent-events.md).
 
-```sh
-pnpm add @openge/forge-server-sent-events
-```
-
-## Usage
-
-```ts
-import {
-  createServerSentEventDecoder,
-  encodeServerSentEvent,
-} from '@openge/forge-server-sent-events';
-
-const decoder = createServerSentEventDecoder({ maxEventBytes: 64 * 1024 });
-const events = decoder.push(new TextEncoder().encode('event: ready\ndata: ok\n\n'));
-const encoded = encodeServerSentEvent({ data: 'ok', event: 'ready' });
-```
-
-The decoder accepts arbitrary UTF-8 chunks, handles CR, LF, and CRLF event
-boundaries, joins repeated `data` fields, and ignores comments. Invalid input
-and resource-limit failures use structured `ServerSentEventError` instances.
-
-HTTP connections, authentication, reconnection, heartbeat policy, and business
-event schemas are deliberately outside this package.
-
-## License
+For repository-wide capability discovery, see the [Foundation Forge documentation](https://github.com/zopenge/foundation-forge/blob/main/docs/README.md).
 
 Licensed under the Apache License 2.0.

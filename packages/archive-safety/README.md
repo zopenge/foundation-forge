@@ -2,33 +2,8 @@
 
 Runtime-neutral archive entry path and resource-limit validation.
 
-## Installation
+Complete usage, examples, limits, and archive-safety boundaries are maintained in the [中文使用文档](https://github.com/zopenge/foundation-forge/blob/main/docs/packages/artifacts/archive-safety.md).
 
-```sh
-pnpm add @openge/forge-archive-safety
-```
-
-## Usage
-
-```ts
-import { inspectArchiveEntries } from '@openge/forge-archive-safety';
-
-const summary = inspectArchiveEntries([
-  { path: 'payload/', kind: 'directory' },
-  { path: 'payload/data.bin', kind: 'file', uncompressedBytes: 1024 },
-]);
-```
-
-The package rejects absolute paths, traversal segments, backslashes, links,
-unsupported entry kinds, invalid sizes, excessive entry counts, and excessive
-expanded byte totals. It does not download, inspect archive formats, invoke
-system tools, or extract files; consumers and Provider adapters retain those
-responsibilities.
-
-Portable entry validation is shared with `@openge/forge-path-safety`, while
-this package preserves archive directory paths ending in `/` and maps failures
-to its own `ArchiveSafetyError` contract.
-
-## License
+For repository-wide capability discovery, see the [Foundation Forge documentation](https://github.com/zopenge/foundation-forge/blob/main/docs/README.md).
 
 Licensed under the Apache License 2.0.

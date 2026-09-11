@@ -1,18 +1,9 @@
-# @openge/forge-peer-network
+# `@openge/forge-peer-network`
 
-Provider-neutral peer networking contracts and reusable protocol utilities with
-zero runtime third-party dependencies.
+Provider-neutral peer networking contracts, framing, lifecycle, errors, and discovery scheduling.
 
-```sh
-pnpm add @openge/forge-peer-network
-```
+Complete usage, public capabilities, examples, limits, and package relationships are maintained in the [中文使用文档](https://github.com/zopenge/foundation-forge/blob/main/docs/packages/networking/peer-network.md).
 
-The root entry exports peer endpoints, advertisements, networks, providers,
-connections, message channels, discovery contracts, structured errors, a
-length-prefixed frame codec, cancellable operation control, and a bounded peer
-dial scheduler.
-
-This package does not select or implement a transport. Install an explicit
-Provider package separately.
+For repository-wide capability discovery, see the [Foundation Forge documentation](https://github.com/zopenge/foundation-forge/blob/main/docs/README.md).
 
 Licensed under the Apache License 2.0.

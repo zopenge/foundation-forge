@@ -1,37 +1,9 @@
 # `@openge/forge-artifact-integrity`
 
-Cross-runtime SHA-256 byte integrity and explicit Node.js file verification.
+Cross-runtime byte integrity and explicit Node.js file verification.
 
-## Installation
+Complete usage, public entrypoints, examples, and file-safety boundaries are maintained in the [中文使用文档](https://github.com/zopenge/foundation-forge/blob/main/docs/packages/artifacts/artifact-integrity.md).
 
-```sh
-pnpm add @openge/forge-artifact-integrity
-```
-
-## Usage
-
-```ts
-import { verifyBytesIntegrity } from '@openge/forge-artifact-integrity';
-import {
-  calculateFileIntegritySync,
-  verifyBytesIntegritySync,
-  verifyFileIntegrity,
-} from '@openge/forge-artifact-integrity/node';
-
-await verifyBytesIntegrity(bytes, { byteLength: 3, sha256: expectedDigest });
-await verifyFileIntegrity('artifact.bin', {
-  byteLength: expectedLength,
-  sha256: expectedDigest,
-});
-const bytesIntegrity = verifyBytesIntegritySync(bytes, expectedIntegrity);
-const fileIntegrity = calculateFileIntegritySync('artifact.bin');
-```
-
-The root entry uses Web Crypto and contains no Node.js imports. The `/node`
-entry hashes asynchronous streams with cancellation support and also provides
-synchronous byte and chunked-file APIs. File APIs reject symbolic links and
-non-regular files.
-
-## License
+For repository-wide capability discovery, see the [Foundation Forge documentation](https://github.com/zopenge/foundation-forge/blob/main/docs/README.md).
 
 Licensed under the Apache License 2.0.

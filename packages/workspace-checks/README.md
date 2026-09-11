@@ -1,24 +1,9 @@
 # `@openge/forge-workspace-checks`
 
-Pure, deterministic checks for neutral workspace dependency graphs.
+Pure deterministic checks for neutral workspace dependency graphs.
 
-## Installation
+Complete usage, built-in checks, examples, and ownership boundaries are maintained in the [中文使用文档](https://github.com/zopenge/foundation-forge/blob/main/docs/packages/workspace-tooling/workspace-checks.md).
 
-```sh
-pnpm add -D @openge/forge-workspace-checks
-```
-
-## Usage
-
-```ts
-import { createPackageCycleCheck, runWorkspaceChecks } from '@openge/forge-workspace-checks';
-
-const report = runWorkspaceChecks(graph, [createPackageCycleCheck()]);
-```
-
-The package performs no filesystem access or package-manager discovery. Its
-checks consume caller-provided graphs and return structured diagnostics.
-
-## License
+For repository-wide capability discovery, see the [Foundation Forge documentation](https://github.com/zopenge/foundation-forge/blob/main/docs/README.md).
 
 Licensed under the Apache License 2.0.

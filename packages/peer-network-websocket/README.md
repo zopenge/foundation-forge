@@ -1,19 +1,9 @@
-# @openge/forge-peer-network-websocket
+# `@openge/forge-peer-network-websocket`
 
-WebSocket rendezvous discovery for the Foundation Forge peer networking
-contracts.
+WebSocket rendezvous client, hub, and Node.js server adapter for peer discovery.
 
-```sh
-pnpm add @openge/forge-peer-network @openge/forge-peer-network-websocket
-```
+Complete usage, public entrypoints, examples, limits, and package relationships are maintained in the [中文使用文档](https://github.com/zopenge/foundation-forge/blob/main/docs/packages/networking/peer-network-websocket.md).
 
-Use `@openge/forge-peer-network-websocket/client` with an injected standard
-WebSocket factory in browser-capable environments. Use the runtime-neutral
-`@openge/forge-peer-network-websocket/hub` entry when the host runtime supplies
-the connection adapter. Use `@openge/forge-peer-network-websocket/server` only
-for the Node.js `ws` server adapter; it continues to re-export the Hub API.
-
-The client and hub entries do not import Node.js built-ins, `ws`, or the server
-implementation.
+For repository-wide capability discovery, see the [Foundation Forge documentation](https://github.com/zopenge/foundation-forge/blob/main/docs/README.md).
 
 Licensed under the Apache License 2.0.

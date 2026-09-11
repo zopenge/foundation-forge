@@ -1,32 +1,9 @@
-# @openge/forge-peer-network-libp2p
+# `@openge/forge-peer-network-libp2p`
 
-Explicit libp2p providers for the Foundation Forge peer networking contracts.
+Explicit Node.js, browser, and relay peer-network providers based on libp2p.
 
-```sh
-pnpm add @openge/forge-peer-network @openge/forge-peer-network-libp2p
-```
+Complete usage, runtime entrypoints, pnpm WebRTC setup, examples, limits, and package relationships are maintained in the [中文使用文档](https://github.com/zopenge/foundation-forge/blob/main/docs/packages/networking/peer-network-libp2p.md).
 
-For pnpm 10 workspaces, explicitly allow the required WebRTC native build and
-mark the React Native platform peer as conditional:
-
-```yaml
-allowBuilds:
-  node-datachannel: true
-
-packageExtensions:
-  "react-native-webrtc@*":
-    peerDependenciesMeta:
-      react-native:
-        optional: true
-```
-
-Choose one public entry explicitly:
-
-- `@openge/forge-peer-network-libp2p/node`
-- `@openge/forge-peer-network-libp2p/browser`
-- `@openge/forge-peer-network-libp2p/relay`
-
-Public signatures use Foundation Forge contracts and do not expose libp2p,
-stream, private-key, or multiaddr implementation types.
+For repository-wide capability discovery, see the [Foundation Forge documentation](https://github.com/zopenge/foundation-forge/blob/main/docs/README.md).
 
 Licensed under the Apache License 2.0.

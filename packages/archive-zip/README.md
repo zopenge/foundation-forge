@@ -1,36 +1,9 @@
 # `@openge/forge-archive-zip`
 
-Runtime-neutral ZIP32 archive Provider with bounded safety validation.
+Runtime-neutral deterministic ZIP32 encoding, inspection, and bounded decoding.
 
-## Installation
+Complete usage, examples, supported ZIP features, limits, and safety boundaries are maintained in the [中文使用文档](https://github.com/zopenge/foundation-forge/blob/main/docs/packages/artifacts/archive-zip.md).
 
-```sh
-pnpm add @openge/forge-archive-zip
-```
-
-## Usage
-
-```ts
-import { decodeZipArchive, encodeZipArchive } from '@openge/forge-archive-zip';
-
-const archive = encodeZipArchive([
-  { bytes: new TextEncoder().encode('hello'), kind: 'file', path: 'hello.txt' },
-], { compression: 'deflate' });
-
-const decoded = decodeZipArchive(archive, {
-  limits: { maxArchiveBytes: 8 * 1024 * 1024, maxExpandedBytes: 32 * 1024 * 1024 },
-});
-```
-
-The provider creates deterministic ZIP32 archives and validates the central
-directory before decompression. It rejects encryption, ZIP64, unsupported
-methods, unsafe paths and entry kinds, duplicate names, inconsistent headers,
-CRC mismatches, and configured resource-limit violations. UTF-8 filenames retain
-all characters, including a leading BOM; they are not normalized during decoding.
-
-Only in-memory bytes are handled. Downloading, filesystem extraction, cache
-policy, credentials, and product artifact semantics belong to the consumer.
-
-## License
+For repository-wide capability discovery, see the [Foundation Forge documentation](https://github.com/zopenge/foundation-forge/blob/main/docs/README.md).
 
 Licensed under the Apache License 2.0.

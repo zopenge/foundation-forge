@@ -1,31 +1,9 @@
 # `@openge/forge-workspace-pnpm`
 
-Explicit pnpm workspace discovery Provider for `@openge/forge-workspace-graph`.
+Explicit pnpm workspace discovery Provider for neutral Foundation workspace graphs.
 
-## Installation
+Complete usage, examples, error behavior, and provider boundaries are maintained in the [中文使用文档](https://github.com/zopenge/foundation-forge/blob/main/docs/packages/workspace-tooling/workspace-pnpm.md).
 
-```sh
-pnpm add -D @openge/forge-workspace-graph @openge/forge-workspace-pnpm
-```
-
-## Usage
-
-```ts
-import { readPnpmWorkspace } from '@openge/forge-workspace-pnpm';
-
-const graph = await readPnpmWorkspace({ cwd: process.cwd() });
-```
-
-This Node.js provider reads an explicitly selected `pnpm-workspace.yaml`,
-resolves its directory patterns to package manifests, and converts those
-manifests into the neutral workspace graph contract. Overlapping patterns are
-deduplicated, while matching container directories without a `package.json` are
-ignored. Missing or malformed required inputs produce structured
-`WorkspacePnpmError` instances.
-
-There is no package-manager auto-detection or fallback. Manifest editing,
-lockfile changes, build scheduling, and publishing remain outside this package.
-
-## License
+For repository-wide capability discovery, see the [Foundation Forge documentation](https://github.com/zopenge/foundation-forge/blob/main/docs/README.md).
 
 Licensed under the Apache License 2.0.

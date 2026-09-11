@@ -1,43 +1,9 @@
 # `@openge/forge-path-safety`
 
-Cross-runtime portable relative-path validation and explicit Node.js root
-containment.
+Cross-runtime portable relative-path validation and explicit Node.js root containment.
 
-## Installation
+Complete usage, public entrypoints, examples, and safety boundaries are maintained in the [中文使用文档](https://github.com/zopenge/foundation-forge/blob/main/docs/packages/artifacts/path-safety.md).
 
-```sh
-pnpm add @openge/forge-path-safety
-```
-
-## Usage
-
-```ts
-import {
-  normalizePortableRelativePath,
-  validatePortableRelativePath,
-} from '@openge/forge-path-safety';
-import {
-  resolveExistingPathWithinRoot,
-  resolvePathWithinRoot,
-} from '@openge/forge-path-safety/node';
-
-const logicalPath = normalizePortableRelativePath('assets\\atlas.json');
-validatePortableRelativePath(logicalPath);
-
-const outputPath = resolvePathWithinRoot(outputRoot, logicalPath);
-const existingPath = await resolveExistingPathWithinRoot(inputRoot, logicalPath);
-```
-
-The root entry accepts canonical slash-separated relative paths and has no
-Node.js or third-party runtime dependencies. It rejects absolute paths, drive
-paths, UNC and device paths, NUL bytes, empty segments, traversal segments, and
-unpaired UTF-16 surrogates. Valid surrogate pairs are preserved; malformed paths
-are rejected rather than silently replaced during filesystem encoding.
-
-`resolvePathWithinRoot` provides lexical containment only and does not claim to
-prevent symbolic-link escapes. Use `resolveExistingPathWithinRoot` when both the
-root and target already exist and realpath containment is required.
-
-## License
+For repository-wide capability discovery, see the [Foundation Forge documentation](https://github.com/zopenge/foundation-forge/blob/main/docs/README.md).
 
 Licensed under the Apache License 2.0.
