@@ -9,10 +9,12 @@ const releaseWorkflowUrl = new URL('../../.github/workflows/release.yml', import
 const ciWorkflowUrl = new URL('../../.github/workflows/ci.yml', import.meta.url);
 const agentsUrl = new URL('../../AGENTS.md', import.meta.url);
 const packageJsonUrl = new URL('../../package.json', import.meta.url);
+const publishIfNeededUrl = new URL('../publish-if-needed.mjs', import.meta.url);
 const releaseRunbookUrl = new URL('../../docs/maintenance/releases.md', import.meta.url);
 const dataDrivenScriptUrls = [
   new URL('../package-consumer-runner.mjs', import.meta.url),
   new URL('../publish-if-needed.mjs', import.meta.url),
+  new URL('../report-first-publish.mjs', import.meta.url),
   new URL('../verify-packages.mjs', import.meta.url),
   new URL('../verify-prerelease-versions.mjs', import.meta.url),
   new URL('../workspace-packages.mjs', import.meta.url),
@@ -40,6 +42,17 @@ test('runs pnpm setup on the supported GitHub Actions runtime', async () => {
   }
 });
 
+test('main push reports first-publish state and stable publishing enforces the hard gate', async () => {
+  const [workflow, publishIfNeeded] = await Promise.all([
+    readFile(releaseWorkflowUrl, 'utf8'),
+    readFile(publishIfNeededUrl, 'utf8'),
+  ]);
+  const statusIndex = workflow.indexOf('node ./scripts/report-first-publish.mjs');
+  const changesetsIndex = workflow.indexOf('uses: changesets/action@v2');
+  assert.ok(statusIndex >= 0);
+  assert.ok(changesetsIndex > statusIndex);
+  assert.match(publishIfNeeded, /assertTrustedPublishingReady\(states\)/u);
+});
 test('documents main-push automation and the first-package exception', async () => {
   const [workflow, runbook, agents] = await Promise.all([
     readFile(releaseWorkflowUrl, 'utf8'),
@@ -51,9 +64,12 @@ test('documents main-push automation and the first-package exception', async () 
   assert.match(workflow, /uses: changesets\/action@v2/u);
   assert.match(runbook, /## 自动发布总览/u);
   assert.match(runbook, /Version Packages/u);
+  assert.match(runbook, /FIRST_PUBLISH_REQUIRED/u);
+  assert.match(runbook, /NPM_TOKEN/u);
   assert.match(runbook, /首次创建的新 package/u);
   assert.match(runbook, /push.*main.*自动触发/u);
   assert.match(agents, /push to `main` automatically triggers/u);
+  assert.match(agents, /FIRST_PUBLISH_REQUIRED/u);
   assert.match(agents, /`release:bootstrap` is only for brand-new npm packages/u);
 });
 

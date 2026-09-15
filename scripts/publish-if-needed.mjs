@@ -6,6 +6,7 @@ import { resolve } from 'node:path';
 import {
   assertBootstrapReleasePlan,
   assertNextReleasePlan,
+  assertTrustedPublishingReady,
   createNpmPublishArguments,
   createReleasePlan,
   executeReleasePlan,
@@ -160,8 +161,11 @@ const states = await Promise.all(packages.map(async (packageJson) => ({
 const releasePlan = createReleasePlan(states);
 if (bootstrap) {
   assertBootstrapReleasePlan(releasePlan);
-} else if (tag === 'next') {
-  assertNextReleasePlan(releasePlan);
+} else {
+  assertTrustedPublishingReady(states);
+  if (tag === 'next') {
+    assertNextReleasePlan(releasePlan);
+  }
 }
 const unpublished = releasePlan.filter((release) => release.needsPublish);
 

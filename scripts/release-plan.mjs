@@ -22,16 +22,33 @@ export const assertNextReleasePlan = (releases) => {
   }
 };
 
+const bootstrapVersionPattern = /^\d+\.\d+\.\d+-rc\.0$/u;
+
+export const inspectTrustedPublishingReadiness = (packageStates) => {
+  const packages = packageStates
+    .filter(({ versions }) => versions.size === 0)
+    .map(({ name, version }) => ({
+      bootstrapEligible: bootstrapVersionPattern.test(version),
+      name,
+      version,
+    }));
+  return {
+    state: packages.length === 0 ? 'READY' : 'FIRST_PUBLISH_REQUIRED',
+    packages,
+  };
+};
+
 export const assertTrustedPublishingReady = (packageStates) => {
-  const unbootstrappedPackage = packageStates.find(({ versions }) => versions.size === 0);
-  if (unbootstrappedPackage !== undefined) {
+  const readiness = inspectTrustedPublishingReadiness(packageStates);
+  if (readiness.state === 'FIRST_PUBLISH_REQUIRED') {
+    const packages = readiness.packages
+      .map(({ name, version }) => `${name}@${version}`)
+      .join(', ');
     throw new Error(
-      `${unbootstrappedPackage.name}@${unbootstrappedPackage.version} must be bootstrapped before workflow publishing`,
+      `FIRST_PUBLISH_REQUIRED: ${packages} must be bootstrapped before workflow publishing; brand-new packages must start from rc.0`,
     );
   }
 };
-
-const bootstrapVersionPattern = /^\d+\.\d+\.\d+-rc\.0$/u;
 
 export const assertBootstrapReleasePlan = (releases) => {
   const invalidRelease = releases.find(

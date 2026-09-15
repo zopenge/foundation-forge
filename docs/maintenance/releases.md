@@ -16,6 +16,10 @@ release candidate 与稳定版本只使用短期 OIDC 身份并生成 npm proven
 | 明确需要额外 prerelease RC | 普通 `main` push 不执行 `release:next`；`workflow_dispatch` 才走 `next` 发布路径 | 只有明确要发布 `next` RC 时才使用 `release:request-next` / `release:dispatch-next` |
 | **首次创建的新 package** | `main` push 仍会自动运行 Changesets，且可能把新包纳入 `Version Packages` PR；但 npm 中尚无 package，也就无法预先配置 Trusted Publisher | **这是唯一 bootstrap 例外**：在合并会触发首次正式 publish 的 Version PR 前，先执行一次 `release:bootstrap`；完成后立即回到上述 `main` / Version PR 自动流程 |
 
+Release workflow 在 Changesets 之前会对 canonical npm registry 执行一次只读检测。如果发现从未发布的 package，会明确输出 `FIRST_PUBLISH_REQUIRED` 并写入 GitHub step summary，但这个只读检测不会自动使用长期 npm token、不会自动 bootstrap，也不会阻止 Changesets 继续更新 `Version Packages` PR。
+
+真正的安全门在 `publish-if-needed.mjs` 内：任何非 bootstrap 的 publish 路径都会再次检查 registry。只要还有未 bootstrap 的 package，就会在 pack 和 `npm publish` 之前以 `FIRST_PUBLISH_REQUIRED` fail closed。因此即使过早合并 Version PR，也不会把全新 package 通过 Trusted Publishing 误发布。
+
 因此，“更新 `main` 会自动发布”是本仓库的常规发布模型；`release:bootstrap` 不是日常发布入口，
 更不能因为一次 `main` push 就主动执行。只有同时确认 **package 在 canonical npm registry 不存在**、
 **它确实是首次创建的新 package** 时，才进入 bootstrap。自动 workflow 成功但只是更新了

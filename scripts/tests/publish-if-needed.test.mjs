@@ -15,6 +15,7 @@ import {
   assertBootstrapReleasePlan,
   assertNextReleasePlan,
   assertTrustedPublishingReady,
+  inspectTrustedPublishingReadiness,
   createReleasePlan,
   createNpmPublishArguments,
   executeReleasePlan,
@@ -166,6 +167,22 @@ test('rejects unpublished stable versions from the next tag', () => {
   assert.equal(hasPrereleaseVersion(plan), false);
 });
 
+test('classifies first-publish requirements before workflow publishing', () => {
+  assert.deepEqual(inspectTrustedPublishingReadiness([
+    { name: '@openge/existing', version: '1.0.0', versions: new Set(['1.0.0']) },
+    { name: '@openge/new-rc', version: '0.1.0-rc.0', versions: new Set() },
+    { name: '@openge/new-stable', version: '0.1.0', versions: new Set() },
+  ]), {
+    state: 'FIRST_PUBLISH_REQUIRED',
+    packages: [
+      { bootstrapEligible: true, name: '@openge/new-rc', version: '0.1.0-rc.0' },
+      { bootstrapEligible: false, name: '@openge/new-stable', version: '0.1.0' },
+    ],
+  });
+  assert.deepEqual(inspectTrustedPublishingReadiness([
+    { name: '@openge/existing', version: '1.0.1', versions: new Set(['1.0.0']) },
+  ]), { state: 'READY', packages: [] });
+});
 test('rejects workflow publishing before a package has been bootstrapped', () => {
   const packageStates = [
     { name: '@openge/existing', version: '0.2.0-rc.1', versions: new Set(['0.1.0']) },
