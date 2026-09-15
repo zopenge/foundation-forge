@@ -56,6 +56,8 @@ pnpm check
 
 Packages follow Semantic Versioning and use Changesets. Related package families may share fixed versions while unrelated packages evolve independently. Release candidates use the `next` npm dist-tag; stable releases use `latest`.
 
+Pushing reviewed changes to `main` automatically triggers the Release workflow. With pending Changesets, it creates or updates the `Version Packages` pull request; merging that PR triggers the stable publish path automatically. The only manual publication exception is the one-time bootstrap required for a brand-new npm package before Trusted Publishing can be configured.
+
 Published versions must complete the Trusted Publishing and clean-consumer verification process documented in the [release procedure](docs/maintenance/releases.md). Workspace packaging checks do not publish packages.
 
 ## Contributing

@@ -5,6 +5,22 @@ release candidate 与稳定版本只使用短期 OIDC 身份并生成 npm proven
 不使用长期 `NPM_TOKEN`。除首次创建 npm package 外，不应在本地直接执行
 `npm publish`。
 
+## 自动发布总览
+
+**默认规则：代码合并并 push 到 `main` 后，`release.yml` 会自动触发 Release workflow；不要再从本地手工接管常规发布。**
+
+| 场景 | `main` push 后的自动行为 | 维护者需要做什么 |
+| --- | --- | --- |
+| 已存在于 npm 的 package，且还有 Changeset | `changesets/action@v2` 自动创建或更新 `Version Packages` PR | Review 并合并 Version PR；合并产生新的 `main` push 后，workflow 自动执行 `pnpm release`、推 tag 并创建 GitHub Release |
+| 已存在于 npm 的 package，Version PR 已合并 | Release workflow 自动发布 manifest 中 registry 尚不存在的稳定版本到 `latest` | 只核验 workflow、registry、provenance、tag 和 clean consumer；不要本地执行 `release` |
+| 明确需要额外 prerelease RC | 普通 `main` push 不执行 `release:next`；`workflow_dispatch` 才走 `next` 发布路径 | 只有明确要发布 `next` RC 时才使用 `release:request-next` / `release:dispatch-next` |
+| **首次创建的新 package** | `main` push 仍会自动运行 Changesets，且可能把新包纳入 `Version Packages` PR；但 npm 中尚无 package，也就无法预先配置 Trusted Publisher | **这是唯一 bootstrap 例外**：在合并会触发首次正式 publish 的 Version PR 前，先执行一次 `release:bootstrap`；完成后立即回到上述 `main` / Version PR 自动流程 |
+
+因此，“更新 `main` 会自动发布”是本仓库的常规发布模型；`release:bootstrap` 不是日常发布入口，
+更不能因为一次 `main` push 就主动执行。只有同时确认 **package 在 canonical npm registry 不存在**、
+**它确实是首次创建的新 package** 时，才进入 bootstrap。自动 workflow 成功但只是更新了
+`Version Packages` PR，也不能误判为 package 已经发布；应同时检查 registry 和 PR 状态。
+
 ## 仓库配置
 
 - GitHub Actions workflow 权限为 **Read and write**，并允许 Actions 创建和
@@ -44,7 +60,10 @@ pnpm 脚本参数直接写在命令后，不添加额外的 `--`。例如
 本地请求 RC 时应使用 `release:request-next`，不要用关闭 provenance 的方式
 直接运行内部命令。
 
-## 发布 release candidate
+## 显式发布额外 release candidate
+
+这一节只用于维护者**明确需要额外 `next` RC** 的情况，不是常规 `main` 发布流程。
+普通功能变更应优先让 `main` push、Changesets Version PR 和稳定发布自动化接管。
 
 1. 将变更 package 设置为目标 prerelease 版本，并为最终稳定发布保留
    Changeset。
@@ -91,8 +110,10 @@ npm package 存在之前无法配置 Trusted Publisher，因此首个版本是�
    等待 canonical registry，针对本次 package 幂等配置 Trusted Publisher，
    再执行 bootstrap 模式的 tag、integrity、tarball 与真实 consumer 验证。
    Trusted Publisher 阶段可能因 OTP 有效期而再次提示验证码。
-4. 将 package 升为 `0.1.0-rc.1`，合并到 `main`，再走正常
-   `release:request-next`。Consumer 不得采用 bootstrap `rc.0`。
+4. Bootstrap 验证完成后，**回到自动发布主路径**：继续 review 当前 `Version Packages` PR，
+   确认它生成的稳定版本、changelog 和内部依赖，再合并到 `main`；新的 `main` push 会自动
+   通过 Trusted Publishing 发布稳定版本。只有明确还需要额外 RC 时，才手工准备
+   `0.1.0-rc.1` 并使用上一节的 `release:request-next`。Consumer 不得采用 bootstrap `rc.0`。
 
 `release:bootstrap` 是唯一允许省略 provenance 的发布路径。若本地普通发布出现
 `Automatic provenance generation not supported for provider: null`，说明误用了

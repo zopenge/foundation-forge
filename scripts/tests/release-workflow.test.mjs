@@ -7,6 +7,7 @@ import { discoverWorkspacePackageModel } from '../workspace-packages.mjs';
 
 const releaseWorkflowUrl = new URL('../../.github/workflows/release.yml', import.meta.url);
 const ciWorkflowUrl = new URL('../../.github/workflows/ci.yml', import.meta.url);
+const agentsUrl = new URL('../../AGENTS.md', import.meta.url);
 const packageJsonUrl = new URL('../../package.json', import.meta.url);
 const releaseRunbookUrl = new URL('../../docs/maintenance/releases.md', import.meta.url);
 const dataDrivenScriptUrls = [
@@ -37,6 +38,23 @@ test('runs pnpm setup on the supported GitHub Actions runtime', async () => {
     assert.match(workflow, /pnpm\/action-setup@v6/u);
     assert.doesNotMatch(workflow, /pnpm\/action-setup@v4/u);
   }
+});
+
+test('documents main-push automation and the first-package exception', async () => {
+  const [workflow, runbook, agents] = await Promise.all([
+    readFile(releaseWorkflowUrl, 'utf8'),
+    readFile(releaseRunbookUrl, 'utf8'),
+    readFile(agentsUrl, 'utf8'),
+  ]);
+
+  assert.match(workflow, /push:\s*\n\s*branches:\s*\n\s*- main/u);
+  assert.match(workflow, /uses: changesets\/action@v2/u);
+  assert.match(runbook, /## 自动发布总览/u);
+  assert.match(runbook, /Version Packages/u);
+  assert.match(runbook, /首次创建的新 package/u);
+  assert.match(runbook, /push.*main.*自动触发/u);
+  assert.match(agents, /push to `main` automatically triggers/u);
+  assert.match(agents, /`release:bootstrap` is only for brand-new npm packages/u);
 });
 
 test('documents and exposes the guarded new-package bootstrap command', async () => {
