@@ -9,7 +9,7 @@
 | Peer 连接、发现、libp2p 或 WebSocket rendezvous | [网络](packages/networking/README.md) |
 | 稳定 JSON、JSON Lines、SSE 分帧与解析 | [数据格式与流式协议](packages/data-formats/README.md) |
 | 路径安全、完整性、归档、生成物、配置包 | [制品与文件安全](packages/artifacts/README.md) |
-| Git 文件发现、上下文规划、文本完整性 | [仓库工具](packages/repository-tooling/README.md) |
+| Git 文件发现、上下文规划、文本完整性、确定性源码快照 | [仓库工具](packages/repository-tooling/README.md) |
 | Workspace 依赖图、pnpm 读取与循环检查 | [Workspace 工具](packages/workspace-tooling/README.md) |
 | 进程发现、终止与受控命令执行 | [进程与命令执行](packages/process-execution/README.md) |
 

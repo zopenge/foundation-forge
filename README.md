@@ -18,7 +18,7 @@ Provider-neutral TypeScript foundation libraries for reusable cross-platform cap
 | Networking | Peer Network contracts plus explicit libp2p and WebSocket rendezvous providers | [网络能力](docs/packages/networking/README.md) |
 | Data formats | Deterministic JSON and bounded incremental text protocols | [数据格式与流式协议](docs/packages/data-formats/README.md) |
 | Artifacts | Path safety, integrity, archives, generated files, and configuration bundles | [制品与文件安全](docs/packages/artifacts/README.md) |
-| Repository tooling | Git file discovery, repository context planning, and text integrity | [仓库工具](docs/packages/repository-tooling/README.md) |
+| Repository tooling | Git file discovery, repository context planning, text integrity, and deterministic source snapshots | [仓库工具](docs/packages/repository-tooling/README.md) |
 | Workspace tooling | Neutral dependency graphs, pnpm discovery, checks, and CLI integration | [Workspace 工具](docs/packages/workspace-tooling/README.md) |
 | Process execution | Process-control contracts/providers and bounded asynchronous command execution | [进程与命令执行](docs/packages/process-execution/README.md) |
 

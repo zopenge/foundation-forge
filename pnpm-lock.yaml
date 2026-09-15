@@ -165,6 +165,24 @@ importers:
 
   packages/server-sent-events: {}
 
+  packages/source-snapshot:
+    dependencies:
+      '@openge/forge-artifact-integrity':
+        specifier: workspace:0.1.0
+        version: link:../artifact-integrity
+      '@openge/forge-deterministic-json':
+        specifier: workspace:0.1.0-rc.1
+        version: link:../deterministic-json
+      '@openge/forge-generated-artifacts':
+        specifier: workspace:0.1.0-rc.1
+        version: link:../generated-artifacts
+      '@openge/forge-path-safety':
+        specifier: workspace:0.1.1-rc.0
+        version: link:../path-safety
+      '@openge/forge-repository-files':
+        specifier: workspace:0.1.0
+        version: link:../repository-files
+
   packages/text-integrity:
     dependencies:
       '@openge/forge-repository-files':

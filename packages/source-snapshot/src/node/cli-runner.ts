@@ -1,0 +1,134 @@
+import { stat } from 'node:fs/promises';
+import { dirname, isAbsolute, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import type { SourceSecretRule, SourceSnapshotPolicyInput, SourceTextPackOptions } from '../content-contracts.js';
+import { SourceSnapshotError } from '../errors.js';
+import type { SourceSnapshotCliConfig, SourceSnapshotCliContext, SourceSnapshotCliOutcome, SourceSnapshotStorageLayoutOptions } from './contracts.js';
+import { exportRepositorySnapshot, planRepositorySnapshot } from './pipeline.js';
+import { inspectSourceSnapshotRetention, pruneSourceSnapshots } from './retention.js';
+import { verifyPublishedSourceSnapshot } from './publish.js';
+
+type Command = 'plan' | 'export' | 'verify' | 'status' | 'prune';
+interface ParsedArgs { readonly command: Command; readonly configPath: string; readonly json: boolean; readonly dryRun: boolean; }
+interface LoadedConfig extends SourceSnapshotCliConfig { readonly configPath: string; }
+
+const record = (value: unknown): Record<string, unknown> => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new SourceSnapshotError('INVALID_INPUT', { field: 'config' });
+  return value as Record<string, unknown>;
+};
+const requiredString = (value: unknown, field: string): string => {
+  if (typeof value !== 'string' || value.length === 0) throw new SourceSnapshotError('INVALID_INPUT', { field });
+  return value;
+};
+const resolveFrom = (base: string, value: string): string => isAbsolute(value) ? resolve(value) : resolve(base, value);
+const packOptions = (value: unknown): SourceTextPackOptions => {
+  const input = record(value);
+  const fields = ['targetObjectBytes','maxObjectBytes','maxObjectCount','maxObjectBytesTotal'] as const;
+  const output: Record<(typeof fields)[number], number> = { targetObjectBytes: 0, maxObjectBytes: 0, maxObjectCount: 0, maxObjectBytesTotal: 0 };
+  for (const field of fields) { const current = input[field]; if (!Number.isSafeInteger(current) || (current as number) < 0) throw new SourceSnapshotError('INVALID_INPUT', { field: `pack.${field}` }); output[field] = current as number; }
+  return output;
+};
+const parseArgs = (argv: readonly string[], cwd: string): ParsedArgs => {
+  const [rawCommand, ...tokens] = argv;
+  if (!['plan','export','verify','status','prune'].includes(rawCommand ?? '')) throw new SourceSnapshotError('INVALID_INPUT', { field: 'command' });
+  let configPath = resolve(cwd, 'source-snapshot.config.mjs'); let json = false; let dryRun = false;
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token === '--') continue;
+    if (token === '--json') { json = true; continue; }
+    if (token === '--dry-run') { dryRun = true; continue; }
+    if (token === '--config') {
+      const value = tokens[++index]; if (value === undefined || value.startsWith('--')) throw new SourceSnapshotError('INVALID_INPUT', { field: 'config' });
+      configPath = resolve(cwd, value); continue;
+    }
+    throw new SourceSnapshotError('INVALID_INPUT', { field: 'argument', value: token });
+  }
+  if (dryRun && rawCommand !== 'prune') throw new SourceSnapshotError('INVALID_INPUT', { field: 'dryRun' });
+  return { command: rawCommand as Command, configPath, json, dryRun };
+};
+
+const loadConfig = async (configPath: string): Promise<LoadedConfig> => {
+  const metadata = await stat(configPath);
+  if (!metadata.isFile()) throw new SourceSnapshotError('INVALID_INPUT', { field: 'configPath' });
+  const module = await import(`${pathToFileURL(configPath).href}?snapshot=${metadata.mtimeMs}`) as Record<string, unknown>;
+  const value = record(module.default); const base = dirname(configPath);
+  const groupForPath = typeof module.groupForPath === 'function' ? module.groupForPath : value.groupForPath;
+  if (typeof groupForPath !== 'function') throw new SourceSnapshotError('INVALID_INPUT', { field: 'groupForPath' });
+  const storage = value.storage === undefined ? undefined : record(value.storage) as SourceSnapshotStorageLayoutOptions;
+  const retention = value.retention === undefined ? undefined : record(value.retention) as LoadedConfig['retention'];
+  const additionalSecretRules = value.additionalSecretRules;
+  if (additionalSecretRules !== undefined && !Array.isArray(additionalSecretRules)) throw new SourceSnapshotError('INVALID_INPUT', { field: 'additionalSecretRules' });
+  const normalizedRules = additionalSecretRules as readonly SourceSecretRule[] | undefined;
+  return {
+    configPath, projectId: requiredString(value.projectId, 'projectId'), policyVersion: requiredString(value.policyVersion, 'policyVersion'),
+    sourceRoot: resolveFrom(base, requiredString(value.sourceRoot, 'sourceRoot')),
+    targetRoot: resolveFrom(base, requiredString(value.targetRoot, 'targetRoot')),
+    lockPath: resolveFrom(base, requiredString(value.lockPath, 'lockPath')), ownerId: requiredString(value.ownerId, 'ownerId'),
+    policy: record(value.policy) as SourceSnapshotPolicyInput, pack: packOptions(value.pack),
+    groupForPath: groupForPath as LoadedConfig['groupForPath'],
+    ...(normalizedRules === undefined ? {} : { additionalSecretRules: normalizedRules }),
+    ...(storage === undefined ? {} : { storage }), ...(retention === undefined ? {} : { retention }),
+  };
+};
+const storageOptions = (config: LoadedConfig): SourceSnapshotStorageLayoutOptions => config.storage ?? {};
+const planOptions = (config: LoadedConfig, publishedAt: number) => ({
+  sourceRoot: config.sourceRoot, projectId: config.projectId, policyVersion: config.policyVersion, publishedAt,
+  policy: config.policy, pack: config.pack, groupForPath: config.groupForPath,
+  ...(config.additionalSecretRules === undefined ? {} : { additionalSecretRules: config.additionalSecretRules }),
+});
+const retentionOptions = (config: LoadedConfig, now: number) => ({
+  targetRoot: config.targetRoot, ownerId: config.ownerId, now, ...storageOptions(config),
+  ...(config.retention?.keepCount === undefined ? {} : { keepCount: config.retention.keepCount }),
+  ...(config.retention?.orphanGraceMs === undefined ? {} : { orphanGraceMs: config.retention.orphanGraceMs }),
+});
+const safePlanSummary = (plan: Awaited<ReturnType<typeof planRepositorySnapshot>>) => ({
+  status: plan.status, publishAllowed: plan.publishAllowed,
+  snapshotId: plan.bundle?.manifest.snapshotId ?? null,
+  repositoryCount: plan.inventory.summary.repositoryCount, candidateCount: plan.inventory.summary.candidateCount,
+  includedCount: plan.includedPaths.length,
+  excludedCount: plan.decisions.filter(value => value.decision.action === 'exclude').length,
+  reviewCount: plan.reviewEntries.length, secretFindingCount: plan.secretFindings.length,
+  contentIssueCount: plan.contentIssues.length, inventoryIssueCount: plan.inventory.issues.length,
+  includedPaths: plan.includedPaths, reviewEntries: plan.reviewEntries,
+  secretFindings: plan.secretFindings, contentIssues: plan.contentIssues, inventoryIssues: plan.inventory.issues,
+});
+const emit = (write: (value: string) => void, value: unknown, json: boolean): void => {
+  if (json) write(`${JSON.stringify(value, null, 2)}\n`);
+  else write(`${typeof value === 'string' ? value : JSON.stringify(value)}\n`);
+};
+const outcome = (exitCode: 0 | 1 | 2, result: Readonly<Record<string, unknown>>): SourceSnapshotCliOutcome => Object.freeze({ exitCode, result: Object.freeze(result) });
+
+export const runSourceSnapshotCli = async (argv: readonly string[] = process.argv.slice(2), context: SourceSnapshotCliContext = {}): Promise<SourceSnapshotCliOutcome> => {
+  const cwd = resolve(context.cwd ?? process.cwd());
+  const stdout = context.stdout ?? (value => process.stdout.write(value));
+  const stderr = context.stderr ?? (value => process.stderr.write(value));
+  const now = context.now ?? Date.now;
+  try {
+    const args = parseArgs(argv, cwd); const config = await loadConfig(args.configPath); const timestamp = now();
+    if (args.command === 'plan') {
+      const plan = await planRepositorySnapshot(planOptions(config, timestamp));
+      const result = safePlanSummary(plan); emit(stdout, result, args.json); return outcome(plan.publishAllowed ? 0 : 2, result);
+    }
+    if (args.command === 'export') {
+      const result = await exportRepositorySnapshot({ ...planOptions(config, timestamp), targetRoot: config.targetRoot, lockPath: config.lockPath, ownerId: config.ownerId, ...storageOptions(config) });
+      if (result.status === 'BLOCKED') { const summary = safePlanSummary(result.plan); emit(stdout, summary, args.json); return outcome(2, summary); }
+      const summary = { status: result.status, snapshotId: result.publication.snapshotId, objectCount: result.publication.objectCount, sourceFileCount: result.publication.sourceFileCount, writtenObjects: result.publication.writtenObjects, reusedObjects: result.publication.reusedObjects };
+      emit(stdout, summary, args.json); return outcome(0, summary);
+    }
+    if (args.command === 'verify') {
+      const result = await verifyPublishedSourceSnapshot({ targetRoot: config.targetRoot, ownerId: config.ownerId, ...storageOptions(config) });
+      const summary = { ...result }; emit(stdout, summary, args.json); return outcome(0, summary);
+    }
+    if (args.command === 'status') {
+      const result = await inspectSourceSnapshotRetention(retentionOptions(config, timestamp));
+      const summary = { ...result }; emit(stdout, summary, args.json); return outcome(0, summary);
+    }
+    const result = await pruneSourceSnapshots({ ...retentionOptions(config, timestamp), lockPath: config.lockPath, dryRun: args.dryRun });
+    const summary = { ...result }; emit(stdout, summary, args.json); return outcome(0, summary);
+  } catch (error) {
+    const code = error instanceof SourceSnapshotError ? error.code : (error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'UNEXPECTED_ERROR');
+    const message = error instanceof SourceSnapshotError ? error.code : error instanceof Error ? error.message : String(error);
+    const result = { status: 'FAILED', error: Object.freeze({ code, message }) };
+    stderr(`[${code}] ${message}\n`); return outcome(1, result);
+  }
+};
