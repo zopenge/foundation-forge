@@ -33,6 +33,7 @@
 - A push to `main` automatically triggers `.github/workflows/release.yml`. For normal stable releases, let Changesets create or update `Version Packages`; after that PR is merged, the resulting `main` push publishes automatically. Do not replace routine main-push release automation with local `release`, `npm publish`, or `release:request-next` commands.
 - `release:bootstrap` is only for brand-new npm packages that are absent from the canonical registry and therefore cannot yet have Trusted Publishing configured. Confirm registry absence first; after the one-time bootstrap, return to the automatic `main` / `Version Packages` workflow.
 - The main-push release workflow must report `FIRST_PUBLISH_REQUIRED` for packages absent from the canonical registry. This detection is read-only and must never introduce a long-lived npm token. Every non-bootstrap publish path must independently enforce the same state before packing or invoking npm publish.
+- If the advisory registry probe cannot determine state, report `FIRST_PUBLISH_UNKNOWN` and continue the workflow; never weaken or bypass the authoritative non-bootstrap publish gate, which must re-check registry state and fail closed.
 
 ## Verification
 

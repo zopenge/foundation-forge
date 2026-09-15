@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import { createChangesetsOutputReporter } from '../changesets-output.mjs';
 import { parseOneTimePassword } from '../bootstrap-otp.mjs';
+import { inspectFirstPublishRegistry } from '../first-publish-report.mjs';
 import {
   createPackageManagerInvocation,
   extractPnpmCliPathFromWindowsShim,
@@ -165,6 +166,16 @@ test('rejects unpublished stable versions from the next tag', () => {
     /@openge\/stable@0\.2\.0 cannot be published with the next tag/u,
   );
   assert.equal(hasPrereleaseVersion(plan), false);
+});
+
+test('degrades advisory registry failures to FIRST_PUBLISH_UNKNOWN', async () => {
+  const result = await inspectFirstPublishRegistry({
+    packages: [{ name: '@openge/example', version: '0.1.0-rc.0' }],
+    readMetadata: async () => { throw new Error('read ECONNRESET'); },
+  });
+  assert.equal(result.state, 'FIRST_PUBLISH_UNKNOWN');
+  assert.match(result.message, /FIRST_PUBLISH_UNKNOWN/u);
+  assert.match(result.message, /read ECONNRESET/u);
 });
 
 test('classifies first-publish requirements before workflow publishing', () => {

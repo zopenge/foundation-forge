@@ -51,6 +51,7 @@ test('main push reports first-publish state and stable publishing enforces the h
   const changesetsIndex = workflow.indexOf('uses: changesets/action@v2');
   assert.ok(statusIndex >= 0);
   assert.ok(changesetsIndex > statusIndex);
+  assert.match(workflow.slice(Math.max(0, statusIndex - 100), statusIndex + 100), /continue-on-error: true/u);
   assert.match(publishIfNeeded, /assertTrustedPublishingReady\(states\)/u);
 });
 test('documents main-push automation and the first-package exception', async () => {

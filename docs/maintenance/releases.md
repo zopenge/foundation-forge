@@ -20,6 +20,8 @@ Release workflow 在 Changesets 之前会对 canonical npm registry 执行一次
 
 真正的安全门在 `publish-if-needed.mjs` 内：任何非 bootstrap 的 publish 路径都会再次检查 registry。只要还有未 bootstrap 的 package，就会在 pack 和 `npm publish` 之前以 `FIRST_PUBLISH_REQUIRED` fail closed。因此即使过早合并 Version PR，也不会把全新 package 通过 Trusted Publishing 误发布。
 
+如果这个只读 reporter 自身因 registry 网络抖动无法完成判断，它会降级为 `FIRST_PUBLISH_UNKNOWN` 警告，并且 workflow 对该步骤设置 `continue-on-error`。这只是可用性降级，不是安全降级；后续真正进入 publish 时仍会重新查 registry 并执行 hard gate。
+
 因此，“更新 `main` 会自动发布”是本仓库的常规发布模型；`release:bootstrap` 不是日常发布入口，
 更不能因为一次 `main` push 就主动执行。只有同时确认 **package 在 canonical npm registry 不存在**、
 **它确实是首次创建的新 package** 时，才进入 bootstrap。自动 workflow 成功但只是更新了
