@@ -1,6 +1,6 @@
 {
   "name": "@openge/forge-config-bundle",
-  "version": "0.1.0-rc.1",
+  "version": "0.1.0",
   "description": "Deterministic manifest-backed configuration bundles and explicit Node.js import transactions",
   "type": "module",
   "main": "./dist/index.js",
@@ -47,10 +47,10 @@
     "url": "https://github.com/zopenge/foundation-forge/issues"
   },
   "dependencies": {
-    "@openge/forge-archive-zip": "workspace:0.1.1-rc.0",
-    "@openge/forge-archive-safety": "workspace:0.1.1-rc.0",
+    "@openge/forge-archive-zip": "workspace:0.1.1",
+    "@openge/forge-archive-safety": "workspace:0.1.1",
     "@openge/forge-artifact-integrity": "workspace:0.1.0",
     "@openge/forge-deterministic-json": "workspace:0.1.0-rc.1",
-    "@openge/forge-path-safety": "workspace:0.1.1-rc.0"
+    "@openge/forge-path-safety": "workspace:0.1.1"
   }
 }
