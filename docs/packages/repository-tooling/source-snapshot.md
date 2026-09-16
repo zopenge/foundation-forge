@@ -20,7 +20,7 @@
 
 阅读 profile 只对已导出路径做 preferred/reference 分类与覆盖状态派生；relations 只校验调用方已采集声明的 snapshot/path/sourceSha 绑定，不自动抓取 unresolved/external 目标，也不从“无关系”推断 unused/dead。Evidence 只验证 schema、snapshot 绑定与调用方显式提供的 artifact bytes/hash；返回 `schema-valid` / `source-bound` 不等于独立证明测试、命令、运行时观测或云操作真实发生。metadata 中的 command/URL/script 仅作为脱敏字符串，不执行、不访问、不自动 pin。
 
-消费者负责自己的 policy、grouping、target/state 路径、项目脚本、调度方式和云端 readback；Foundation 不内置任何具体仓库、产品或云存储提供商语义。
+消费者负责自己的 policy、grouping、target/state 路径、managed-store 发布预算、项目脚本、调度方式和云端 readback；Foundation 不内置任何具体仓库、产品或云存储提供商语义。
 
 ## 核心契约
 

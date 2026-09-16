@@ -210,6 +210,7 @@ export interface SourceSnapshotCliConfig {
   readonly groupForPath: (path: string, entry: SourceInventoryEntry) => string;
   readonly additionalSecretRules?: readonly SourceSecretRule[];
   readonly storage?: SourceSnapshotStorageLayoutOptions;
+  readonly storeBudget?: SourceSnapshotStoreBudget;
   readonly retention?: Readonly<{ keepCount?: number; orphanGraceMs?: number }>;
 }
 export interface SourceSnapshotCliContext {

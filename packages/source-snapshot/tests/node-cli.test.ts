@@ -53,3 +53,23 @@ test('CLI rejects unknown options and missing config deterministically', async (
   expect((await runSourceSnapshotCli(['plan','--config',join(root,'missing.mjs')], missing.context)).exitCode).toBe(1);
   expect(missing.stderr.length).toBe(1);
 });
+
+test('CLI forwards configured managed-store publication budgets', async () => {
+  const source = await createRepository(); roots.push(source);
+  await addCommittedFile(source, 'src/a.ts', 'export const budgeted = 1\n');
+  const base = await mkdtemp(join(tmpdir(), 'snapshot-cli-store-budget-')); roots.push(base);
+  const target = join(base, 'target'); const state = join(base, 'state');
+  await Promise.all([mkdir(target), mkdir(state)]);
+  const configPath = join(base, 'source-snapshot.config.mjs');
+  await writeFile(configPath, `export default ${JSON.stringify({
+    projectId:'fixture-project',policyVersion:'1',sourceRoot:source,targetRoot:target,
+    lockPath:join(state,'publish.lock'),ownerId:'fixture-owner',
+    policy:{textExtensions:['.ts'],textBasenames:['.gitignore']},
+    pack:{targetObjectBytes:4096,maxObjectBytes:8192,maxObjectCount:50,maxObjectBytesTotal:100000},
+    storeBudget:{maxManagedFiles:1,maxManagedBytes:1}
+  })};\nexport const groupForPath = path => path.startsWith('src/') ? 'src' : 'root';\n`, 'utf8');
+  const rt = runtime(base);
+  const outcome = await runSourceSnapshotCli(['export','--config',configPath,'--json'], rt.context);
+  expect(outcome.exitCode).toBe(1);
+  expect(rt.stderr.join('')).toContain('STORE_BUDGET_EXCEEDED');
+});
