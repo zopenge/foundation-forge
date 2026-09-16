@@ -3,7 +3,7 @@ import { dirname, isAbsolute, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { SourceSecretRule, SourceSnapshotPolicyInput, SourceTextPackOptions } from '../content-contracts.js';
 import { SourceSnapshotError } from '../errors.js';
-import type { SourceSnapshotCliConfig, SourceSnapshotCliContext, SourceSnapshotCliOutcome, SourceSnapshotStorageLayoutOptions } from './contracts.js';
+import type { SourceSnapshotCliConfig, SourceSnapshotCliContext, SourceSnapshotCliOutcome, SourceSnapshotStorageLayoutOptions, SourceSnapshotStoreBudget } from './contracts.js';
 import { exportRepositorySnapshot, planRepositorySnapshot } from './pipeline.js';
 import { inspectSourceSnapshotRetention, pruneSourceSnapshots } from './retention.js';
 import { verifyPublishedSourceSnapshot } from './publish.js';
@@ -34,6 +34,13 @@ const packOptions = (value: unknown): SourceTextPackOptions => {
   const textFormatVersion = input.textFormatVersion;
   if (textFormatVersion !== undefined && textFormatVersion !== 1 && textFormatVersion !== 2) throw new SourceSnapshotError('INVALID_INPUT', { field: 'pack.textFormatVersion' });
   return { ...output, ...(textFormatVersion === undefined ? {} : { textFormatVersion }) };
+};
+const storeBudgetOptions = (value: unknown): SourceSnapshotStoreBudget => {
+  const input = record(value);
+  const fields = ['maxManagedFiles','maxManagedBytes'] as const;
+  const output: Record<(typeof fields)[number], number> = { maxManagedFiles: 0, maxManagedBytes: 0 };
+  for (const field of fields) { const current = input[field]; if (!Number.isSafeInteger(current) || (current as number) < 0) throw new SourceSnapshotError('INVALID_INPUT', { field: `storeBudget.${field}` }); output[field] = current as number; }
+  return output;
 };
 const parseArgs = (argv: readonly string[], cwd: string): ParsedArgs => {
   const [rawCommand, ...tokens] = argv;
@@ -74,6 +81,7 @@ const loadConfig = async (configPath: string): Promise<LoadedConfig> => {
   const groupForPath = typeof module.groupForPath === 'function' ? module.groupForPath : value.groupForPath;
   if (typeof groupForPath !== 'function') throw new SourceSnapshotError('INVALID_INPUT', { field: 'groupForPath' });
   const storage = value.storage === undefined ? undefined : record(value.storage) as SourceSnapshotStorageLayoutOptions;
+  const storeBudget = value.storeBudget === undefined ? undefined : storeBudgetOptions(value.storeBudget);
   const retention = value.retention === undefined ? undefined : record(value.retention) as LoadedConfig['retention'];
   const additionalSecretRules = value.additionalSecretRules;
   if (additionalSecretRules !== undefined && !Array.isArray(additionalSecretRules)) throw new SourceSnapshotError('INVALID_INPUT', { field: 'additionalSecretRules' });
@@ -86,7 +94,8 @@ const loadConfig = async (configPath: string): Promise<LoadedConfig> => {
     policy: record(value.policy) as SourceSnapshotPolicyInput, pack: packOptions(value.pack),
     groupForPath: groupForPath as LoadedConfig['groupForPath'],
     ...(normalizedRules === undefined ? {} : { additionalSecretRules: normalizedRules }),
-    ...(storage === undefined ? {} : { storage }), ...(retention === undefined ? {} : { retention }),
+    ...(storage === undefined ? {} : { storage }), ...(storeBudget === undefined ? {} : { storeBudget }),
+    ...(retention === undefined ? {} : { retention }),
   };
 };
 const storageOptions = (config: LoadedConfig): SourceSnapshotStorageLayoutOptions => config.storage ?? {};
@@ -144,7 +153,7 @@ export const runSourceSnapshotCli = async (argv: readonly string[] = process.arg
       const result = safePlanSummary(plan); emit(stdout, result, args.json); return outcome(plan.publishAllowed ? 0 : 2, result);
     }
     if (args.command === 'export') {
-      const result = await exportRepositorySnapshot({ ...planOptions(config, timestamp), targetRoot: config.targetRoot, lockPath: config.lockPath, ownerId: config.ownerId, ...storageOptions(config) });
+      const result = await exportRepositorySnapshot({ ...planOptions(config, timestamp), targetRoot: config.targetRoot, lockPath: config.lockPath, ownerId: config.ownerId, ...storageOptions(config), ...(config.storeBudget === undefined ? {} : { storeBudget: config.storeBudget }) });
       if (result.status === 'BLOCKED') { const summary = safePlanSummary(result.plan); emit(stdout, summary, args.json); return outcome(2, summary); }
       const summary = { status: result.status, snapshotId: result.publication.snapshotId, objectCount: result.publication.objectCount, sourceFileCount: result.publication.sourceFileCount, writtenObjects: result.publication.writtenObjects, reusedObjects: result.publication.reusedObjects };
       emit(stdout, summary, args.json); return outcome(0, summary);

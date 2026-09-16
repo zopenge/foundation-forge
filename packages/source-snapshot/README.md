@@ -41,7 +41,7 @@ forge-source-snapshot read --target-root <store> --owner-id <owner> --path <file
 forge-source-snapshot unpack --target-root <store> --owner-id <owner> --output <dir> --json
 ```
 
-The configuration supplies project identity, source/target/state paths, classification policy, packing budgets, grouping, storage layout and retention settings. The package does not embed repository-specific names or storage-provider settings.
+The configuration supplies project identity, source/target/state paths, classification policy, packing budgets, managed-store publication budgets, grouping, storage layout and retention settings. The package does not embed repository-specific names or storage-provider settings.
 
 ## Safety boundary
 
