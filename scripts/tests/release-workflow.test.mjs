@@ -54,6 +54,7 @@ test('main push reports first-publish state and stable publishing enforces the h
   assert.match(workflow.slice(Math.max(0, statusIndex - 100), statusIndex + 100), /continue-on-error: true/u);
   assert.match(publishIfNeeded, /assertTrustedPublishingReady\(states\)/u);
 });
+
 test('documents main-push automation and the first-package exception', async () => {
   const [workflow, runbook, agents] = await Promise.all([
     readFile(releaseWorkflowUrl, 'utf8'),
@@ -129,4 +130,11 @@ test('keeps central package and release scripts free of package catalogues', asy
     assert.doesNotMatch(source, /releasePackageDirectories/u);
     assert.doesNotMatch(source, /https:\/\/registry\.npmjs\.org/u);
   }
+});
+test('version package automation refreshes the pnpm lockfile for exact workspace version changes', async () => {
+  const packageJson = JSON.parse(await readFile(packageJsonUrl, 'utf8'));
+  assert.equal(
+    packageJson.scripts['version:packages'],
+    'changeset version && pnpm install --lockfile-only --no-frozen-lockfile --ignore-scripts',
+  );
 });

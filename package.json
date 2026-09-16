@@ -28,7 +28,7 @@
     "pack:check": "node ./scripts/verify-packages.mjs",
     "check": "pnpm run lint && pnpm run typecheck && pnpm run packages:check-cycles && pnpm run test:scripts && pnpm run test:coverage && pnpm run pack:check",
     "changeset": "changeset",
-    "version:packages": "changeset version",
+    "version:packages": "changeset version && pnpm install --lockfile-only --no-frozen-lockfile --ignore-scripts",
     "release:bootstrap": "pnpm run check && node ./scripts/bootstrap-publish.mjs",
     "release:configure-trusted-publishers": "pnpm run check && node ./scripts/configure-trusted-publishers.mjs",
     "release:dispatch-next": "pnpm run check && node ./scripts/dispatch-release.mjs",
