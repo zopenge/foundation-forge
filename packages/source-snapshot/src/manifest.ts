@@ -33,7 +33,8 @@ export const createSnapshotManifest = async (input: SnapshotManifestInput): Prom
     if (repositoryPaths.has(value.path.toLowerCase())) throw new SourceSnapshotError('DUPLICATE_PATH', { path: value.path });
     repositoryPaths.add(value.path.toLowerCase());
     if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(value.head) || typeof value.dirty !== 'boolean' || (value.branch !== null && typeof value.branch !== 'string')) throw new SourceSnapshotError('INVALID_INPUT', { field: 'repository', path: value.path });
-    return Object.freeze({ path: value.path, head: value.head, branch: value.branch, dirty: value.dirty });
+    if (value.parentGitlink !== undefined && !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(value.parentGitlink)) throw new SourceSnapshotError('INVALID_INPUT', { field: 'repository.parentGitlink', path: value.path });
+    return Object.freeze({ path: value.path, head: value.head, branch: value.branch, dirty: value.dirty, ...(value.parentGitlink === undefined ? {} : { parentGitlink: value.parentGitlink }) });
   }).sort((a, b) => compareStrings(a.path, b.path));
   const identity = {
     schemaVersion: 1, projectId: input.projectId, policyVersion: input.policyVersion,

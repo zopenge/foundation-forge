@@ -14,11 +14,11 @@ export interface SourceTextContentDedupPlan {
   readonly uniqueNormalizedBodyBytes: number;
 }
 
-const v2Key = (file: StagedSourceTextFile): string => [
+export const sourceTextContentKey = (file: StagedSourceTextFile, formatVersion: SourceTextFormatVersion): string => formatVersion === 2 ? [
   'source-text-v2', SOURCE_TEXT_NORMALIZATION, file.group,
   file.sha256, String(file.byteLength), file.normalizedSha256,
   String(file.normalizedByteLength),
-].join(':');
+].join(':') : `source-text-v1:${file.path}`;
 export const planSourceTextContentDedup = (
   files: readonly StagedSourceTextFile[],
   formatVersion: SourceTextFormatVersion,
@@ -27,7 +27,7 @@ export const planSourceTextContentDedup = (
   const blockKeyByPath = new Map<string, string>();
   const grouped = new Map<string, StagedSourceTextFile[]>();
   for (const file of ordered) {
-    const key = formatVersion === 2 ? v2Key(file) : `source-text-v1:${file.path}`;
+    const key = sourceTextContentKey(file, formatVersion);
     blockKeyByPath.set(file.path, key);
     const values = grouped.get(key) ?? [];
     values.push(file);

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, test } from 'vitest';
 import { runSourceSnapshotCli } from '../src/node.js';
-import { addCommittedFile, createRepository } from './node-fixtures.js';
+import { addCommittedFile, createRepository, runGit } from './node-fixtures.js';
 
 const roots: string[] = [];
 const now = Date.parse('2026-09-15T00:00:00.000Z');
@@ -32,6 +32,30 @@ test('CLI plan/export/verify/status/prune-preview workflow emits metadata only',
   const preview = runtime(fixture.base);
   expect((await runSourceSnapshotCli(['prune','--config',fixture.configPath,'--dry-run','--json'], preview.context)).exitCode).toBe(0);
   expect(JSON.parse(preview.stdout.join('')).status).toBe('PRUNE_PREVIEW');
+});
+
+test('CLI forwards the explicit checked-out submodule head policy', async () => {
+  const source = await createRepository(); const sub = await createRepository(); roots.push(source, sub);
+  await addCommittedFile(sub, 'nested.ts');
+  await runGit(source, ['-c', 'protocol.file.allow=always', 'submodule', 'add', '--quiet', sub, 'modules/lib']);
+  await runGit(source, ['commit', '--quiet', '-am', 'submodule']);
+  await writeFile(join(source, 'modules/lib/nested.ts'), 'changed\n', 'utf8');
+  await runGit(join(source, 'modules/lib'), ['add', 'nested.ts']); await runGit(join(source, 'modules/lib'), ['commit', '--quiet', '-m', 'drift']);
+  const base = await mkdtemp(join(tmpdir(), 'snapshot-cli-submodule-')); roots.push(base);
+  const target = join(base, 'target'); const state = join(base, 'state'); await Promise.all([mkdir(target), mkdir(state)]);
+  const configPath = join(base, 'source-snapshot.config.mjs');
+  await writeFile(configPath, `export default ${JSON.stringify({ projectId:'fixture-project',policyVersion:'1',sourceRoot:source,targetRoot:target,lockPath:join(state,'publish.lock'),ownerId:'fixture-owner',submoduleHeadPolicy:'allow-checked-out',policy:{textExtensions:['.ts'],textBasenames:['.gitignore','.gitmodules']},pack:{targetObjectBytes:4096,maxObjectBytes:8192,maxObjectCount:50,maxObjectBytesTotal:100000} })};\nexport const groupForPath = path => 'root';\n`, 'utf8');
+  const rt = runtime(base); const outcome = await runSourceSnapshotCli(['plan','--config',configPath,'--json'], rt.context);
+  expect(outcome.exitCode).toBe(0);
+  expect(JSON.parse(rt.stdout.join(''))).toMatchObject({ status: 'READY', inventoryIssueCount: 0 });
+});
+
+test('CLI rejects an invalid submodule head policy instead of silently falling back to strict mode', async () => {
+  const fixture = await makeConfig();
+  await writeFile(fixture.configPath, `export default ${JSON.stringify({ projectId:'fixture-project',policyVersion:'1',sourceRoot:fixture.source,targetRoot:fixture.target,lockPath:join(fixture.base,'invalid.lock'),ownerId:'fixture-owner',submoduleHeadPolicy:'typo-policy',policy:{textExtensions:['.ts'],textBasenames:['.gitignore']},pack:{targetObjectBytes:4096,maxObjectBytes:8192,maxObjectCount:50,maxObjectBytesTotal:100000} })};\nexport const groupForPath = path => 'root';\n`, 'utf8');
+  const rt = runtime(fixture.base); const outcome = await runSourceSnapshotCli(['plan','--config',fixture.configPath,'--json'], rt.context);
+  expect(outcome.exitCode).toBe(1);
+  expect(rt.stderr.join('')).toContain('INVALID_INPUT');
 });
 
 test('CLI returns blocked exit code without exposing secret content', async () => {

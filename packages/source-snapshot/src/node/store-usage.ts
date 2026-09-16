@@ -94,17 +94,22 @@ export const measureManagedSourceSnapshotStore = async (
   return summarize(files);
 };
 const categoryFor = (path: string): ManagedStoreCategory => path.startsWith('objects/') ? 'object' : path.startsWith('snapshots/') ? 'snapshot' : 'state';
-export const assertProjectedSourceSnapshotStoreBudget = (
+export interface PlannedManagedStoreFile {
+  readonly path: string;
+  readonly byteLength: number;
+}
+export const assertProjectedSourceSnapshotStoreBudgetBySize = (
   current: ManagedStoreMeasurement,
-  plannedArtifacts: readonly { readonly path: string; readonly content: string }[],
+  plannedArtifacts: readonly PlannedManagedStoreFile[],
   budget: SourceSnapshotStoreBudget,
 ): Readonly<{ managedFileCount: number; managedBytes: number; newPhysicalBytes: number }> => {
   for (const [field, value] of Object.entries(budget)) if (!Number.isSafeInteger(value) || value < 0) throw new SourceSnapshotError('INVALID_INPUT', { field: `storeBudget.${field}` });
-  const encoder = new TextEncoder(); const map = new Map(current.files.map(file => [file.path, file])); let newPhysicalBytes = 0;
+  const map = new Map(current.files.map(file => [file.path, file])); let newPhysicalBytes = 0;
   for (const artifact of plannedArtifacts) {
-    const byteLength = encoder.encode(artifact.content).byteLength; const previous = map.get(artifact.path);
-    if (previous === undefined) newPhysicalBytes += byteLength; else if (byteLength > previous.byteLength) newPhysicalBytes += byteLength - previous.byteLength;
-    map.set(artifact.path, { path: artifact.path, byteLength, category: categoryFor(artifact.path) });
+    if (!Number.isSafeInteger(artifact.byteLength) || artifact.byteLength < 0) throw new SourceSnapshotError('INVALID_INPUT', { field: 'plannedArtifact.byteLength', path: artifact.path });
+    const previous = map.get(artifact.path);
+    if (previous === undefined) newPhysicalBytes += artifact.byteLength; else if (artifact.byteLength > previous.byteLength) newPhysicalBytes += artifact.byteLength - previous.byteLength;
+    map.set(artifact.path, { path: artifact.path, byteLength: artifact.byteLength, category: categoryFor(artifact.path) });
   }
   const managedBytes = [...map.values()].reduce((sum, file) => sum + file.byteLength, 0); const managedFileCount = map.size;
   if (managedFileCount > budget.maxManagedFiles || managedBytes > budget.maxManagedBytes) {
@@ -118,4 +123,15 @@ export const assertProjectedSourceSnapshotStoreBudget = (
     });
   }
   return Object.freeze({ managedFileCount, managedBytes, newPhysicalBytes });
+};
+export const assertProjectedSourceSnapshotStoreBudget = (
+  current: ManagedStoreMeasurement,
+  plannedArtifacts: readonly { readonly path: string; readonly content: string }[],
+  budget: SourceSnapshotStoreBudget,
+): Readonly<{ managedFileCount: number; managedBytes: number; newPhysicalBytes: number }> => {
+  const encoder = new TextEncoder();
+  return assertProjectedSourceSnapshotStoreBudgetBySize(current, plannedArtifacts.map(artifact => ({
+    path: artifact.path,
+    byteLength: encoder.encode(artifact.content).byteLength,
+  })), budget);
 };

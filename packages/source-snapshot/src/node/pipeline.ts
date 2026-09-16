@@ -47,11 +47,15 @@ const inventoryFingerprint = async (inventory: SourceInventory): Promise<string>
 
 const repositoryManifestInput = (inventory: SourceInventory) => inventory.repositories
   .filter(value => value.initialized && value.head !== null && value.dirty !== null)
-  .map(value => ({ path: value.path, head: value.head as string, branch: value.branch, dirty: value.dirty as boolean }));
+  .map(value => ({
+    path: value.path, head: value.head as string, branch: value.branch, dirty: value.dirty as boolean,
+    ...(value.parentGitlink !== null && value.parentGitlink !== value.head ? { parentGitlink: value.parentGitlink } : {}),
+  }));
 export const planRepositorySnapshot = async (options: RepositorySnapshotPlanOptions): Promise<RepositorySnapshotPlan> => {
   const policy = defineSourceSnapshotPolicy(options.policy);
   const inventory = await collectSourceInventory({
     sourceRoot: options.sourceRoot,
+    ...(options.submoduleHeadPolicy === undefined ? {} : { submoduleHeadPolicy: options.submoduleHeadPolicy }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
   const decisions = inventory.entries.map(entry => Object.freeze({
@@ -104,6 +108,7 @@ export const verifyRepositorySnapshotFreeze = async (
 ): Promise<RepositorySnapshotFreezeVerification> => {
   const inventory = await collectSourceInventory({
     sourceRoot: options.sourceRoot,
+    ...(options.submoduleHeadPolicy === undefined ? {} : { submoduleHeadPolicy: options.submoduleHeadPolicy }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
   const inventoryChanged = await inventoryFingerprint(inventory) !== freeze.inventoryFingerprint;

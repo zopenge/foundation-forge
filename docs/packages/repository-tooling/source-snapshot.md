@@ -10,8 +10,9 @@
 
 - 根仓库与已初始化 submodule inventory；
 - tracked + 非忽略 untracked 文件发现；
-- submodule gitlink/HEAD 一致性门；
+- submodule gitlink/HEAD 一致性门；默认严格要求一致，聚合开发工作区可显式选择当前 checkout HEAD，并保留父 gitlink 来源证据；
 - repository plan、freeze-check 和 export orchestration；
+- 面向大仓库的有界工作集 prepared pipeline：正文与 packed object 使用临时磁盘 spool，CLI `plan` / `export` 不要求全量源码与对象正文同时驻留 V8 heap；
 - ownership、lock、本地发布与 objects/text 分级 verify；
 - 仅基于已发布 store 的 read/unpack，不依赖原 sourceRoot 或消费者配置；
 - 显式 pin registry（revision/CAS）与 managed-store 物理占用/发布预算；
@@ -28,9 +29,9 @@
 
 `compareSnapshotFiles()` 按路径和字节完整性比较新增、修改、删除。重命名保持确定性地表示为旧路径删除和新路径新增，不做语义 rename 推断。
 
-`planRepositorySnapshot()` 先完成 inventory、consumer policy 分类、secret gate、文本 decoding、packing 和 manifest 生成。出现 review、secret、内容错误或 submodule blocker 时返回 `BLOCKED`，不得发布。
+`planRepositorySnapshot()` 先完成 inventory、consumer policy 分类、secret gate、文本 decoding、packing 和 manifest 生成。出现 review、secret、内容错误或 submodule blocker 时返回 `BLOCKED`，不得发布。submodule 默认使用 `submoduleHeadPolicy: 'require-gitlink'` 的严格语义；只有消费者明确配置 `submoduleHeadPolicy: 'allow-checked-out'` 时，已初始化但 HEAD 与父 gitlink 不一致的 submodule 才允许进入快照。此模式仍以实际 checkout HEAD 参与 snapshot identity，并在不一致时把父引用写入 manifest 的 `parentGitlink`，不会静默丢失漂移来源；未初始化 submodule 或缺失 gitlink 仍然阻断。
 
-`exportRepositorySnapshot()` 在 plan 后再次校验源码字节，防止计划与写入之间发生同尺寸或其他源码变化；只有 frozen input 仍一致才进入 publication。
+`exportRepositorySnapshot()` 保留为纯内存 bundle 的兼容 API；Node CLI 默认使用 prepared-spool 路径，在逐文件读取、secret 检查和 freeze 记录后把唯一正文落入临时 spool，再以有界 object 批次发布。两条路径都在 publication 前再次校验 frozen input；prepared 路径完成或失败后必须清理临时 spool。
 
 发布顺序为：content-addressed objects → snapshot metadata → 本地完整性验证 → current entry 最后切换。发布结果分别报告 `bytesWritten` 与 `objectsReused`；v2 alias 增删不会改变共享 content-block 的对象身份。相同 snapshot 再次导出返回 `NO_CHANGES`；A→B→A 时，若历史 A 的 canonical manifest、objects 与文本验证仍通过，只重新激活 entry，不重写 A 的不可变 SNAPSHOT/READ-INDEX/INDEX/CHANGES。
 

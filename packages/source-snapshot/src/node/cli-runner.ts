@@ -4,9 +4,10 @@ import { pathToFileURL } from 'node:url';
 import type { SourceSecretRule, SourceSnapshotPolicyInput, SourceTextPackOptions } from '../content-contracts.js';
 import { SourceSnapshotError } from '../errors.js';
 import type { SourceSnapshotCliConfig, SourceSnapshotCliContext, SourceSnapshotCliOutcome, SourceSnapshotStorageLayoutOptions, SourceSnapshotStoreBudget } from './contracts.js';
-import { exportRepositorySnapshot, planRepositorySnapshot } from './pipeline.js';
+import { verifyRepositorySnapshotFreeze } from './pipeline.js';
+import { prepareRepositorySnapshot, type PreparedRepositorySnapshotPlan } from './prepared-pipeline.js';
 import { inspectSourceSnapshotRetention, pruneSourceSnapshots } from './retention.js';
-import { verifyPublishedSourceSnapshot } from './publish.js';
+import { publishPreparedSourceSnapshot, verifyPublishedSourceSnapshot } from './publish.js';
 import { readPublishedSourceSnapshotText, unpackPublishedSourceSnapshot } from './read.js';
 
 type Command = 'plan' | 'export' | 'verify' | 'status' | 'prune' | 'read' | 'unpack';
@@ -86,9 +87,12 @@ const loadConfig = async (configPath: string): Promise<LoadedConfig> => {
   const additionalSecretRules = value.additionalSecretRules;
   if (additionalSecretRules !== undefined && !Array.isArray(additionalSecretRules)) throw new SourceSnapshotError('INVALID_INPUT', { field: 'additionalSecretRules' });
   const normalizedRules = additionalSecretRules as readonly SourceSecretRule[] | undefined;
+  const submoduleHeadPolicy = value.submoduleHeadPolicy;
+  if (submoduleHeadPolicy !== undefined && submoduleHeadPolicy !== 'require-gitlink' && submoduleHeadPolicy !== 'allow-checked-out') throw new SourceSnapshotError('INVALID_INPUT', { field: 'submoduleHeadPolicy' });
   return {
     configPath, projectId: requiredString(value.projectId, 'projectId'), policyVersion: requiredString(value.policyVersion, 'policyVersion'),
     sourceRoot: resolveFrom(base, requiredString(value.sourceRoot, 'sourceRoot')),
+    ...(submoduleHeadPolicy === undefined ? {} : { submoduleHeadPolicy }),
     targetRoot: resolveFrom(base, requiredString(value.targetRoot, 'targetRoot')),
     lockPath: resolveFrom(base, requiredString(value.lockPath, 'lockPath')), ownerId: requiredString(value.ownerId, 'ownerId'),
     policy: record(value.policy) as SourceSnapshotPolicyInput, pack: packOptions(value.pack),
@@ -102,6 +106,7 @@ const storageOptions = (config: LoadedConfig): SourceSnapshotStorageLayoutOption
 const planOptions = (config: LoadedConfig, publishedAt: number) => ({
   sourceRoot: config.sourceRoot, projectId: config.projectId, policyVersion: config.policyVersion, publishedAt,
   policy: config.policy, pack: config.pack, groupForPath: config.groupForPath,
+  ...(config.submoduleHeadPolicy === undefined ? {} : { submoduleHeadPolicy: config.submoduleHeadPolicy }),
   ...(config.additionalSecretRules === undefined ? {} : { additionalSecretRules: config.additionalSecretRules }),
 });
 const retentionOptions = (config: LoadedConfig, now: number) => ({
@@ -109,9 +114,9 @@ const retentionOptions = (config: LoadedConfig, now: number) => ({
   ...(config.retention?.keepCount === undefined ? {} : { keepCount: config.retention.keepCount }),
   ...(config.retention?.orphanGraceMs === undefined ? {} : { orphanGraceMs: config.retention.orphanGraceMs }),
 });
-const safePlanSummary = (plan: Awaited<ReturnType<typeof planRepositorySnapshot>>) => ({
+const safePlanSummary = (plan: PreparedRepositorySnapshotPlan) => ({
   status: plan.status, publishAllowed: plan.publishAllowed,
-  snapshotId: plan.bundle?.manifest.snapshotId ?? null,
+  snapshotId: plan.manifest?.snapshotId ?? null,
   repositoryCount: plan.inventory.summary.repositoryCount, candidateCount: plan.inventory.summary.candidateCount,
   includedCount: plan.includedPaths.length,
   excludedCount: plan.decisions.filter(value => value.decision.action === 'exclude').length,
@@ -149,14 +154,23 @@ export const runSourceSnapshotCli = async (argv: readonly string[] = process.arg
     }
     const config = await loadConfig(args.configPath); const timestamp = now();
     if (args.command === 'plan') {
-      const plan = await planRepositorySnapshot(planOptions(config, timestamp));
-      const result = safePlanSummary(plan); emit(stdout, result, args.json); return outcome(plan.publishAllowed ? 0 : 2, result);
+      const prepared = await prepareRepositorySnapshot({ ...planOptions(config, timestamp), workRoot: dirname(config.lockPath) });
+      try {
+        const result = safePlanSummary(prepared.plan); emit(stdout, result, args.json); return outcome(prepared.plan.publishAllowed ? 0 : 2, result);
+      } finally { await prepared.dispose(); }
     }
     if (args.command === 'export') {
-      const result = await exportRepositorySnapshot({ ...planOptions(config, timestamp), targetRoot: config.targetRoot, lockPath: config.lockPath, ownerId: config.ownerId, ...storageOptions(config), ...(config.storeBudget === undefined ? {} : { storeBudget: config.storeBudget }) });
-      if (result.status === 'BLOCKED') { const summary = safePlanSummary(result.plan); emit(stdout, summary, args.json); return outcome(2, summary); }
-      const summary = { status: result.status, snapshotId: result.publication.snapshotId, objectCount: result.publication.objectCount, sourceFileCount: result.publication.sourceFileCount, writtenObjects: result.publication.writtenObjects, reusedObjects: result.publication.reusedObjects };
-      emit(stdout, summary, args.json); return outcome(0, summary);
+      const prepared = await prepareRepositorySnapshot({ ...planOptions(config, timestamp), workRoot: dirname(config.lockPath) });
+      try {
+        if (!prepared.plan.publishAllowed || prepared.plan.manifest === null) {
+          const summary = safePlanSummary(prepared.plan); emit(stdout, summary, args.json); return outcome(2, summary);
+        }
+        const freeze = await verifyRepositorySnapshotFreeze(planOptions(config, timestamp), prepared.plan.freeze);
+        if (!freeze.ok) throw new SourceSnapshotError('SOURCE_CHANGED', { inventoryChanged: freeze.inventoryChanged, changedPaths: freeze.changedPaths });
+        const publication = await publishPreparedSourceSnapshot({ manifest: prepared.plan.manifest, objects: prepared.objects }, { ...planOptions(config, timestamp), targetRoot: config.targetRoot, lockPath: config.lockPath, ownerId: config.ownerId, ...storageOptions(config), ...(config.storeBudget === undefined ? {} : { storeBudget: config.storeBudget }) });
+        const summary = { status: publication.status, snapshotId: publication.snapshotId, objectCount: publication.objectCount, sourceFileCount: publication.sourceFileCount, writtenObjects: publication.writtenObjects, reusedObjects: publication.reusedObjects };
+        emit(stdout, summary, args.json); return outcome(0, summary);
+      } finally { await prepared.dispose(); }
     }
     if (args.command === 'verify') {
       const result = await verifyPublishedSourceSnapshot({ targetRoot: config.targetRoot, ownerId: config.ownerId, ...storageOptions(config) });

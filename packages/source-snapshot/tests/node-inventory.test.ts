@@ -47,6 +47,18 @@ test('blocks an initialized submodule whose head differs from the parent gitlink
   expect(inventory.issues).toEqual([expect.objectContaining({ code: 'SUBMODULE_HEAD_MISMATCH', path: 'modules/lib', blocking: true })]);
 });
 
+test('allows an initialized submodule head mismatch only when explicitly requested', async () => {
+  const root = await makeRoot(); const sub = await makeRoot();
+  await addCommittedFile(sub, 'nested.ts');
+  await runGit(root, ['-c', 'protocol.file.allow=always', 'submodule', 'add', '--quiet', sub, 'modules/lib']);
+  await runGit(root, ['commit', '--quiet', '-am', 'submodule']);
+  await writeFile(join(root, 'modules/lib/nested.ts'), 'changed\n', 'utf8');
+  await runGit(join(root, 'modules/lib'), ['add', 'nested.ts']); await runGit(join(root, 'modules/lib'), ['commit', '--quiet', '-m', 'drift']);
+  const inventory = await collectSourceInventory({ sourceRoot: root, submoduleHeadPolicy: 'allow-checked-out' });
+  expect(inventory.issues).toEqual([]);
+  expect(inventory.repositories[1]?.head).not.toBe(inventory.repositories[1]?.parentGitlink);
+});
+
 test('blocks declared but uninitialized submodules rather than silently skipping them', async () => {
   const root = await makeRoot(); const sub = await makeRoot();
   await addCommittedFile(sub, 'nested.ts');

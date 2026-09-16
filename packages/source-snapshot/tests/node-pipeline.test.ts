@@ -9,7 +9,7 @@ import {
   verifyPublishedSourceSnapshot,
   verifyRepositorySnapshotFreeze,
 } from '../src/node.js';
-import { addCommittedFile, createRepository } from './node-fixtures.js';
+import { addCommittedFile, createRepository, runGit } from './node-fixtures.js';
 
 const roots: string[] = [];
 const now = Date.parse('2026-09-15T00:00:00.000Z');
@@ -37,6 +37,22 @@ test('plans tracked and untracked source with caller-owned policy and grouping',
   expect(plan.bundle?.manifest.projectId).toBe('fixture-project');
   expect(plan.bundle?.textPackage.files.map(value => value.group)).toEqual(['root', 'src', 'src']);
   expect(plan.inventory.repositories[0]?.dirty).toBe(true);
+});
+
+test('plans an explicitly allowed checked-out submodule head and records gitlink provenance', async () => {
+  const source = await createRepository(); const sub = await createRepository(); roots.push(source, sub);
+  await addCommittedFile(sub, 'nested.ts');
+  await runGit(source, ['-c', 'protocol.file.allow=always', 'submodule', 'add', '--quiet', sub, 'modules/lib']);
+  await runGit(source, ['commit', '--quiet', '-am', 'submodule']);
+  const parentGitlink = (await runGit(source, ['rev-parse', 'HEAD:modules/lib'])).trim();
+  await writeFile(join(source, 'modules/lib/nested.ts'), 'changed\n', 'utf8');
+  await runGit(join(source, 'modules/lib'), ['add', 'nested.ts']); await runGit(join(source, 'modules/lib'), ['commit', '--quiet', '-m', 'drift']);
+  const actualHead = (await runGit(join(source, 'modules/lib'), ['rev-parse', 'HEAD'])).trim();
+  const plan = await planRepositorySnapshot({ ...options(source), policy: { ...policy, textBasenames: [...policy.textBasenames, '.gitmodules'] }, submoduleHeadPolicy: 'allow-checked-out' });
+  expect(plan.inventory.issues).toEqual([]);
+  expect(plan.reviewEntries).toEqual([]);
+  expect(plan.status).toBe('READY');
+  expect(plan.bundle?.manifest.repositories).toContainEqual(expect.objectContaining({ path: 'modules/lib', head: actualHead, parentGitlink }));
 });
 
 test('freeze verification detects same-size source mutation after planning', async () => {
