@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { URL, fileURLToPath } from 'node:url';
 import process from 'node:process';
 import { TextEncoder } from 'node:util';
@@ -75,6 +75,10 @@ try {
   const bin = fileURLToPath(new URL('./cli.js', import.meta.resolve('@openge/forge-source-snapshot')));
   const binRun = spawnSync(process.execPath, [bin, 'plan', '--config', config, '--json'], { cwd: process.cwd(), encoding: 'utf8', windowsHide: true });
   assert.equal(binRun.status, 0, binRun.stdout + binRun.stderr); assert.equal(JSON.parse(binRun.stdout).status, 'READY'); assert.equal(binRun.stdout.includes('export const tracked'), false);
+  const linkedBinDirectory = join(base, 'linked-bin');
+  await symlink(dirname(bin), linkedBinDirectory, process.platform === 'win32' ? 'junction' : 'dir');
+  const linkedBinRun = spawnSync(process.execPath, [join(linkedBinDirectory, 'cli.js'), 'plan', '--config', config, '--json'], { cwd: process.cwd(), encoding: 'utf8', windowsHide: true });
+  assert.equal(linkedBinRun.status, 0, linkedBinRun.stdout + linkedBinRun.stderr); assert.equal(JSON.parse(linkedBinRun.stdout).status, 'READY');
 } finally { await rm(base, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 }); }
 
 const browser = spawnSync(process.execPath, ['--conditions=browser', '--input-type=module', '--eval', `
