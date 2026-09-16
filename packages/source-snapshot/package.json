@@ -1,6 +1,6 @@
 {
   "name": "@openge/forge-source-snapshot",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Deterministic Git source snapshots with secure packing, publication, verification and retention",
   "type": "module",
   "main": "./dist/index.js",
