@@ -32,6 +32,13 @@ export interface SnapshotFileChanges {
   readonly changed: readonly string[];
   readonly removed: readonly string[];
 }
+export interface SnapshotPin {
+  readonly pinId: string;
+  readonly snapshotId: string;
+  readonly reasonCode: string;
+  readonly createdAt: number;
+  readonly expiresAt?: number;
+}
 export interface SnapshotRetentionInput {
   readonly snapshots: readonly SnapshotManifest[];
   readonly currentSnapshotId: string;
@@ -40,6 +47,7 @@ export interface SnapshotRetentionInput {
   readonly keepCount?: number;
   readonly orphanGraceMs?: number;
   readonly orphanedSince?: Readonly<Record<string, number>>;
+  readonly pins?: readonly SnapshotPin[];
 }
 export interface SnapshotRetentionPlan {
   readonly currentSnapshotId: string;
@@ -64,4 +72,7 @@ export type SourceSnapshotErrorCode =
   | 'PUBLICATION_FAILED' | 'ENTRY_MISSING' | 'SNAPSHOT_MISSING' | 'INVALID_SNAPSHOT_ID'
   | 'SNAPSHOT_ID_MISMATCH' | 'MANAGED_PATH_UNSAFE' | 'OBJECT_MISSING'
   | 'DELETE_NOT_CONFIRMED' | 'GC_STATE_INVALID' | 'SNAPSHOT_STORE_INVALID' | 'MANAGED_STORE_INVALID'
-  | 'SOURCE_CHANGED' | 'SOURCE_READ_FAILED';
+  | 'SOURCE_CHANGED' | 'SOURCE_READ_FAILED'
+  | 'TEXT_FORMAT_UNSUPPORTED' | 'TEXT_DETAILS_INVALID' | 'TEXT_INTEGRITY_MISMATCH'
+  | 'TEXT_READ_LIMIT_EXCEEDED' | 'OUTPUT_NOT_EMPTY'
+  | 'PIN_STATE_INVALID' | 'PIN_STATE_CONFLICT' | 'PIN_TARGET_MISSING' | 'STORE_BUDGET_EXCEEDED' | 'ANALYSIS_SOURCE_MISMATCH';

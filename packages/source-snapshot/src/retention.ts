@@ -1,4 +1,4 @@
-import type { SnapshotRetentionInput, SnapshotRetentionPlan } from './contracts.js';
+import type { SnapshotPin, SnapshotRetentionInput, SnapshotRetentionPlan } from './contracts.js';
 import { SourceSnapshotError } from './errors.js';
 import { assertArray, assertCount, compareStrings, objectPath, uniquePaths } from './validation.js';
 
@@ -25,9 +25,33 @@ export const planSnapshotRetention = (input: SnapshotRetentionInput): SnapshotRe
       allObjects.set(object.path, value);
     }
   }
+  const pins = input.pins ?? [];
+  assertArray(pins, 'pins');
+  const pinIds = new Set<string>();
+  const activePinnedSnapshots = new Set<string>();
+  const pinToken = /^[A-Za-z0-9._:-]{1,128}$/u;
+  for (const pin of pins as readonly SnapshotPin[]) {
+    if (typeof pin !== 'object' || pin === null || !pinToken.test(pin.pinId) || !pinToken.test(pin.reasonCode)) {
+      throw new SourceSnapshotError('PIN_STATE_INVALID');
+    }
+    if (pinIds.has(pin.pinId)) throw new SourceSnapshotError('PIN_STATE_INVALID', { pinId: pin.pinId });
+    pinIds.add(pin.pinId);
+    if (!/^snapshot-[a-f0-9]{64}$/u.test(pin.snapshotId)) throw new SourceSnapshotError('PIN_STATE_INVALID', { pinId: pin.pinId });
+    if (!Number.isSafeInteger(pin.createdAt) || pin.createdAt < 0) throw new SourceSnapshotError('PIN_STATE_INVALID', { pinId: pin.pinId });
+    if (pin.expiresAt !== undefined && (!Number.isSafeInteger(pin.expiresAt) || pin.expiresAt < pin.createdAt)) {
+      throw new SourceSnapshotError('PIN_STATE_INVALID', { pinId: pin.pinId });
+    }
+    const active = pin.expiresAt === undefined || pin.expiresAt > input.now;
+    if (!active) continue;
+    if (!seen.has(pin.snapshotId)) throw new SourceSnapshotError('PIN_TARGET_MISSING', { pinId: pin.pinId, snapshotId: pin.snapshotId });
+    activePinnedSnapshots.add(pin.snapshotId);
+  }
   const ordered = [...input.snapshots].sort((a, b) => b.publishedAt - a.publishedAt || compareStrings(a.snapshotId, b.snapshotId));
   const retained = [current, ...ordered.filter(value => value.snapshotId !== current.snapshotId).slice(0, keepCount - 1)];
   const ids = new Set(retained.map(value => value.snapshotId));
+  for (const snapshot of ordered) {
+    if (activePinnedSnapshots.has(snapshot.snapshotId) && !ids.has(snapshot.snapshotId)) { retained.push(snapshot); ids.add(snapshot.snapshotId); }
+  }
   const references = new Set(retained.flatMap(value => value.objects.map(object => object.path)));
   const objectSet = new Set(input.objectPaths);
   for (const value of references) if (!objectSet.has(value)) throw new SourceSnapshotError('DANGLING_OBJECT', { path: value });

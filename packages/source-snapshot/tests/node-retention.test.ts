@@ -81,3 +81,26 @@ test('inspects a single healthy snapshot before any retention history exists', a
   expect(status.snapshotCount).toBe(1);
   expect(status.currentSnapshotId).toBe(value.manifest.snapshotId);
 });
+
+test('retains mixed legacy v1 and v2 snapshots without deleting either referenced object', async () => {
+  const dirs = await makeRoot();
+  const legacy = await makeBundle('a', start, 'legacy');
+  const staged = await stageSourceTextFile({ path: 'src/value.ts', group: 'core', bytes: new TextEncoder().encode("export const value = 'v2'\n") });
+  const textPackage = await buildSourceTextPackage([staged], {
+    targetObjectBytes: 4096, maxObjectBytes: 8192, maxObjectCount: 10,
+    maxObjectBytesTotal: 100_000, textFormatVersion: 2,
+  });
+  const manifest = await createTextSnapshotManifest({
+    projectId: 'fixture-project', policyVersion: '1', publishedAt: start + day,
+    repositories: [{ path: '', head: 'b'.repeat(40), branch: 'dev', dirty: false }], textPackage,
+  });
+  await publishSourceSnapshot(legacy, { sourceRoot: dirs.source, targetRoot: dirs.target, lockPath: dirs.lockPath, ownerId: 'fixture-owner' });
+  await publishSourceSnapshot({ manifest, textPackage }, { sourceRoot: dirs.source, targetRoot: dirs.target, lockPath: dirs.lockPath, ownerId: 'fixture-owner' });
+  const result = await pruneSourceSnapshots({
+    targetRoot: dirs.target, ownerId: 'fixture-owner', lockPath: dirs.lockPath,
+    now: start + 2 * day, keepCount: 2, orphanGraceMs: 0,
+  });
+  expect(result.removedSnapshotIds).toEqual([]);
+  expect(result.removedObjectPaths).toEqual([]);
+  expect((await verifyPublishedSourceSnapshot({ targetRoot: dirs.target, ownerId: 'fixture-owner', level: 'text' })).verifiedLevel).toBe('text');
+});

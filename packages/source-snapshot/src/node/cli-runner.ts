@@ -7,9 +7,14 @@ import type { SourceSnapshotCliConfig, SourceSnapshotCliContext, SourceSnapshotC
 import { exportRepositorySnapshot, planRepositorySnapshot } from './pipeline.js';
 import { inspectSourceSnapshotRetention, pruneSourceSnapshots } from './retention.js';
 import { verifyPublishedSourceSnapshot } from './publish.js';
+import { readPublishedSourceSnapshotText, unpackPublishedSourceSnapshot } from './read.js';
 
-type Command = 'plan' | 'export' | 'verify' | 'status' | 'prune';
-interface ParsedArgs { readonly command: Command; readonly configPath: string; readonly json: boolean; readonly dryRun: boolean; }
+type Command = 'plan' | 'export' | 'verify' | 'status' | 'prune' | 'read' | 'unpack';
+interface ParsedArgs {
+  readonly command: Command; readonly configPath: string; readonly json: boolean; readonly dryRun: boolean;
+  readonly targetRoot?: string; readonly ownerId?: string; readonly snapshotId?: string;
+  readonly path?: string; readonly outputRoot?: string;
+}
 interface LoadedConfig extends SourceSnapshotCliConfig { readonly configPath: string; }
 
 const record = (value: unknown): Record<string, unknown> => {
@@ -26,25 +31,39 @@ const packOptions = (value: unknown): SourceTextPackOptions => {
   const fields = ['targetObjectBytes','maxObjectBytes','maxObjectCount','maxObjectBytesTotal'] as const;
   const output: Record<(typeof fields)[number], number> = { targetObjectBytes: 0, maxObjectBytes: 0, maxObjectCount: 0, maxObjectBytesTotal: 0 };
   for (const field of fields) { const current = input[field]; if (!Number.isSafeInteger(current) || (current as number) < 0) throw new SourceSnapshotError('INVALID_INPUT', { field: `pack.${field}` }); output[field] = current as number; }
-  return output;
+  const textFormatVersion = input.textFormatVersion;
+  if (textFormatVersion !== undefined && textFormatVersion !== 1 && textFormatVersion !== 2) throw new SourceSnapshotError('INVALID_INPUT', { field: 'pack.textFormatVersion' });
+  return { ...output, ...(textFormatVersion === undefined ? {} : { textFormatVersion }) };
 };
 const parseArgs = (argv: readonly string[], cwd: string): ParsedArgs => {
   const [rawCommand, ...tokens] = argv;
-  if (!['plan','export','verify','status','prune'].includes(rawCommand ?? '')) throw new SourceSnapshotError('INVALID_INPUT', { field: 'command' });
+  const commands: readonly Command[] = ['plan','export','verify','status','prune','read','unpack'];
+  if (!commands.includes(rawCommand as Command)) throw new SourceSnapshotError('INVALID_INPUT', { field: 'command' });
   let configPath = resolve(cwd, 'source-snapshot.config.mjs'); let json = false; let dryRun = false;
+  let targetRoot: string | undefined; let ownerId: string | undefined; let snapshotId: string | undefined;
+  let path: string | undefined; let outputRoot: string | undefined;
   for (let index = 0; index < tokens.length; index += 1) {
-    const token = tokens[index];
-    if (token === '--') continue;
+    const token = tokens[index]; if (token === '--') continue;
     if (token === '--json') { json = true; continue; }
     if (token === '--dry-run') { dryRun = true; continue; }
-    if (token === '--config') {
-      const value = tokens[++index]; if (value === undefined || value.startsWith('--')) throw new SourceSnapshotError('INVALID_INPUT', { field: 'config' });
-      configPath = resolve(cwd, value); continue;
-    }
+    const next = (): string => { const value = tokens[++index]; if (value === undefined || value.startsWith('--')) throw new SourceSnapshotError('INVALID_INPUT', { field: token }); return value; };
+    if (token === '--config') { configPath = resolve(cwd, next()); continue; }
+    if (token === '--target-root') { targetRoot = resolve(cwd, next()); continue; }
+    if (token === '--owner-id') { ownerId = next(); continue; }
+    if (token === '--snapshot-id') { snapshotId = next(); continue; }
+    if (token === '--path') { path = next(); continue; }
+    if (token === '--output') { outputRoot = resolve(cwd, next()); continue; }
     throw new SourceSnapshotError('INVALID_INPUT', { field: 'argument', value: token });
   }
   if (dryRun && rawCommand !== 'prune') throw new SourceSnapshotError('INVALID_INPUT', { field: 'dryRun' });
-  return { command: rawCommand as Command, configPath, json, dryRun };
+  return {
+    command: rawCommand as Command, configPath, json, dryRun,
+    ...(targetRoot === undefined ? {} : { targetRoot }),
+    ...(ownerId === undefined ? {} : { ownerId }),
+    ...(snapshotId === undefined ? {} : { snapshotId }),
+    ...(path === undefined ? {} : { path }),
+    ...(outputRoot === undefined ? {} : { outputRoot }),
+  };
 };
 
 const loadConfig = async (configPath: string): Promise<LoadedConfig> => {
@@ -104,7 +123,22 @@ export const runSourceSnapshotCli = async (argv: readonly string[] = process.arg
   const stderr = context.stderr ?? (value => process.stderr.write(value));
   const now = context.now ?? Date.now;
   try {
-    const args = parseArgs(argv, cwd); const config = await loadConfig(args.configPath); const timestamp = now();
+    const args = parseArgs(argv, cwd);
+    if (args.command === 'read') {
+      const result = await readPublishedSourceSnapshotText({
+        targetRoot: requiredString(args.targetRoot, 'targetRoot'), ownerId: requiredString(args.ownerId, 'ownerId'),
+        ...(args.snapshotId === undefined ? {} : { snapshotId: args.snapshotId }), path: requiredString(args.path, 'path'),
+      });
+      const summary = { status: 'READ', ...result }; emit(stdout, summary, args.json); return outcome(0, summary);
+    }
+    if (args.command === 'unpack') {
+      const result = await unpackPublishedSourceSnapshot({
+        targetRoot: requiredString(args.targetRoot, 'targetRoot'), ownerId: requiredString(args.ownerId, 'ownerId'),
+        ...(args.snapshotId === undefined ? {} : { snapshotId: args.snapshotId }), outputRoot: requiredString(args.outputRoot, 'outputRoot'),
+      });
+      const summary = { ...result }; emit(stdout, summary, args.json); return outcome(0, summary);
+    }
+    const config = await loadConfig(args.configPath); const timestamp = now();
     if (args.command === 'plan') {
       const plan = await planRepositorySnapshot(planOptions(config, timestamp));
       const result = safePlanSummary(plan); emit(stdout, result, args.json); return outcome(plan.publishAllowed ? 0 : 2, result);

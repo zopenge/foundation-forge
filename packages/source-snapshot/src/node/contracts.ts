@@ -1,3 +1,4 @@
+import type { SnapshotPin } from '../contracts.js';
 import type { SourceClassificationDecision, SourceSecretFinding, SourceSecretRule, SourceSnapshotBundle, SourceSnapshotPolicyInput, SourceTextPackOptions } from '../content-contracts.js';
 
 export interface SourceInventoryRepository {
@@ -46,19 +47,27 @@ export interface SourceSnapshotStorageLayoutOptions {
   readonly entryFile?: string;
   readonly ownerFile?: string;
   readonly gcFile?: string;
+  readonly pinsFile?: string;
   readonly protectedTopLevelDirectories?: readonly string[];
   readonly pathCaseSensitivity?: SourceSnapshotPathCaseSensitivity;
+}
+export interface SourceSnapshotStoreBudget {
+  readonly maxManagedFiles: number;
+  readonly maxManagedBytes: number;
 }
 export interface PublishSourceSnapshotOptions extends SourceSnapshotStorageLayoutOptions {
   readonly sourceRoot: string;
   readonly targetRoot: string;
   readonly lockPath: string;
   readonly ownerId: string;
+  readonly storeBudget?: SourceSnapshotStoreBudget;
 }
+export type SourceSnapshotVerificationLevel = 'objects' | 'text';
 export interface VerifyPublishedSourceSnapshotOptions extends SourceSnapshotStorageLayoutOptions {
   readonly targetRoot: string;
   readonly ownerId: string;
   readonly snapshotId?: string;
+  readonly level?: SourceSnapshotVerificationLevel;
 }
 export interface SourceSnapshotPublicationResult {
   readonly status: 'LOCAL_VERIFIED' | 'NO_CHANGES';
@@ -67,12 +76,41 @@ export interface SourceSnapshotPublicationResult {
   readonly sourceFileCount: number;
   readonly writtenObjects: number;
   readonly reusedObjects: number;
+  readonly objectsReused: number;
+  readonly bytesWritten: number;
+  readonly activation?: 'reused';
 }
 export interface SourceSnapshotVerificationResult {
   readonly status: 'LOCAL_VERIFIED';
   readonly snapshotId: string;
   readonly objectCount: number;
   readonly sourceFileCount: number;
+  readonly requestedLevel: SourceSnapshotVerificationLevel;
+  readonly verifiedLevel: SourceSnapshotVerificationLevel;
+  readonly verifiedFileCount: number;
+  readonly verifiedPaths: readonly string[];
+}
+
+export interface InspectSourceSnapshotPinsOptions extends SourceSnapshotStorageLayoutOptions {
+  readonly targetRoot: string;
+  readonly ownerId: string;
+}
+export interface SourceSnapshotPinState {
+  readonly schemaVersion: 1;
+  readonly projectId: string;
+  readonly ownerId: string;
+  readonly revision: string;
+  readonly pins: readonly SnapshotPin[];
+}
+export interface UpsertSourceSnapshotPinOptions extends InspectSourceSnapshotPinsOptions {
+  readonly lockPath: string;
+  readonly expectedRevision?: string;
+  readonly pin: SnapshotPin;
+}
+export interface RemoveSourceSnapshotPinOptions extends InspectSourceSnapshotPinsOptions {
+  readonly lockPath: string;
+  readonly expectedRevision?: string;
+  readonly pinId: string;
 }
 
 export interface InspectSourceSnapshotRetentionOptions extends SourceSnapshotStorageLayoutOptions {
@@ -81,6 +119,24 @@ export interface InspectSourceSnapshotRetentionOptions extends SourceSnapshotSto
   readonly now: number;
   readonly keepCount?: number;
   readonly orphanGraceMs?: number;
+}
+export type InspectSourceSnapshotStoreUsageOptions = InspectSourceSnapshotRetentionOptions;
+export interface SourceSnapshotStoreUsage {
+  readonly status: 'STORE_USAGE';
+  readonly currentSnapshotId: string;
+  readonly managedFileCount: number;
+  readonly managedBytes: number;
+  readonly objectFileCount: number;
+  readonly objectBytes: number;
+  readonly snapshotFileCount: number;
+  readonly snapshotMetadataAndIndexBytes: number;
+  readonly stateFileCount: number;
+  readonly stateControlBytes: number;
+  readonly currentSnapshotReferencedBytes: number;
+  readonly retainedUniqueObjectBytes: number;
+  readonly pinnedAdditionalProtectionBytes: number;
+  readonly orphanObservationBytes: number;
+  readonly reclaimableBytes: number;
 }
 export interface PruneSourceSnapshotsOptions extends InspectSourceSnapshotRetentionOptions {
   readonly lockPath: string;
@@ -165,4 +221,26 @@ export interface SourceSnapshotCliContext {
 export interface SourceSnapshotCliOutcome {
   readonly exitCode: 0 | 1 | 2;
   readonly result: Readonly<Record<string, unknown>>;
+}
+
+export interface ReadPublishedSourceSnapshotTextOptions extends SourceSnapshotStorageLayoutOptions {
+  readonly targetRoot: string;
+  readonly ownerId: string;
+  readonly snapshotId?: string;
+  readonly path: string;
+  readonly limits?: import('../content-contracts.js').SnapshotReadLimits;
+}
+export interface UnpackPublishedSourceSnapshotOptions extends SourceSnapshotStorageLayoutOptions {
+  readonly targetRoot: string;
+  readonly ownerId: string;
+  readonly snapshotId?: string;
+  readonly outputRoot: string;
+  readonly limits?: import('../content-contracts.js').SnapshotReadLimits;
+}
+export interface SourceSnapshotUnpackResult {
+  readonly status: 'UNPACKED';
+  readonly snapshotId: string;
+  readonly writtenFileCount: number;
+  readonly writtenFiles: readonly string[];
+  readonly assurance: 'normalized-text-verified';
 }

@@ -16,6 +16,9 @@ import {
   verifyPublishedSourceSnapshot,
 } from '@openge/forge-source-snapshot/node';
 
+await import('./core-v2.mjs');
+await import('./node-v2.mjs');
+
 const now = Date.parse('2026-09-15T00:00:00.000Z');
 const snapshot = await createSnapshotManifest({ projectId: 'installed-consumer', policyVersion: '1', publishedAt: now, repositories: [], files: [], objects: [] });
 assert.match(snapshot.snapshotId, /^snapshot-[a-f0-9]{64}$/u);

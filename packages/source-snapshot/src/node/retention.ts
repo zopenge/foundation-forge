@@ -8,11 +8,13 @@ import type { SnapshotManifest, SnapshotManifestInput } from '../contracts.js';
 import { SourceSnapshotError } from '../errors.js';
 import { createSnapshotManifest } from '../manifest.js';
 import { planSnapshotRetention } from '../retention.js';
-import type { InspectSourceSnapshotRetentionOptions, PruneSourceSnapshotsOptions, SourceSnapshotPruneResult, SourceSnapshotRetentionStatus } from './contracts.js';
+import type { InspectSourceSnapshotRetentionOptions, InspectSourceSnapshotStoreUsageOptions, PruneSourceSnapshotsOptions, SourceSnapshotPruneResult, SourceSnapshotRetentionStatus, SourceSnapshotStoreUsage } from './contracts.js';
 import { resolveStorageLayout, type ResolvedSourceSnapshotLayout } from './layout.js';
 import { acquireSourceSnapshotLock } from './lock.js';
 import { readManagedText } from './managed-read.js';
+import { readSourceSnapshotPinsState } from './pins.js';
 import { verifyPublishedSourceSnapshot } from './publish.js';
+import { measureManagedSourceSnapshotStore } from './store-usage.js';
 
 const runFile = promisify(execFile);
 const snapshotPattern = /^snapshot-[a-f0-9]{64}$/u;
@@ -107,10 +109,12 @@ const buildRetentionState = async (options: InspectSourceSnapshotRetentionOption
   const objectPaths = await listObjectPaths(options.targetRoot);
   const manifests = await listSnapshotManifests(options.targetRoot);
   const orphanedSince = await readGcState(options.targetRoot, layout);
+  const pinState = await readSourceSnapshotPinsState(options, layout);
   const plan = planSnapshotRetention({
     snapshots: manifests, currentSnapshotId: current.snapshotId, objectPaths, now: options.now,
     ...(options.keepCount === undefined ? {} : { keepCount: options.keepCount }),
     ...(options.orphanGraceMs === undefined ? {} : { orphanGraceMs: options.orphanGraceMs }), orphanedSince,
+    pins: pinState.pins,
   });
   const observedOrphanCount = plan.orphanObjectPaths.filter(path => orphanedSince[path] !== undefined).length;
   return { layout, currentSnapshotId: current.snapshotId, manifests, objectPaths, plan, observedOrphanCount };
@@ -134,6 +138,37 @@ const statusFromState = (state: RetentionPlanState, grace: number): SourceSnapsh
 export const inspectSourceSnapshotRetention = async (options: InspectSourceSnapshotRetentionOptions): Promise<SourceSnapshotRetentionStatus> => {
   const state = await buildRetentionState(options);
   return statusFromState(state, options.orphanGraceMs ?? 7 * 86_400_000);
+};
+const sumManagedObjectBytes = (paths: Iterable<string>, sizes: ReadonlyMap<string, number>): number => {
+  let total = 0;
+  for (const path of new Set(paths)) { const size = sizes.get(path); if (size === undefined) throw new SourceSnapshotError('MANAGED_STORE_INVALID', { path }); total += size; }
+  return total;
+};
+export const inspectSourceSnapshotStoreUsage = async (options: InspectSourceSnapshotStoreUsageOptions): Promise<SourceSnapshotStoreUsage> => {
+  const state = await buildRetentionState(options); const measured = await measureManagedSourceSnapshotStore(options.targetRoot, state.layout);
+  const current = state.manifests.find(snapshot => snapshot.snapshotId === state.currentSnapshotId);
+  if (current === undefined) throw new SourceSnapshotError('CURRENT_SNAPSHOT_MISSING');
+  const objectSizes = new Map(measured.files.filter(file => file.category === 'object').map(file => [file.path, file.byteLength]));
+  const keepCount = options.keepCount ?? 3;
+  const ordered = [...state.manifests].sort((a, b) => b.publishedAt - a.publishedAt || a.snapshotId.localeCompare(b.snapshotId));
+  const base = [current, ...ordered.filter(snapshot => snapshot.snapshotId !== current.snapshotId).slice(0, keepCount - 1)];
+  const baseRefs = new Set(base.flatMap(snapshot => snapshot.objects.map(object => object.path)));
+  const retainedRefs = new Set(state.plan.referencedObjectPaths);
+  const pinnedOnlyRefs = [...retainedRefs].filter(path => !baseRefs.has(path));
+  const reclaimable = new Set(state.plan.removeObjectPaths);
+  const observing = state.plan.orphanObjectPaths.filter(path => !reclaimable.has(path));
+  return Object.freeze({
+    status: 'STORE_USAGE', currentSnapshotId: state.currentSnapshotId,
+    managedFileCount: measured.managedFileCount, managedBytes: measured.managedBytes,
+    objectFileCount: measured.objectFileCount, objectBytes: measured.objectBytes,
+    snapshotFileCount: measured.snapshotFileCount, snapshotMetadataAndIndexBytes: measured.snapshotBytes,
+    stateFileCount: measured.stateFileCount, stateControlBytes: measured.stateBytes,
+    currentSnapshotReferencedBytes: sumManagedObjectBytes(current.objects.map(object => object.path), objectSizes),
+    retainedUniqueObjectBytes: sumManagedObjectBytes(retainedRefs, objectSizes),
+    pinnedAdditionalProtectionBytes: sumManagedObjectBytes(pinnedOnlyRefs, objectSizes),
+    orphanObservationBytes: sumManagedObjectBytes(observing, objectSizes),
+    reclaimableBytes: sumManagedObjectBytes(reclaimable, objectSizes),
+  });
 };
 interface ConfirmedDeleteOptions {
   readonly recursive: boolean;
