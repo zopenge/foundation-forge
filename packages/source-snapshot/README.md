@@ -18,8 +18,9 @@ The runtime-neutral root entry provides:
 The explicit `@openge/forge-source-snapshot/node` entry provides:
 
 - root/submodule Git inventory, including tracked and non-ignored untracked files;
-- submodule initialization and parent-gitlink consistency gates;
+- submodule initialization and strict parent-gitlink consistency gates, with an explicit checked-out-head opt-in that preserves parent-gitlink provenance;
 - repository planning and frozen-input verification;
+- bounded-working-set repository preparation with disk-backed text/object spooling for large repositories;
 - filesystem publication, ownership markers and exclusive locks;
 - post-publication object/text verification and source-independent read/unpack;
 - explicit pin registry with revision/CAS semantics;
@@ -41,11 +42,11 @@ forge-source-snapshot read --target-root <store> --owner-id <owner> --path <file
 forge-source-snapshot unpack --target-root <store> --owner-id <owner> --output <dir> --json
 ```
 
-The configuration supplies project identity, source/target/state paths, classification policy, packing budgets, managed-store publication budgets, grouping, storage layout and retention settings. The package does not embed repository-specific names or storage-provider settings.
+The configuration supplies project identity, source/target/state paths, classification policy, packing budgets, managed-store publication budgets, grouping, storage layout and retention settings. CLI `plan`/`export` use the Node prepared-spool pipeline so repository size does not require all decoded source and packed object bodies to remain resident in the V8 heap. The runtime-neutral in-memory packing API remains available for callers that already own bounded inputs. The package does not embed repository-specific names or storage-provider settings.
 
 ## Safety boundary
 
-Publication writes immutable content objects and snapshot metadata before switching the current entry. Publication results distinguish physical `bytesWritten` and `objectsReused`; v2 alias add/remove does not change a shared content-block identity. Existing foreign targets, live locks, source/target overlap, submodule drift, secret findings, unknown review entries, source changes during planning, unsafe managed paths, integrity mismatches and managed-store budget violations fail closed. Existing canonical snapshots can be reactivated without rewriting their immutable metadata.
+Publication writes immutable content objects and snapshot metadata before switching the current entry. Publication results distinguish physical `bytesWritten` and `objectsReused`; v2 alias add/remove does not change a shared content-block identity. Existing foreign targets, live locks, source/target overlap, submodule drift, secret findings, unknown review entries, source changes during planning, unsafe managed paths, integrity mismatches and managed-store budget violations fail closed. Submodule HEAD drift is strict by default; consumers that intentionally snapshot an aggregate development workspace may set `submoduleHeadPolicy: 'allow-checked-out'`, in which case the actual checked-out HEAD remains snapshot identity and a differing parent gitlink is retained as `parentGitlink` provenance in the manifest. Existing canonical snapshots can be reactivated without rewriting their immutable metadata.
 
 Pruning revalidates retained snapshots before deletion. Active explicit pins extend the base retention set; pin state is revisioned and mutated under the same store lock. Physical usage counts only owner-managed objects, snapshot artifacts and state files, and counts shared objects once. Orphan age starts when an object is first observed without a retained reference; the default grace period is seven days. Deletion is confirmed by path disappearance, with a Windows fallback for filesystems whose primary delete call can report success without removing the path. A rollback to software that does not understand `.source-snapshot-pins.json` must not run prune; pin-aware software remains responsible for safe reclamation.
 

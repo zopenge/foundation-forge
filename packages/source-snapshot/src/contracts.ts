@@ -14,6 +14,7 @@ export interface SnapshotRepository {
   readonly head: string;
   readonly branch: string | null;
   readonly dirty: boolean;
+  readonly parentGitlink?: string;
 }
 export interface SnapshotManifestInput {
   readonly projectId: string;

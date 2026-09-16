@@ -40,7 +40,8 @@ export interface SourceInventory {
   readonly issues: readonly SourceInventoryIssue[];
   readonly summary: Readonly<{ repositoryCount: number; initializedRepositoryCount: number; candidateCount: number; trackedCount: number; untrackedCount: number; dirtyRepositoryCount: number }>;
 }
-export interface CollectSourceInventoryOptions { readonly sourceRoot: string; readonly signal?: AbortSignal; }
+export type SourceSubmoduleHeadPolicy = 'require-gitlink' | 'allow-checked-out';
+export interface CollectSourceInventoryOptions { readonly sourceRoot: string; readonly submoduleHeadPolicy?: SourceSubmoduleHeadPolicy; readonly signal?: AbortSignal; }
 
 export type SourceSnapshotPathCaseSensitivity = 'case-sensitive' | 'case-insensitive';
 export interface SourceSnapshotStorageLayoutOptions {
@@ -168,6 +169,7 @@ export interface SourceSnapshotPruneResult extends Omit<SourceSnapshotRetentionS
 
 export interface RepositorySnapshotPlanOptions {
   readonly sourceRoot: string;
+  readonly submoduleHeadPolicy?: SourceSubmoduleHeadPolicy;
   readonly projectId: string;
   readonly policyVersion: string;
   readonly publishedAt: number;
@@ -202,6 +204,7 @@ export interface SourceSnapshotCliConfig {
   readonly projectId: string;
   readonly policyVersion: string;
   readonly sourceRoot: string;
+  readonly submoduleHeadPolicy?: SourceSubmoduleHeadPolicy;
   readonly targetRoot: string;
   readonly lockPath: string;
   readonly ownerId: string;

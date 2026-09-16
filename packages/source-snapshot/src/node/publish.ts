@@ -1,4 +1,4 @@
-import { mkdir, readdir, realpath } from 'node:fs/promises';
+import { mkdir, readFile, readdir, realpath } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
 import { calculateBytesIntegrity } from '@openge/forge-artifact-integrity';
 import { defineGeneratedArtifactPlan } from '@openge/forge-generated-artifacts';
@@ -10,13 +10,14 @@ import { compareSnapshotFiles } from '../changes.js';
 import { createSnapshotManifest } from '../manifest.js';
 import { createTextSnapshotManifest } from '../text-manifest.js';
 import { buildSnapshotReadIndex, renderSnapshotReadIndexMarkdown } from '../read-index.js';
-import { collectSnapshotObjectRequirements, readSnapshotText } from '../text-reader.js';
 import { parseSourceTextDetails } from '../text-format.js';
 import type { PublishSourceSnapshotOptions, SourceSnapshotPublicationResult, SourceSnapshotVerificationResult, VerifyPublishedSourceSnapshotOptions } from './contracts.js';
 import { acquireSourceSnapshotLock } from './lock.js';
 import { readManagedBytes, readManagedText } from './managed-read.js';
 import { resolveStorageLayout, type ResolvedSourceSnapshotLayout } from './layout.js';
-import { assertProjectedSourceSnapshotStoreBudget, measureManagedSourceSnapshotStore } from './store-usage.js';
+import { assertProjectedSourceSnapshotStoreBudget, assertProjectedSourceSnapshotStoreBudgetBySize, measureManagedSourceSnapshotStore } from './store-usage.js';
+import type { PreparedSourceTextObject } from './text-spool.js';
+import { verifyPublishedSnapshotText } from './text-verification.js';
 
 const SNAPSHOT_PATTERN = /^snapshot-[a-f0-9]{64}$/u;
 const code=(value:unknown):string|undefined=>value instanceof Error&&'code'in value&&typeof value.code==='string'?value.code:undefined;
@@ -60,25 +61,6 @@ const writeImmutable = async(targetRoot:string,artifacts:readonly {path:string;c
 const validateBundle=async(bundle:SourceSnapshotBundle):Promise<void>=>{const recreated=await createTextSnapshotManifest({projectId:bundle.manifest.projectId,policyVersion:bundle.manifest.policyVersion,publishedAt:bundle.manifest.publishedAt,repositories:bundle.manifest.repositories,textPackage:bundle.textPackage}); if(recreated.snapshotId!==bundle.manifest.snapshotId)throw new SourceSnapshotError('BUNDLE_MISMATCH');};
 const verificationLevelForManifest = (manifest: SnapshotManifest): 'objects' | 'text' =>
   manifest.files.every(file => parseSourceTextDetails(file.details).formatVersion === 2) ? 'text' : 'objects';
-const textVerificationLimits = (manifest: SnapshotManifest) => {
-  let total = 0; let maxObjectBytes = 1;
-  for (const object of manifest.objects) {
-    total += object.byteLength;
-    if (!Number.isSafeInteger(total)) throw new SourceSnapshotError('TEXT_READ_LIMIT_EXCEEDED',{field:'maxTotalBytes'});
-    maxObjectBytes = Math.max(maxObjectBytes, object.byteLength);
-  }
-  const totalBytes = Math.max(1,total);
-  return {maxObjectBytes,maxFileBytes:totalBytes,maxTotalBytes:totalBytes};
-};
-const verifyTextFiles = async (targetRoot: string, manifest: SnapshotManifest): Promise<readonly string[]> => {
-  const limits=textVerificationLimits(manifest); const verified:string[]=[];
-  for(const file of manifest.files){
-    const requirements=collectSnapshotObjectRequirements(manifest,[file.path]); const objects=[];
-    for(const object of requirements){const bytes=await readManagedBytes(targetRoot,object.path,false); if(bytes===undefined)throw new SourceSnapshotError('OBJECT_MISSING',{path:object.path}); objects.push({path:object.path,bytes});}
-    await readSnapshotText(manifest,objects,file.path,limits); verified.push(file.path);
-  }
-  return Object.freeze(verified);
-};
 const loadExistingSnapshot = async(targetRoot:string,snapshotId:string):Promise<SnapshotManifest|null>=>{try{return await loadStoredSourceSnapshotManifest(targetRoot,snapshotId);}catch(error){if(error instanceof SourceSnapshotError&&error.code==='SNAPSHOT_MISSING')return null;throw error;}};
 export const verifyPublishedSourceSnapshot = async(options:VerifyPublishedSourceSnapshotOptions):Promise<SourceSnapshotVerificationResult> => {
   const requestedLevel=options.level??'objects';
@@ -86,9 +68,13 @@ export const verifyPublishedSourceSnapshot = async(options:VerifyPublishedSource
   const layout=resolveStorageLayout(options); const owner=await readSourceSnapshotOwner(options.targetRoot,options.ownerId,layout); const requested=options.snapshotId;
   const snapshotId=requested??await readCurrentSourceSnapshotId(options.targetRoot,layout,true) as string; assertSnapshotId(snapshotId); const entryBefore=requested===undefined?snapshotId:null;
   const manifest=await loadStoredSourceSnapshotManifest(options.targetRoot,snapshotId); if(owner.projectId!==manifest.projectId)throw new SourceSnapshotError('TARGET_PROJECT_MISMATCH');
-  await Promise.all(manifest.objects.map(object=>verifyObject(options.targetRoot,object)));
   let verifiedLevel:'objects'|'text'='objects'; let verifiedPaths:readonly string[]=Object.freeze([]);
-  if(requestedLevel==='text'){verifiedPaths=await verifyTextFiles(options.targetRoot,manifest);verifiedLevel='text';}
+  if(requestedLevel==='text'){
+    verifiedPaths=await verifyPublishedSnapshotText(options.targetRoot,manifest);
+    verifiedLevel='text';
+  } else {
+    for (const object of manifest.objects) await verifyObject(options.targetRoot,object);
+  }
   if(requested===undefined){const entryAfter=await readCurrentSourceSnapshotId(options.targetRoot,layout,true); if(entryAfter!==entryBefore)throw new SourceSnapshotError('ENTRY_MISSING',{reason:'entry-changed'});}
   return Object.freeze({status:'LOCAL_VERIFIED',snapshotId,objectCount:manifest.objects.length,sourceFileCount:manifest.files.length,requestedLevel,verifiedLevel,verifiedFileCount:verifiedPaths.length,verifiedPaths});
 };
@@ -114,4 +100,164 @@ export const publishSourceSnapshot = async(bundle:SourceSnapshotBundle,options:P
     const snapshotResult=await writeImmutable(options.targetRoot,snapshotArtifacts,layout,'SNAPSHOT_COLLISION'); const level=verificationLevelForManifest(bundle.manifest); await verifyPublishedSourceSnapshot({...options,snapshotId:id,level}); const entryResult=await writeMutableSourceArtifacts(options.targetRoot,[entryArtifact],layout); await verifyPublishedSourceSnapshot({...options,level});
     return Object.freeze({status:'LOCAL_VERIFIED',snapshotId:id,objectCount:bundle.manifest.objects.length,sourceFileCount:bundle.manifest.files.length,writtenObjects:objectResult.written,reusedObjects:objectResult.unchanged,objectsReused:objectResult.unchanged,bytesWritten:objectResult.writtenBytes+snapshotResult.writtenBytes+entryResult.writtenBytes});
   }finally{await release();}
+};
+
+export interface PreparedSourceSnapshotBundle {
+  readonly manifest: SnapshotManifest;
+  readonly objects: readonly PreparedSourceTextObject[];
+}
+
+const PREPARED_OBJECT_BATCH_BYTES = 8 * 1024 * 1024;
+const preparedDecoder = new TextDecoder('utf-8', { fatal: true });
+const artifactSize = (artifact: { readonly path: string; readonly content: string }) => ({
+  path: artifact.path,
+  byteLength: publicationEncoder.encode(artifact.content).byteLength,
+});
+
+const validatePreparedSourceSnapshot = async (bundle: PreparedSourceSnapshotBundle): Promise<void> => {
+  const manifest = bundle.manifest;
+  const recreated = await createSnapshotManifest({
+    projectId: manifest.projectId,
+    policyVersion: manifest.policyVersion,
+    publishedAt: manifest.publishedAt,
+    repositories: manifest.repositories,
+    files: manifest.files,
+    objects: manifest.objects,
+  });
+  if (recreated.snapshotId !== manifest.snapshotId) throw new SourceSnapshotError('BUNDLE_MISMATCH');
+  const byPath = new Map<string, PreparedSourceTextObject>();
+  for (const object of bundle.objects) {
+    if (byPath.has(object.path)) throw new SourceSnapshotError('BUNDLE_MISMATCH', { path: object.path });
+    byPath.set(object.path, object);
+  }
+  if (byPath.size !== manifest.objects.length) throw new SourceSnapshotError('BUNDLE_MISMATCH', { field: 'objects' });
+  for (const object of manifest.objects) {
+    const prepared = byPath.get(object.path);
+    if (prepared === undefined || prepared.sha256 !== object.sha256 || prepared.byteLength !== object.byteLength) {
+      throw new SourceSnapshotError('BUNDLE_MISMATCH', { path: object.path });
+    }
+  }
+};
+
+const preparedArtifact = async (object: PreparedSourceTextObject): Promise<{ path: string; content: string }> => {
+  const bytes = await readFile(object.spoolPath);
+  const integrity = await calculateBytesIntegrity(bytes);
+  if (integrity.sha256 !== object.sha256 || integrity.byteLength !== object.byteLength) {
+    throw new SourceSnapshotError('OBJECT_INTEGRITY_MISMATCH', { path: object.path });
+  }
+  try {
+    return { path: object.path, content: preparedDecoder.decode(bytes) };
+  } catch {
+    throw new SourceSnapshotError('INVALID_TEXT_ENCODING', { path: object.path });
+  }
+};
+const writePreparedObjects = async (
+  targetRoot: string,
+  objects: readonly PreparedSourceTextObject[],
+  layout: ResolvedSourceSnapshotLayout,
+): Promise<{ written: number; unchanged: number; writtenBytes: number }> => {
+  let written = 0; let unchanged = 0; let writtenBytes = 0;
+  let batch: Array<{ path: string; content: string }> = [];
+  let batchBytes = 0;
+  const flush = async (): Promise<void> => {
+    if (batch.length === 0) return;
+    const result = await writeImmutable(targetRoot, batch, layout, 'OBJECT_IMMUTABLE_MISMATCH');
+    written += result.written;
+    unchanged += result.unchanged;
+    writtenBytes += result.writtenBytes;
+    batch = [];
+    batchBytes = 0;
+  };
+  for (const object of [...objects].sort((a, b) => a.path.localeCompare(b.path, 'en'))) {
+    if (batch.length > 0 && batchBytes + object.byteLength > PREPARED_OBJECT_BATCH_BYTES) await flush();
+    batch.push(await preparedArtifact(object));
+    batchBytes += object.byteLength;
+    if (batchBytes >= PREPARED_OBJECT_BATCH_BYTES) await flush();
+  }
+  await flush();
+  return { written, unchanged, writtenBytes };
+};
+
+export const publishPreparedSourceSnapshot = async (
+  bundle: PreparedSourceSnapshotBundle,
+  options: PublishSourceSnapshotOptions,
+): Promise<SourceSnapshotPublicationResult> => {
+  await validatePreparedSourceSnapshot(bundle);
+  await assertSourceTargetSeparation(options.sourceRoot, options.targetRoot);
+  const layout = resolveStorageLayout(options);
+  const release = await acquireSourceSnapshotLock(options.lockPath);
+  try {
+    const manifest = bundle.manifest;
+    await ensureOwner(options.targetRoot, options.ownerId, manifest.projectId, layout);
+    const current = await readCurrentSourceSnapshotId(options.targetRoot, layout, false);
+    let previous: SnapshotManifest | null = null;
+    if (current !== null) {
+      await verifyPublishedSourceSnapshot({ ...options, snapshotId: current, level: 'objects' });
+      previous = await loadStoredSourceSnapshotManifest(options.targetRoot, current);
+      if (current === manifest.snapshotId) {
+        return Object.freeze({
+          status: 'NO_CHANGES', snapshotId: current,
+          objectCount: manifest.objects.length, sourceFileCount: manifest.files.length,
+          writtenObjects: 0, reusedObjects: manifest.objects.length,
+          objectsReused: manifest.objects.length, bytesWritten: 0,
+        });
+      }
+    }
+    const id = manifest.snapshotId;
+    const existing = await loadExistingSnapshot(options.targetRoot, id);
+    if (existing !== null) {
+      const level = verificationLevelForManifest(existing);
+      await verifyPublishedSourceSnapshot({ ...options, snapshotId: id, level });
+      const entryArtifact = { path: layout.entryFile, content: renderEntry(existing) };
+      if (options.storeBudget !== undefined) {
+        assertProjectedSourceSnapshotStoreBudgetBySize(
+          await measureManagedSourceSnapshotStore(options.targetRoot, layout),
+          [artifactSize(entryArtifact)], options.storeBudget,
+        );
+      }
+      const entryResult = await writeMutableSourceArtifacts(options.targetRoot, [entryArtifact], layout);
+      await verifyPublishedSourceSnapshot({ ...options, level });
+      return Object.freeze({
+        status: 'LOCAL_VERIFIED', snapshotId: id,
+        objectCount: existing.objects.length, sourceFileCount: existing.files.length,
+        writtenObjects: 0, reusedObjects: existing.objects.length,
+        objectsReused: existing.objects.length, bytesWritten: entryResult.writtenBytes,
+        activation: 'reused',
+      });
+    }
+    const readIndex = buildSnapshotReadIndex(manifest);
+    const snapshotArtifacts = [
+      { path: snapshotPath(id, 'SNAPSHOT.json'), content: `${JSON.stringify(manifest, null, 2)}\n` },
+      { path: snapshotPath(id, 'READ-INDEX.json'), content: `${JSON.stringify(readIndex, null, 2)}\n` },
+      { path: snapshotPath(id, 'INDEX.md'), content: renderSnapshotReadIndexMarkdown(readIndex) },
+      { path: snapshotPath(id, 'CHANGES.json'), content: renderChanges(previous, manifest) },
+    ];
+    const entryArtifact = { path: layout.entryFile, content: renderEntry(manifest) };
+    if (options.storeBudget !== undefined) {
+      assertProjectedSourceSnapshotStoreBudgetBySize(
+        await measureManagedSourceSnapshotStore(options.targetRoot, layout),
+        [
+          ...bundle.objects.map(({ path, byteLength }) => ({ path, byteLength })),
+          ...snapshotArtifacts.map(artifactSize),
+          artifactSize(entryArtifact),
+        ],
+        options.storeBudget,
+      );
+    }
+    const objectResult = await writePreparedObjects(options.targetRoot, bundle.objects, layout);
+    const snapshotResult = await writeImmutable(options.targetRoot, snapshotArtifacts, layout, 'SNAPSHOT_COLLISION');
+    const level = verificationLevelForManifest(manifest);
+    await verifyPublishedSourceSnapshot({ ...options, snapshotId: id, level });
+    const entryResult = await writeMutableSourceArtifacts(options.targetRoot, [entryArtifact], layout);
+    await verifyPublishedSourceSnapshot({ ...options, level });
+    return Object.freeze({
+      status: 'LOCAL_VERIFIED', snapshotId: id,
+      objectCount: manifest.objects.length, sourceFileCount: manifest.files.length,
+      writtenObjects: objectResult.written, reusedObjects: objectResult.unchanged,
+      objectsReused: objectResult.unchanged,
+      bytesWritten: objectResult.writtenBytes + snapshotResult.writtenBytes + entryResult.writtenBytes,
+    });
+  } finally {
+    await release();
+  }
 };

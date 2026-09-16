@@ -34,6 +34,7 @@ export interface RenderedSourceTextObject {
 
 const encoder = new TextEncoder();
 const byteLength = (value: string): number => encoder.encode(value).byteLength;
+export const renderSourceTextObjectHeader = (group: string): string => `${['# Source Snapshot Object', '', `Group: ${group}`, ''].join('\n')}\n`;
 const fenceFor = (text: string): string => {
   let max = 0;
   for (const match of text.matchAll(/`+/gu)) max = Math.max(max, match[0].length);
@@ -61,7 +62,7 @@ const sectionMetadata = (segment: SourceTextObjectSectionInput): readonly string
     `- Normalized bytes: ${segment.normalizedByteLength}`,
   ];
 };
-const renderSection = (segment: SourceTextObjectSectionInput): { content: string; bodyOffset: number; bodyLength: number } => {
+export const renderSourceTextObjectSection = (segment: SourceTextObjectSectionInput): { content: string; bodyOffset: number; bodyLength: number; byteLength: number } => {
   const fence = fenceFor(segment.text);
   const prefix = [
     ...sectionMetadata(segment),
@@ -74,31 +75,29 @@ const renderSection = (segment: SourceTextObjectSectionInput): { content: string
   ].join('\n');
   const body = segment.text;
   const closingSeparator = body.endsWith('\n') || body.length === 0 ? '' : '\n';
-  return {
-    content: `${prefix}${body}${closingSeparator}${fence}\n`,
-    bodyOffset: byteLength(prefix),
-    bodyLength: byteLength(body),
-  };
+  const suffix = `${closingSeparator}${fence}\n`;
+  const bodyOffset = byteLength(prefix);
+  const bodyLength = byteLength(body);
+  const renderedByteLength = bodyOffset + bodyLength + byteLength(suffix);
+  return { content: `${prefix}${body}${suffix}`, bodyOffset, bodyLength, byteLength: renderedByteLength };
 };
+
+export const sourceTextObjectHeaderByteLength = (group: string): number => byteLength(renderSourceTextObjectHeader(group));
+export const sourceTextObjectSectionByteLength = (segment: SourceTextObjectSectionInput): number => renderSourceTextObjectSection(segment).byteLength;
 
 export const renderSourceTextObject = (
   group: string,
   segments: readonly SourceTextObjectSectionInput[],
 ): RenderedSourceTextObject => {
-  const header = ['# Source Snapshot Object', '', `Group: ${group}`, ''].join('\n');
-  let content = `${header}\n`;
+  let content = renderSourceTextObjectHeader(group);
   let currentBytes = byteLength(content);
   const locations: SourceTextObjectSectionLocation[] = [];
   segments.forEach((segment, index) => {
-    const rendered = renderSection(segment);
-    locations.push(Object.freeze({
-      bodyByteOffset: currentBytes + rendered.bodyOffset,
-      bodyByteLength: rendered.bodyLength,
-    }));
+    const rendered = renderSourceTextObjectSection(segment);
+    locations.push(Object.freeze({ bodyByteOffset: currentBytes + rendered.bodyOffset, bodyByteLength: rendered.bodyLength }));
     content += rendered.content;
-    if (index < segments.length - 1) content += '\n';
-    currentBytes = byteLength(content);
+    currentBytes += rendered.byteLength;
+    if (index < segments.length - 1) { content += '\n'; currentBytes += 1; }
   });
-
   return Object.freeze({ content, locations: Object.freeze(locations) });
 };

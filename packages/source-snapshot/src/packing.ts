@@ -14,10 +14,10 @@ import { planSourceTextContentDedup } from './content-dedup.js';
 import { SourceSnapshotError } from './errors.js';
 import { decodeSourceText } from './text.js';
 import { calculateNormalizedTextIntegrity, normalizeDecodedSourceText, SOURCE_TEXT_NORMALIZATION } from './text-integrity.js';
-import { renderSourceTextObject, type SourceTextObjectSectionInput } from './text-object-renderer.js';
+import { renderSourceTextObject, sourceTextObjectHeaderByteLength, sourceTextObjectSectionByteLength, type SourceTextObjectSectionInput } from './text-object-renderer.js';
 import { compareStrings, uniquePaths } from './validation.js';
 
-interface RawSegment {
+export interface RawSourceTextSegment {
   readonly file: StagedSourceTextFile;
   readonly contentKey: string;
   readonly startLine: number;
@@ -47,34 +47,38 @@ const splitLines = (text: string): readonly string[] => {
   if (start < text.length) result.push(text.slice(start));
   return result;
 };
-const lineCount = (text: string): number => splitLines(text).length;
+const lineCount = (text: string): number => {
+  if (text.length === 0) return 0;
+  let newlines = 0;
+  for (let index = 0; index < text.length; index += 1) if (text[index] === '\n') newlines += 1;
+  return text.endsWith('\n') ? newlines : newlines + 1;
+};
 const assertGroup = (group: string): string => {
   if (!/^[a-z0-9][a-z0-9._-]{0,127}$/u.test(group)) throw new SourceSnapshotError('INVALID_GROUP', { group });
   return group;
 };
 
-export const stageSourceTextFile = async (input: StageSourceTextFileInput): Promise<StagedSourceTextFile> => {
+const stageSourceTextBytes = async (input: StageSourceTextFileInput, bytes: Uint8Array): Promise<StagedSourceTextFile> => {
   try { validatePortableRelativePath(input.path); } catch { throw new SourceSnapshotError('INVALID_INPUT', { field: 'path' }); }
   const group = assertGroup(input.group);
-  if (!(input.bytes instanceof Uint8Array)) throw new SourceSnapshotError('INVALID_INPUT', { field: 'bytes' });
-  const bytes = Uint8Array.from(input.bytes);
   const decoded = decodeSourceText(bytes);
   const rawIntegrity = await calculateBytesIntegrity(bytes);
   const text = normalizeDecodedSourceText(decoded.text);
   const normalized = await calculateNormalizedTextIntegrity(text);
   return Object.freeze({
-    path: input.path,
-    group,
-    sha256: rawIntegrity.sha256,
-    byteLength: rawIntegrity.byteLength,
-    text,
-    encoding: decoded.encoding,
-    bom: decoded.bom,
-    lineCount: lineCount(text),
-    normalizedSha256: normalized.normalizedSha256,
-    normalizedByteLength: normalized.normalizedByteLength,
+    path: input.path, group, sha256: rawIntegrity.sha256, byteLength: rawIntegrity.byteLength, text,
+    encoding: decoded.encoding, bom: decoded.bom, lineCount: lineCount(text),
+    normalizedSha256: normalized.normalizedSha256, normalizedByteLength: normalized.normalizedByteLength,
     finalNewline: normalized.finalNewline,
   });
+};
+export const stageSourceTextFile = async (input: StageSourceTextFileInput): Promise<StagedSourceTextFile> => {
+  if (!(input.bytes instanceof Uint8Array)) throw new SourceSnapshotError('INVALID_INPUT', { field: 'bytes' });
+  return stageSourceTextBytes(input, Uint8Array.from(input.bytes));
+};
+export const stageOwnedSourceTextFile = async (input: StageSourceTextFileInput): Promise<StagedSourceTextFile> => {
+  if (!(input.bytes instanceof Uint8Array)) throw new SourceSnapshotError('INVALID_INPUT', { field: 'bytes' });
+  return stageSourceTextBytes(input, input.bytes);
 };
 
 const splitUtf8 = (text: string, maxBytes: number): readonly string[] => {
@@ -97,7 +101,7 @@ const splitUtf8 = (text: string, maxBytes: number): readonly string[] => {
   return result;
 };
 
-const splitFile = (file: StagedSourceTextFile, maxObjectBytes: number, contentKey: string): RawSegment[] => {
+export const splitSourceTextFile = (file: StagedSourceTextFile, maxObjectBytes: number, contentKey: string): RawSourceTextSegment[] => {
   const lines = splitLines(file.text);
   if (lines.length === 0) {
     return [{ file, contentKey, startLine: 0, endLine: 0, segmentIndex: 1, segmentCount: 1, sourceByteOffset: 0, text: '' }];
@@ -141,7 +145,7 @@ const splitFile = (file: StagedSourceTextFile, maxObjectBytes: number, contentKe
   });
 };
 
-const sectionInput = (segment: RawSegment): SourceTextObjectSectionInput => ({
+const sectionInput = (segment: RawSourceTextSegment): SourceTextObjectSectionInput => ({
   formatVersion: 1,
   path: segment.file.path,
   group: segment.file.group,
@@ -155,7 +159,7 @@ const sectionInput = (segment: RawSegment): SourceTextObjectSectionInput => ({
   segmentCount: segment.segmentCount,
   text: segment.text,
 });
-const contentBlockInput = (segment: RawSegment): SourceTextObjectSectionInput => ({
+const contentBlockInput = (segment: RawSourceTextSegment): SourceTextObjectSectionInput => ({
   formatVersion: 2,
   group: segment.file.group,
   sourceSha256: segment.file.sha256,
@@ -171,12 +175,12 @@ const contentBlockInput = (segment: RawSegment): SourceTextObjectSectionInput =>
   segmentCount: segment.segmentCount,
   text: segment.text,
 });
-const renderInputs = (segments: readonly RawSegment[], formatVersion: SourceTextFormatVersion) =>
-  segments.map(segment => formatVersion === 2 ? contentBlockInput(segment) : sectionInput(segment));
-const renderObject = (group: string, segments: readonly RawSegment[], formatVersion: SourceTextFormatVersion): string =>
-  renderSourceTextObject(group, renderInputs(segments, formatVersion)).content;
+export const sourceTextObjectInputForSegment = (segment: RawSourceTextSegment, formatVersion: SourceTextFormatVersion): SourceTextObjectSectionInput =>
+  formatVersion === 2 ? contentBlockInput(segment) : sectionInput(segment);
+const renderInputs = (segments: readonly RawSourceTextSegment[], formatVersion: SourceTextFormatVersion) =>
+  segments.map(segment => sourceTextObjectInputForSegment(segment, formatVersion));
 
-const validateOptions = (options: SourceTextPackOptions): SourceTextFormatVersion => {
+export const validateSourceTextPackOptions = (options: SourceTextPackOptions): SourceTextFormatVersion => {
   for (const field of ['targetObjectBytes', 'maxObjectBytes', 'maxObjectCount', 'maxObjectBytesTotal'] as const) {
     const value = options[field];
     if (!Number.isSafeInteger(value) || value < 0) throw new SourceSnapshotError('INVALID_INPUT', { field });
@@ -191,7 +195,7 @@ const validateOptions = (options: SourceTextPackOptions): SourceTextFormatVersio
 
 const finalizeObject = async (
   group: string,
-  segments: readonly RawSegment[],
+  segments: readonly RawSourceTextSegment[],
   maxObjectBytes: number,
   formatVersion: SourceTextFormatVersion,
 ): Promise<PackedSourceTextObject> => {
@@ -218,34 +222,37 @@ export const buildSourceTextPackage = async (
   input: readonly StagedSourceTextFile[],
   options: SourceTextPackOptions,
 ): Promise<SourceTextPackage> => {
-  const formatVersion = validateOptions(options);
+  const formatVersion = validateSourceTextPackOptions(options);
   uniquePaths(input.map(value => value.path));
   const files = [...input].sort((a, b) => compareStrings(a.path, b.path));
   const dedup = planSourceTextContentDedup(files, formatVersion);
   const raw = dedup.blocks
-    .flatMap(block => splitFile(block.file, options.maxObjectBytes, block.key))
+    .flatMap(block => splitSourceTextFile(block.file, options.maxObjectBytes, block.key))
     .sort((a, b) => compareStrings(a.file.group, b.file.group) || compareStrings(a.contentKey, b.contentKey) || a.segmentIndex - b.segmentIndex);
-  const groups = new Map<string, RawSegment[]>();
+  const groups = new Map<string, RawSourceTextSegment[]>();
+  const segmentsByContentKey = new Map<string, RawSourceTextSegment[]>();
   for (const segment of raw) {
-    const values = groups.get(segment.file.group) ?? [];
-    values.push(segment);
-    groups.set(segment.file.group, values);
+    const groupValues = groups.get(segment.file.group) ?? [];
+    groupValues.push(segment);
+    groups.set(segment.file.group, groupValues);
+    const contentValues = segmentsByContentKey.get(segment.contentKey) ?? [];
+    contentValues.push(segment);
+    segmentsByContentKey.set(segment.contentKey, contentValues);
   }
 
   const objects: PackedSourceTextObject[] = [];
   for (const [group, segments] of [...groups.entries()].sort(([a], [b]) => compareStrings(a, b))) {
-    let current: RawSegment[] = [];
+    const headerByteLength = sourceTextObjectHeaderByteLength(group);
+    let current: RawSourceTextSegment[] = [];
+    let currentByteLength = headerByteLength;
     for (const segment of segments) {
-      const candidate = [...current, segment];
-      if (current.length > 0 && byteLength(renderObject(group, candidate, formatVersion)) > options.targetObjectBytes) {
+      const sectionByteLength = sourceTextObjectSectionByteLength(sourceTextObjectInputForSegment(segment, formatVersion));
+      const candidateByteLength = currentByteLength + (current.length > 0 ? 1 : 0) + sectionByteLength;
+      if (current.length > 0 && candidateByteLength > options.targetObjectBytes) {
         objects.push(await finalizeObject(group, current, options.maxObjectBytes, formatVersion));
-        current = [segment];
-      } else {
-        current = candidate;
-      }
-      if (byteLength(renderObject(group, current, formatVersion)) > options.maxObjectBytes) {
-        throw new SourceSnapshotError('PACK_OBJECT_TOO_LARGE', { path: segment.file.path });
-      }
+        current = [segment]; currentByteLength = headerByteLength + sectionByteLength;
+      } else { current.push(segment); currentByteLength = candidateByteLength; }
+      if (currentByteLength > options.maxObjectBytes) throw new SourceSnapshotError('PACK_OBJECT_TOO_LARGE', { path: segment.file.path });
     }
     if (current.length > 0) objects.push(await finalizeObject(group, current, options.maxObjectBytes, formatVersion));
   }
@@ -258,7 +265,7 @@ export const buildSourceTextPackage = async (
   const packedFiles: PackedSourceTextFile[] = files.map(file => {
     const contentKey = dedup.blockKeyByPath.get(file.path);
     if (contentKey === undefined) throw new SourceSnapshotError('COVERAGE_INVALID', { path: file.path });
-    const segments = raw.filter(value => value.contentKey === contentKey).map(value => {
+    const segments = (segmentsByContentKey.get(contentKey) ?? []).map(value => {
       if (value.objectPath === undefined || value.objectSha256 === undefined) {
         throw new SourceSnapshotError('COVERAGE_INVALID', { path: file.path });
       }
@@ -344,12 +351,15 @@ const assertCoverage = (
   return segments;
 };
 
+export const reconstructPackedSourceText = (file: PackedSourceTextFile, objects: ReadonlyMap<string, PackedSourceTextObject>): string => {
+  const segments = assertCoverage(file, objects);
+  const text = segments.map(segment => segment.text).join('');
+  if (lineCount(text) !== file.lineCount) throw new SourceSnapshotError('COVERAGE_INVALID', { path: file.path });
+  return text;
+};
+
 export const reconstructSourceText = (value: SourceTextPackage, path: string): string => {
   const file = value.files.find(candidate => candidate.path === path);
   if (file === undefined) throw new SourceSnapshotError('FILE_NOT_PACKED', { path });
-  const objects = new Map(value.objects.map(object => [object.path, object]));
-  const segments = assertCoverage(file, objects);
-  const text = segments.map(segment => segment.text).join('');
-  if (lineCount(text) !== file.lineCount) throw new SourceSnapshotError('COVERAGE_INVALID', { path });
-  return text;
+  return reconstructPackedSourceText(file, new Map(value.objects.map(object => [object.path, object])));
 };
