@@ -44,6 +44,27 @@ forge-source-snapshot unpack --target-root <store> --owner-id <owner> --output <
 
 The configuration supplies project identity, source/target/state paths, classification policy, packing budgets, managed-store publication budgets, grouping, storage layout and retention settings. CLI `plan`/`export` use the Node prepared-spool pipeline so repository size does not require all decoded source and packed object bodies to remain resident in the V8 heap. The runtime-neutral in-memory packing API remains available for callers that already own bounded inputs. The package does not embed repository-specific names or storage-provider settings.
 
+## Reading catalogs, coverage and provenance
+
+The root entry exports `buildSnapshotReadCatalog`, `resolveSnapshotCatalog`, `verifySnapshotReadCatalog`, `readSnapshotCatalogText`, the coverage builder/resolver/verifier, and the provenance builder/verifier. The Node entry additionally exports `buildSnapshotCoverageFromPlan`, `buildSnapshotProvenanceFromPlan` and `prepareSnapshotWithProvenance`.
+
+```ts
+import { buildSnapshotReadCatalog, verifySnapshotReadCatalog } from '@openge/forge-source-snapshot';
+const catalog = await buildSnapshotReadCatalog(manifest, { profile });
+await verifySnapshotReadCatalog(manifest, catalog);
+const pinnedDigest = catalog.root.sha256;
+```
+
+The caller supplies `manifest` and optional `profile`. Publish the returned artifacts to an explicitly managed reading root after pinning the source snapshot. Store the verified root digest through a trusted channel. The catalog root is at most 64 KiB and each shard is at most 256 KiB. Limits include UTF-8 framing; an unsplittable oversized record is rejected rather than truncated. Existing source objects and legacy indexes remain unchanged.
+
+For a cold read, load `CATALOG.json` and call `resolveSnapshotCatalog(root, pinnedDigest, { kind: "path", path }, suppliedShards)`. A `needs-artifact` result identifies the next shard to obtain. Once found, fetch only the declared source objects and call `readSnapshotCatalogText(root, pinnedDigest, path, suppliedShards, objectBytes, limits)`. This API does not accept or load the full manifest. Its `maxTotalBytes` includes the verified catalog/shard bytes plus required source-object bytes. The result explicitly reports `sourceBinding: "caller-pinned-catalog"`.
+
+An internally consistent hash does not establish trustworthy provenance: the initial full manifest/catalog comparison and trusted root pin are prerequisites. Object and normalized-text hashes are verified on the cold path; provider listing, credential, transport and retry behavior remain caller responsibilities. A missing shard is not an absent source file, and a path absent from the snapshot has unknown existence in the original repository.
+
+Coverage is observation-only. Physical inclusion and preferred/reference reading priority are independent; reference files may retain complete text. Excluded or metadata-only entries cannot be promised on-demand text. Manifest-only historical snapshots keep unknown discovery and capture facts unknown. Provenance producer labels are caller declarations, not signatures, and `bodyVerification: "not-performed"` never becomes a body-verification receipt.
+
+`prepareSnapshotWithProvenance` derives the catalog, coverage and source-state sidecar from one frozen capture. It does not promise a cross-repository atomic instant. Consumers must still enforce the publication freeze check, ownership/lock protocol, and source pins, then verify and switch their own reading entry. Release a source pin only after its last reading view is removed. The existing CLI commands remain compatible; these APIs provide the explicit reading-layer integration.
+
 ## Safety boundary
 
 Publication writes immutable content objects and snapshot metadata before switching the current entry. Publication results distinguish physical `bytesWritten` and `objectsReused`; v2 alias add/remove does not change a shared content-block identity. Existing foreign targets, live locks, source/target overlap, submodule drift, secret findings, unknown review entries, source changes during planning, unsafe managed paths, integrity mismatches and managed-store budget violations fail closed. Submodule HEAD drift is strict by default; consumers that intentionally snapshot an aggregate development workspace may set `submoduleHeadPolicy: 'allow-checked-out'`, in which case the actual checked-out HEAD remains snapshot identity and a differing parent gitlink is retained as `parentGitlink` provenance in the manifest. Existing canonical snapshots can be reactivated without rewriting their immutable metadata.
