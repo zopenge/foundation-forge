@@ -39,14 +39,14 @@
     "release": "pnpm run check && node ./scripts/publish-if-needed.mjs"
   },
   "devDependencies": {
-    "@changesets/cli": "3.0.1",
+    "@changesets/cli": "3.0.2",
     "@eslint/js": "10.0.1",
-    "@types/node": "20.19.43",
+    "@types/node": "26.5.1",
     "@types/ws": "8.18.1",
-    "@vitest/coverage-v8": "4.1.9",
-    "eslint": "10.0.1",
-    "typescript": "6.0.3",
-    "typescript-eslint": "8.61.1",
-    "vitest": "4.1.9"
+    "@vitest/coverage-v8": "5.0.0",
+    "eslint": "10.10.0",
+    "typescript": "7.0.2",
+    "typescript-eslint": "8.70.0",
+    "vitest": "5.0.0"
   }
 }
