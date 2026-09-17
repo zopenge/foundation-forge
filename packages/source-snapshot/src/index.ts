@@ -14,3 +14,6 @@ export { collectSnapshotObjectRequirements, readSnapshotText } from './text-read
 export type * from './read-index.js';
 export { buildSnapshotReadIndex, buildSnapshotReadView, buildSnapshotReadProfileView } from './read-index.js';
 export { validateSnapshotRelations, validateSnapshotEvidence } from './analysis-metadata.js';
+export * from './read-catalog.js';
+export * from './snapshot-coverage.js';
+export * from './snapshot-provenance.js';

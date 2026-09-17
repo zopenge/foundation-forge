@@ -1,10 +1,11 @@
 import type { SnapshotManifest, SnapshotObject } from './contracts.js';
 import { validatePortableRelativePath } from '@openge/forge-path-safety';
-import type { SnapshotReadProfile, SourceTextLocatorV2 } from './content-contracts.js';
+import type { SnapshotReadProfile, SourceTextDetails, SourceTextLocatorV2 } from './content-contracts.js';
 import { SourceSnapshotError } from './errors.js';
-import { parseSourceTextDetails } from './text-format.js';
-import { collectSnapshotObjectRequirements } from './text-reader.js';
+import { collectReadContextRequirements, createSnapshotReadContext, readContextSourceDetails, requireSnapshotReadFile } from './read-context.js';
+import type { SnapshotReadContext } from './read-context.js';
 import { compareStrings } from './validation.js';
+import { readIndexLines } from './read-index-render.js';
 
 export type SnapshotReadAssurance = 'normalized-text-verified' | 'object-integrity';
 export interface SnapshotReadIndexFile {
@@ -14,6 +15,7 @@ export interface SnapshotReadIndexFile {
   readonly sourceLineCount: number;
   readonly group: string;
   readonly formatVersion: 1 | 2;
+  /** 历史格式能力声明；只有 Reader 返回值才证明本次正文验证已经执行。 */
   readonly assurance: SnapshotReadAssurance;
   readonly normalizedSha256?: string;
   readonly normalizedByteLength?: number;
@@ -61,11 +63,10 @@ const requireViewId = (value: string): void => {
 const freezeRequirements = (value: readonly SnapshotObject[]): readonly SnapshotObject[] =>
   Object.freeze(value.map(object => Object.freeze({ ...object })));
 
-const indexFile = (manifest: SnapshotManifest, path: string): SnapshotReadIndexFile => {
-  const file = manifest.files.find(candidate => candidate.path === path);
-  if (file === undefined) throw new SourceSnapshotError('FILE_NOT_PACKED', { path });
-  const details = parseSourceTextDetails(file.details);
-  const requirements = freezeRequirements(collectSnapshotObjectRequirements(manifest, [path]));
+const indexFile = (context: SnapshotReadContext, path: string, validated?: SourceTextDetails): SnapshotReadIndexFile => {
+  const file = requireSnapshotReadFile(context, path);
+  const details = validated ?? readContextSourceDetails(context, file);
+  const requirements = freezeRequirements(collectReadContextRequirements(context, [path]));
   if (details.formatVersion === 1) {
     return Object.freeze({
       path, sourceSha256: file.sha256, sourceByteLength: file.byteLength, sourceLineCount: details.lineCount,
@@ -74,13 +75,6 @@ const indexFile = (manifest: SnapshotManifest, path: string): SnapshotReadIndexF
     });
   }
 
-  const requirementByPath = new Map(requirements.map(object => [object.path, object]));
-  for (const locator of details.segments) {
-    const object = requirementByPath.get(locator.objectPath);
-    if (object === undefined || object.sha256 !== locator.objectSha256) {
-      throw new SourceSnapshotError('TEXT_DETAILS_INVALID', { path, field: 'locator.object' });
-    }
-  }
   return Object.freeze({
     path,
     sourceSha256: file.sha256,
@@ -97,10 +91,11 @@ const indexFile = (manifest: SnapshotManifest, path: string): SnapshotReadIndexF
 };
 
 export const buildSnapshotReadIndex = (manifest: SnapshotManifest): SnapshotReadIndex => {
+  const context = createSnapshotReadContext(manifest);
   const files = Object.freeze(
     [...manifest.files]
       .sort((a, b) => compareStrings(a.path, b.path))
-      .map(file => indexFile(manifest, file.path)),
+      .map(file => indexFile(context, file.path)),
   );
   const sourceLines = files.reduce((sum, file) => sum + file.sourceLineCount, 0);
   const uniqueObjects = new Map<string, SnapshotObject>();
@@ -113,20 +108,29 @@ export const buildSnapshotReadIndex = (manifest: SnapshotManifest): SnapshotRead
     metrics: { sourceLines, objectBytes, renderingLines: 0 },
     files,
   };
-  const renderingLines = renderSnapshotReadIndexMarkdown(draft).split('\n').length - 1;
+  let renderingLines = 0;
+  for (const line of readIndexLines(draft)) {
+    renderingLines += 1;
+    for (const char of line) if (char === '\n') renderingLines += 1;
+  }
   return Object.freeze({ ...draft, metrics: Object.freeze({ sourceLines, objectBytes, renderingLines }) });
 };
 
-export const buildSnapshotReadView = (
+const selectIndexFiles = (manifest: SnapshotManifest, paths: readonly string[]): ReadonlyMap<string, SnapshotReadIndexFile> => {
+  const context = createSnapshotReadContext(manifest);
+  const selected = new Set(paths);
+  const byPath = new Map<string, SnapshotReadIndexFile>();
+  for (const file of [...manifest.files].sort((a, b) => compareStrings(a.path, b.path))) {
+    const details = readContextSourceDetails(context, file);
+    if (selected.has(file.path)) byPath.set(file.path, indexFile(context, file.path, details));
+  }
+  return byPath;
+};
+const projectReadView = (
   manifest: SnapshotManifest,
   input: SnapshotReadViewInput,
+  byPath: ReadonlyMap<string, SnapshotReadIndexFile>,
 ): SnapshotReadView => {
-  requireViewId(input.viewId);
-  if (input.snapshotId !== manifest.snapshotId) {
-    throw new SourceSnapshotError('SNAPSHOT_ID_MISMATCH', { snapshotId: input.snapshotId });
-  }
-  const index = buildSnapshotReadIndex(manifest);
-  const byPath = new Map(index.files.map(file => [file.path, file]));
   const found: string[] = [];
   const missing: string[] = [];
   const unsupported: string[] = [];
@@ -146,6 +150,11 @@ export const buildSnapshotReadView = (
     files: Object.freeze(files),
   });
 };
+export const buildSnapshotReadView = (manifest: SnapshotManifest, input: SnapshotReadViewInput): SnapshotReadView => {
+  requireViewId(input.viewId);
+  if (input.snapshotId !== manifest.snapshotId) throw new SourceSnapshotError('SNAPSHOT_ID_MISMATCH', { snapshotId: input.snapshotId });
+  return projectReadView(manifest, input, selectIndexFiles(manifest, input.paths));
+};
 export const buildSnapshotReadProfileView = (
   manifest: SnapshotManifest,
   profile: SnapshotReadProfile,
@@ -159,37 +168,12 @@ export const buildSnapshotReadProfileView = (
     counts.set(path, (counts.get(path) ?? 0) + 1);
   }
   const duplicatePaths = Object.freeze([...counts.entries()].filter(([, count]) => count > 1).map(([path]) => path).sort(compareStrings));
+  const byPath = selectIndexFiles(manifest, declared);
   return Object.freeze({
     profileId: profile.profileId, snapshotId: manifest.snapshotId, duplicatePaths,
-    preferred: buildSnapshotReadView(manifest, { viewId: `${profile.profileId}:preferred`, snapshotId: manifest.snapshotId, paths: profile.preferredPaths }),
-    reference: buildSnapshotReadView(manifest, { viewId: `${profile.profileId}:reference`, snapshotId: manifest.snapshotId, paths: profile.referencePaths }),
+    preferred: projectReadView(manifest, { viewId: `${profile.profileId}:preferred`, snapshotId: manifest.snapshotId, paths: profile.preferredPaths }, byPath),
+    reference: projectReadView(manifest, { viewId: `${profile.profileId}:reference`, snapshotId: manifest.snapshotId, paths: profile.referencePaths }, byPath),
   });
 };
 
-export const renderSnapshotReadIndexMarkdown = (index: SnapshotReadIndex): string => {
-  const lines = [
-    '# Source Snapshot', '',
-    `- Snapshot ID: \`${index.snapshotId}\``,
-    `- Source files: ${index.fileCount}`, '',
-    '## Files', '',
-  ];
-  for (const file of index.files) {
-    lines.push(`### \`${file.path}\``);
-    lines.push('');
-    lines.push(`- Assurance: \`${file.assurance}\``);
-    lines.push(`- Format: v${file.formatVersion}`);
-    lines.push(`- Source SHA-256: \`${file.sourceSha256}\``);
-    for (const object of file.objectRequirements) {
-      lines.push(`- Object: \`${object.path}\` (${object.byteLength} bytes)`);
-    }
-    for (const locator of file.locators) {
-      lines.push(
-        `- Segment ${locator.segmentIndex}/${locator.segmentCount}: ` +
-        `\`${locator.objectPath}\` body ${locator.bodyByteOffset}+${locator.bodyByteLength}; ` +
-        `source lines ${locator.startLine}-${locator.endLine}`,
-      );
-    }
-    lines.push('');
-  }
-  return `${lines.join('\n')}\n`;
-};
+export const renderSnapshotReadIndexMarkdown = (index: SnapshotReadIndex): string => `${[...readIndexLines(index)].join('\n')}\n`;

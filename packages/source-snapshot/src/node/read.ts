@@ -2,9 +2,12 @@ import { lstat, mkdir, readdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { resolvePathWithinRoot } from '@openge/forge-path-safety/node';
 import type { SnapshotManifest } from '../contracts.js';
-import type { SnapshotReadLimits, SnapshotTextReadResult } from '../content-contracts.js';
+import type { SnapshotObjectBytes, SnapshotReadLimits, SnapshotTextReadResult } from '../content-contracts.js';
+import { parseSourceTextDetails } from '../text-format.js';
+import { createSnapshotReadContext, requireSnapshotReadFile, collectReadContextRequirements } from '../read-context.js';
+import { assertSnapshotObjectBudget, failSnapshotReadLimit, validateSnapshotReadLimits } from '../read-budget.js';
 import { SourceSnapshotError } from '../errors.js';
-import { collectSnapshotObjectRequirements, readSnapshotText } from '../text-reader.js';
+import { readSnapshotText } from '../text-reader.js';
 import type {
   ReadPublishedSourceSnapshotTextOptions,
   SourceSnapshotUnpackResult,
@@ -43,14 +46,28 @@ const loadAuthorizedManifest = async (
 export const readPublishedSourceSnapshotText = async (
   options: ReadPublishedSourceSnapshotTextOptions,
 ): Promise<SnapshotTextReadResult> => {
+  const limits = effectiveLimits(options.limits);
+  validateSnapshotReadLimits(limits);
   const manifest = await loadAuthorizedManifest(options);
-  const requirements = collectSnapshotObjectRequirements(manifest, [options.path]);
-  const objects = await Promise.all(requirements.map(async object => {
-    const bytes = await readManagedBytes(options.targetRoot, object.path, false);
+  const context = createSnapshotReadContext(manifest);
+  const details = parseSourceTextDetails(requireSnapshotReadFile(context, options.path).details);
+  if (details.formatVersion !== 2) throw new SourceSnapshotError('TEXT_FORMAT_UNSUPPORTED', { path: options.path, availableAssurance: 'object-integrity' });
+  if (details.normalizedByteLength > limits.maxFileBytes) failSnapshotReadLimit('maxFileBytes');
+  const requirements = collectReadContextRequirements(context, [options.path]);
+  assertSnapshotObjectBudget(requirements, limits);
+  const objects: SnapshotObjectBytes[] = [];
+  let remaining = limits.maxTotalBytes;
+  for (const object of requirements) {
+    const bytes = await readManagedBytes(options.targetRoot, object.path, false, {
+      maxBytes: Math.min(limits.maxObjectBytes, remaining),
+      field: remaining < limits.maxObjectBytes ? 'maxTotalBytes' : 'maxObjectBytes',
+    });
     if (bytes === undefined) throw new SourceSnapshotError('OBJECT_MISSING', { path: object.path });
-    return { path: object.path, bytes };
-  }));
-  return readSnapshotText(manifest, objects, options.path, effectiveLimits(options.limits));
+    if (bytes.byteLength !== object.byteLength) throw new SourceSnapshotError('OBJECT_INTEGRITY_MISMATCH', { path: object.path });
+    remaining -= bytes.byteLength;
+    objects.push({ path: object.path, bytes });
+  }
+  return readSnapshotText(manifest, objects, options.path, limits);
 };
 
 const ensureEmptyOutputRoot = async (outputRoot: string): Promise<void> => {

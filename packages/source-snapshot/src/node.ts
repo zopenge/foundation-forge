@@ -9,3 +9,6 @@ export { prepareRepositorySnapshot } from './node/prepared-pipeline.js';
 export type { PrepareRepositorySnapshotOptions, PreparedRepositorySnapshot, PreparedRepositorySnapshotPlan } from './node/prepared-pipeline.js';
 export { readPublishedSourceSnapshotText, unpackPublishedSourceSnapshot, DEFAULT_SNAPSHOT_READ_LIMITS } from './node/read.js';
 export { runSourceSnapshotCli } from './node/cli-runner.js';
+export { buildSnapshotCoverageFromPlan } from './node/snapshot-coverage.js';
+export type { CoverageCaptureOptions } from './node/snapshot-coverage.js';
+export * from './node/snapshot-provenance.js';

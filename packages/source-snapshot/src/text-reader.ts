@@ -10,7 +10,9 @@ import { SourceSnapshotError } from './errors.js';
 import { createSnapshotManifest } from './manifest.js';
 import { parseSourceTextDetails } from './text-format.js';
 import { calculateNormalizedTextIntegrity } from './text-integrity.js';
-import { compareStrings } from './validation.js';
+import { collectReadContextRequirements, createSnapshotReadContext, requireSnapshotReadFile } from './read-context.js';
+import type { SnapshotReadContext } from './read-context.js';
+import { copySnapshotReadObjects, failSnapshotReadLimit as failLimit, validateSnapshotReadLimits as validateLimits } from './read-budget.js';
 
 const decoder = new TextDecoder('utf-8', { fatal: true });
 const lineCount = (text: string): number => {
@@ -18,15 +20,6 @@ const lineCount = (text: string): number => {
   let count = 0;
   for (const char of text) if (char === '\n') count += 1;
   return text.endsWith('\n') ? count : count + 1;
-};
-const failLimit = (field: keyof SnapshotReadLimits): never => {
-  throw new SourceSnapshotError('TEXT_READ_LIMIT_EXCEEDED', { field });
-};
-const validateLimits = (limits: SnapshotReadLimits): void => {
-  for (const field of ['maxObjectBytes', 'maxFileBytes', 'maxTotalBytes'] as const) {
-    const value = limits[field];
-    if (!Number.isSafeInteger(value) || value <= 0) throw new SourceSnapshotError('INVALID_INPUT', { field });
-  }
 };
 const assertManifestIdentity = async (manifest: SnapshotManifest): Promise<void> => {
   const recreated = await createSnapshotManifest({
@@ -42,39 +35,13 @@ const assertManifestIdentity = async (manifest: SnapshotManifest): Promise<void>
   }
 };
 
-const fileForPath = (manifest: SnapshotManifest, path: string) => {
-  const file = manifest.files.find(candidate => candidate.path === path);
-  if (file === undefined) throw new SourceSnapshotError('FILE_NOT_PACKED', { path });
-  return file;
-};
-
-const objectMap = (manifest: SnapshotManifest): ReadonlyMap<string, SnapshotObject> => {
-  const map = new Map<string, SnapshotObject>();
-  for (const object of manifest.objects) {
-    if (map.has(object.path)) throw new SourceSnapshotError('OBJECT_CONFLICT', { path: object.path });
-    map.set(object.path, object);
-  }
-  return map;
-};
-
 export const collectSnapshotObjectRequirements = (
   manifest: SnapshotManifest,
   paths: readonly string[],
-): readonly SnapshotObject[] => {  const objects = objectMap(manifest);
-  const required = new Map<string, SnapshotObject>();
-  for (const path of paths) {
-    const file = fileForPath(manifest, path);
-    for (const objectPath of file.objectPaths) {
-      const object = objects.get(objectPath);
-      if (object === undefined) throw new SourceSnapshotError('DANGLING_OBJECT', { path: objectPath });
-      required.set(object.path, object);
-    }
-  }
-  return Object.freeze([...required.values()].sort((a, b) => compareStrings(a.path, b.path)));
-};
+): readonly SnapshotObject[] => collectReadContextRequirements(createSnapshotReadContext(manifest), paths);
 
-const parseV2 = (manifest: SnapshotManifest, path: string): SourceTextDetailsV2 => {
-  const details = parseSourceTextDetails(fileForPath(manifest, path).details);
+const parseV2 = (context: SnapshotReadContext, path: string): SourceTextDetailsV2 => {
+  const details = parseSourceTextDetails(requireSnapshotReadFile(context, path).details);
   if (details.formatVersion !== 2) {
     throw new SourceSnapshotError('TEXT_FORMAT_UNSUPPORTED', {
       path,
@@ -84,29 +51,12 @@ const parseV2 = (manifest: SnapshotManifest, path: string): SourceTextDetailsV2 
   return details;
 };
 
-const providedObjectMap = (objects: readonly SnapshotObjectBytes[]): ReadonlyMap<string, Uint8Array> => {
-  const result = new Map<string, Uint8Array>();
-  for (const object of objects) {
-    if (result.has(object.path)) throw new SourceSnapshotError('OBJECT_CONFLICT', { path: object.path });
-    result.set(object.path, Uint8Array.from(object.bytes));
-  }
-  return result;
-};
 const verifyRequiredObjects = async (
   requirements: readonly SnapshotObject[],
   provided: ReadonlyMap<string, Uint8Array>,
-  limits: SnapshotReadLimits,
 ): Promise<ReadonlyMap<string, Uint8Array>> => {
-  const requiredPaths = new Set(requirements.map(requirement => requirement.path));
-  for (const path of provided.keys()) {
-    if (!requiredPaths.has(path)) throw new SourceSnapshotError('OBJECT_CONFLICT', { path, reason: 'unexpected-object' });
-  }
-  let total = 0;
   const verified = new Map<string, Uint8Array>();
   for (const requirement of requirements) {
-    if (requirement.byteLength > limits.maxObjectBytes) failLimit('maxObjectBytes');
-    total += requirement.byteLength;
-    if (total > limits.maxTotalBytes) failLimit('maxTotalBytes');
     const bytes = provided.get(requirement.path);
     if (bytes === undefined) throw new SourceSnapshotError('OBJECT_MISSING', { path: requirement.path });
     const integrity = await calculateBytesIntegrity(bytes);
@@ -136,11 +86,12 @@ export const readSnapshotText = async (
 ): Promise<SnapshotTextReadResult> => {
   validateLimits(limits);
   await assertManifestIdentity(manifest);
-  const file = fileForPath(manifest, path);
-  const details = parseV2(manifest, path);
+  const context = createSnapshotReadContext(manifest);
+  const file = requireSnapshotReadFile(context, path);
+  const details = parseV2(context, path);
   if (details.normalizedByteLength > limits.maxFileBytes) failLimit('maxFileBytes');
-  const requirements = collectSnapshotObjectRequirements(manifest, [path]);
-  const verified = await verifyRequiredObjects(requirements, providedObjectMap(objects), limits);
+  const requirements = collectReadContextRequirements(context, [path]);
+  const verified = await verifyRequiredObjects(requirements, copySnapshotReadObjects(requirements, objects, limits));
   const locators = [...details.segments].sort((a, b) => a.segmentIndex - b.segmentIndex);
   if (locators.length !== details.segments.length || locators.length !== (locators[0]?.segmentCount ?? 0)) {
     throw new SourceSnapshotError('TEXT_DETAILS_INVALID', { path, field: 'segments' });
@@ -158,7 +109,7 @@ export const readSnapshotText = async (
     }
     const object = verified.get(locator.objectPath);
     if (object === undefined) throw new SourceSnapshotError('OBJECT_MISSING', { path: locator.objectPath });
-    const declared = manifest.objects.find(value => value.path === locator.objectPath);
+    const declared = context.objectByPath.get(locator.objectPath);
     if (declared?.sha256 !== locator.objectSha256) {
       throw new SourceSnapshotError('TEXT_DETAILS_INVALID', { path, field: 'objectSha256' });
     }
