@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { parse } from 'yaml';
 
 import { discoverWorkspacePackageModel } from '../workspace-packages.mjs';
 
@@ -19,6 +20,88 @@ const dataDrivenScriptUrls = [
   new URL('../verify-prerelease-versions.mjs', import.meta.url),
   new URL('../workspace-packages.mjs', import.meta.url),
 ];
+
+async function readWorkflow(url) {
+  return parse(await readFile(url, 'utf8'));
+}
+
+function releaseSteps(workflow) {
+  return workflow.jobs.release.steps;
+}
+
+test('uses a repository-scoped release App token for every Changesets write', async () => {
+  const [workflow, source] = await Promise.all([
+    readWorkflow(releaseWorkflowUrl),
+    readFile(releaseWorkflowUrl, 'utf8'),
+  ]);
+  const steps = releaseSteps(workflow);
+  const checkoutStep = steps.find((step) => step.uses === 'actions/checkout@v6');
+  const preflight = steps.find((step) => step.id === 'validate-release-app');
+  const tokenStep = steps.find((step) => step.uses === 'actions/create-github-app-token@v3');
+  const changesetsStep = steps.find((step) => step.uses === 'changesets/action@v2');
+
+  assert.ok(tokenStep, 'release workflow must create an installation token');
+  assert.equal(tokenStep.id, 'release-app-token');
+  assert.equal(tokenStep.if, "github.event_name == 'push'");
+  assert.deepEqual(tokenStep.with, {
+    'client-id': '${{ vars.RELEASE_APP_CLIENT_ID }}',
+    'private-key': '${{ secrets.RELEASE_APP_PRIVATE_KEY }}',
+    repositories: '${{ github.event.repository.name }}',
+    'permission-contents': 'write',
+    'permission-pull-requests': 'write',
+  });
+  assert.equal(changesetsStep.if, tokenStep.if);
+  assert.equal(changesetsStep.with['github-token'], '${{ steps.release-app-token.outputs.token }}');
+  assert.equal(changesetsStep.with['push-with-git-cli'], undefined);
+  assert.equal(checkoutStep.with.token, undefined);
+  assert.ok(steps.indexOf(preflight) < steps.indexOf(tokenStep));
+  assert.ok(steps.indexOf(tokenStep) < steps.indexOf(changesetsStep));
+  assert.notEqual(changesetsStep.with['github-token'], '${{ secrets.GITHUB_TOKEN }}');
+  assert.doesNotMatch(source, /secrets\.GITHUB_TOKEN/u);
+});
+
+test('fails closed when release App configuration is absent', async () => {
+  const workflow = await readWorkflow(releaseWorkflowUrl);
+  const steps = releaseSteps(workflow);
+  const preflight = steps.find((step) => step.id === 'validate-release-app');
+  const tokenStep = steps.find((step) => step.id === 'release-app-token');
+
+  assert.ok(preflight, 'release workflow must validate App configuration');
+  assert.equal(preflight.if, "github.event_name == 'push'");
+  assert.equal(preflight.if, tokenStep.if);
+  assert.deepEqual(preflight.env, {
+    RELEASE_APP_CLIENT_ID: '${{ vars.RELEASE_APP_CLIENT_ID }}',
+    RELEASE_APP_PRIVATE_KEY: '${{ secrets.RELEASE_APP_PRIVATE_KEY }}',
+  });
+  assert.match(preflight.run, /RELEASE_APP_CLIENT_ID/u);
+  assert.match(preflight.run, /RELEASE_APP_PRIVATE_KEY/u);
+  assert.match(preflight.run, /exit 1/u);
+  assert.doesNotMatch(preflight.run, /continue-on-error|GITHUB_TOKEN/u);
+});
+
+test('keeps App credentials out of pull request CI and preserves the supported matrix', async () => {
+  const [workflow, source] = await Promise.all([
+    readWorkflow(ciWorkflowUrl),
+    readFile(ciWorkflowUrl, 'utf8'),
+  ]);
+
+  assert.deepEqual(workflow.permissions, { contents: 'read' });
+  assert.deepEqual(workflow.jobs.verify.strategy.matrix['node-version'], [22, 24, 26]);
+  assert.doesNotMatch(source, /RELEASE_APP_|create-github-app-token|permission-contents|permission-pull-requests/u);
+});
+
+test('preserves push and manual release routes without approval or retry workarounds', async () => {
+  const [workflow, source] = await Promise.all([
+    readWorkflow(releaseWorkflowUrl),
+    readFile(releaseWorkflowUrl, 'utf8'),
+  ]);
+
+  assert.deepEqual(workflow.on.push.branches, ['main']);
+  assert.deepEqual(workflow.on.workflow_dispatch, null);
+  assert.equal(workflow.jobs.release.environment, 'npm');
+  assert.ok(releaseSteps(workflow).some((step) => step.if === "github.event_name == 'workflow_dispatch'" && step.run === 'pnpm release:next'));
+  assert.doesNotMatch(source, /reopen|close.*pull request|skip ci|skip-ci|sleep|auto-approve/iu);
+});
 
 test('pushes package tags for manual and action-driven releases', async () => {
   const workflow = await readFile(releaseWorkflowUrl, 'utf8');

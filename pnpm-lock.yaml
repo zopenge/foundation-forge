@@ -37,6 +37,9 @@ importers:
       vitest:
         specifier: 4.1.9
         version: 4.1.9(@types/node@20.19.43)(@vitest/coverage-v8@4.1.9)(yaml@2.9.0)
+      yaml:
+        specifier: 2.9.0
+        version: 2.9.0
 
   packages/archive-safety:
     dependencies:

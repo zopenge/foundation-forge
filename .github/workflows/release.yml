@@ -38,10 +38,38 @@ jobs:
         run: pnpm release:next
       - if: github.event_name == 'workflow_dispatch'
         run: git push origin --tags
+      - name: Validate release App configuration
+        id: validate-release-app
+        if: github.event_name == 'push'
+        env:
+          RELEASE_APP_CLIENT_ID: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+        run: |
+          missing=()
+          if [[ -z "${RELEASE_APP_CLIENT_ID}" ]]; then
+            missing+=("RELEASE_APP_CLIENT_ID")
+          fi
+          if [[ -z "${RELEASE_APP_PRIVATE_KEY}" ]]; then
+            missing+=("RELEASE_APP_PRIVATE_KEY")
+          fi
+          if (( ${#missing[@]} > 0 )); then
+            printf 'Missing release GitHub App configuration: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+      - name: Create release App token
+        id: release-app-token
+        if: github.event_name == 'push'
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
       - uses: changesets/action@v2
         if: github.event_name == 'push'
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ steps.release-app-token.outputs.token }}
           version-script: pnpm version:packages
           publish-script: pnpm release
           push-git-tags: true
