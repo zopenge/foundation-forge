@@ -1,6 +1,6 @@
 {
   "name": "@openge/forge-repository-context",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Deterministic repository context planning and validation primitives",
   "type": "module",
   "main": "./dist/index.js",
