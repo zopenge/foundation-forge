@@ -1,12 +1,6 @@
 # `@openge/forge-repository-context`
 
-纯逻辑、确定性的仓库上下文规划与校验原语，可用于 Node.js 和浏览器。消费者先完成文件发现、解析、语义分类和候选排序，再把结构化候选交给本包。
-
-## 什么时候使用
-
-适合 AI Context、代码审查辅助、仓库分析等工具中已经拥有候选文件/符号/依赖数据，需要稳定执行 profile/recipe 校验、上下文截断、影响闭包和预算评估的场景。
-
-如果还需要从 Git 找文件，请先使用 `forge-repository-files` 或消费者自己的发现层；本包不执行 I/O。
+领域中立、确定性的仓库索引与证据调查能力。它从受控源码范围构建带摘要的 generation，并在返回候选、关系和源码窗口前核对 corpus 与源码绑定。
 
 ## 安装
 
@@ -14,48 +8,60 @@
 pnpm add @openge/forge-repository-context
 ```
 
-## 可用入口
+## 入口
 
-- `@openge/forge-repository-context`：唯一入口，runtime-neutral。
+- `@openge/forge-repository-context`：runtime-neutral 的 corpus 契约、校验、搜索、关系查询、响应裁剪和 investigation。
+- `@openge/forge-repository-context/adapters/typescript`：Node 环境下的 TypeScript/JavaScript 提取器。
+- `@openge/forge-repository-context/adapters/cpp`：Node 环境下的 C++ 有界词法提取器。
+- `@openge/forge-repository-context/node`：仓库发现、generation 构建、current/stale 校验和证据读取。
+- `forge-repository-context`：Node CLI，提供 `build`、`check`、`investigate`。
 
-## 核心能力
+根入口不依赖 `node:*`。三个 Node 子入口在浏览器导出条件下均为 `null`。
 
-- `createRepositoryContextRegistry`：验证 profile、recipe、标识符、scope、limit 和引用关系。
-- `stableUniqueRepositoryContextValues`：保持首次出现顺序的稳定去重。
-- `buildRepositoryContextSelection`：required context 优先，并按 profile 的 impact/symbol scope 做去重后截断。
-- `buildRepositoryContextImpactSlice`：从 root 集合计算可达闭包，允许环且保证终止。
-- `calculateRepositoryContextReductionPercent` / `evaluateRepositoryContextBudget`：计算缩减率和结构化预算诊断。
-- `serializeRepositoryContextJson` / `compareRepositoryContextOutputs`：稳定 JSON 输出和文本映射比较。
-
-## 快速使用
+## 调查已有 corpus
 
 ```ts
-import { buildRepositoryContextSelection } from '@openge/forge-repository-context';
+import { createRepositoryInvestigator } from '@openge/forge-repository-context';
+import { createFileReader, readRanges } from '@openge/forge-repository-context/node';
 
-const selection = buildRepositoryContextSelection({
-  profile: {
-    id: 'compact', impactScope: 'local', maxSourceFiles: 2,
-    maxSymbols: 1, symbolScope: 'local',
-  },
-  requiredContextFiles: ['route.json'],
-  localContextFiles: ['near.json', 'route.json'],
-  sourceFiles: ['entry.ts', 'entry.ts', 'contract.ts'],
-  symbols: ['Entry', 'Contract'],
+const reader = createFileReader({ rootDir, corpusId: corpus.corpusId, generationId: corpus.generationId });
+const investigator = createRepositoryInvestigator({
+  corpus,
+  readRanges: (ranges) => readRanges(reader, ranges),
+  route: 'investigate-relations',
+  preferredScopes: ['packages/runtime/src/'],
+  promoteRelationEndpoints: true,
 });
+
+const result = await investigator.investigate({ query: 'where invalid input is rejected' });
 ```
 
-Selection 会先稳定去重再截断；required context 始终优先。影响闭包结果按 ID 排序，遇到环不会无限递归。预算诊断只返回结构化 code/actual/limit，不决定产品文案。
+结果只包含带 `SourceRef` 的候选、已解析关系、证据窗口、源码提示和结构化诊断。没有有用候选时返回 `insufficient`，不会猜测路径或事实。
 
-## 输出比较
+## 构建与检查
 
-`compareRepositoryContextOutputs` 只比较调用方给出的字符串映射：统一 CRLF、CR、LF 后返回 `missing`、`stale`、`unexpected` 和 `ok`。它不读取或写入文件，也不把调用方 output key 强制解释为文件系统路径。
+```sh
+forge-repository-context build \
+  --root . \
+  --index .tmp/repository-context \
+  --corpus local \
+  --scope packages \
+  --language typescript \
+  --tsconfig tsconfig.json
 
-## 行为与限制
+forge-repository-context check \
+  --root . \
+  --index .tmp/repository-context
+```
 
-本包不拥有 recipe ID、subsystem、风险等级、symbol tier、读取规则、parser、tokenizer、candidate ranking、output schema、路径、query、telemetry、A/B 或 live benchmark。调用方必须先确定这些产品语义，不能为了调用 API 而虚构依赖节点。
+构建只扫描明确 scope，拒绝绝对路径、`..`、符号链接逃逸、秘密文件和受保护目录。它在提取前后核对文件集合与摘要；任何漂移都会返回 `stale`，不会更新 `current.json`。generation 内容先原子发布，成功后才原子更新 current 指针。
 
-它也不会自动回退 profile、过滤业务关键词或自动选择 Provider。校验失败使用 `RepositoryContextError` 的稳定 code/details；严格 JSON 失败保留底层 serializer 错误。
+索引是本地派生缓存，默认位于 `.tmp/repository-context/`，不应提交。
 
-## 与其他 Foundation Forge 包的关系
+## 语言证据边界
 
-稳定 JSON 委托 [`forge-deterministic-json`](../data-formats/deterministic-json.md)。通用生成物文本比较可向下委托 [`forge-generated-artifacts`](../artifacts/generated-artifacts.md) 的纯逻辑能力，但 Node 文件发布仍属于 Generated Artifacts。Git 文件发现由 [`forge-repository-files`](repository-files.md) 单独负责。
+TypeScript adapter 使用声明的 tsconfig 和 TypeScript compiler API，支持 TypeScript 与 JavaScript 模块。C++ adapter 只声明 `ready-for-lexical-evidence`，提供文件、命名实体和 include 的词法证据，不冒充 typechecker 或 configured-build 结论。非空输入不得静默产生空成功。
+
+## 所有权边界
+
+本包不拥有消费者的业务域、模块分类、任务 Gold、模型、Provider、提示词、风险等级或产品文案。消费者负责选择 scope 和语言，并决定如何使用结构化结果；本包不会自动选择 Provider、隐式回退或写入仓库跟踪的生成物。

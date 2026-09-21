@@ -9,7 +9,25 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./adapters/typescript": {
+      "types": "./dist/adapters/typescript.d.ts",
+      "browser": null,
+      "import": "./dist/adapters/typescript.js"
+    },
+    "./adapters/cpp": {
+      "types": "./dist/adapters/cpp.d.ts",
+      "browser": null,
+      "import": "./dist/adapters/cpp.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "browser": null,
+      "import": "./dist/node.js"
     }
+  },
+  "bin": {
+    "forge-repository-context": "./dist/node/cli.js"
   },
   "files": [
     "dist",
@@ -18,7 +36,7 @@
     "NOTICE"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "node ./scripts/clean-dist.mjs && tsc -p tsconfig.build.json",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc -p tsconfig.json --noEmit --pretty false",
     "test": "vitest run",
@@ -42,7 +60,7 @@
     "url": "https://github.com/zopenge/foundation-forge/issues"
   },
   "dependencies": {
-    "@openge/forge-deterministic-json": "workspace:*",
-    "@openge/forge-generated-artifacts": "workspace:0.1.0"
+    "@openge/forge-generated-artifacts": "workspace:0.1.0",
+    "typescript": "6.0.3"
   }
 }

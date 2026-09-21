@@ -1,12 +1,33 @@
 import assert from 'node:assert/strict';
-import { buildRepositoryContextSelection, createRepositoryContextRegistry, buildRepositoryContextImpactSlice, calculateRepositoryContextReductionPercent, compareRepositoryContextOutputs, evaluateRepositoryContextBudget, serializeRepositoryContextJson } from '@openge/forge-repository-context';
+import { createRepositoryInvestigator, searchEntities, validateCorpus } from '@openge/forge-repository-context';
+import { extractCpp } from '@openge/forge-repository-context/adapters/cpp';
 
-const profile = { id: 'compact', impactScope: 'local', maxSourceFiles: 2, maxSymbols: 1, symbolScope: 'local' };
-const registry = createRepositoryContextRegistry({ profiles: [profile], recipes: [] });
-assert.equal(registry.profiles.size, 1);
-assert.deepEqual(buildRepositoryContextSelection({ profile, sourceFiles: ['b', 'b', 'a'] }).sourceFiles, ['b', 'a']);
-assert.equal(calculateRepositoryContextReductionPercent(100, 10), 90);
-assert.deepEqual(buildRepositoryContextImpactSlice({ nodes: [{ id: 'a', dependsOn: ['a'], files: [] }], rootIds: ['a'] }).map(node => node.id), ['a']);
-assert.deepEqual(evaluateRepositoryContextBudget({ policy: { maxSourceFiles: 1, maxSymbols: 1 }, metrics: { sourceFileCount: 2, symbolCount: 0 } }), [{ code: 'SOURCE_FILE_BUDGET_EXCEEDED', actual: 2, limit: 1 }]);
-const output = serializeRepositoryContextJson({ b: 2, a: 1 });
-assert.equal(compareRepositoryContextOutputs({ expected: { output }, current: { output } }).ok, true);
+const source = {
+  corpusId: 'consumer', generationId: 'g1', path: 'src/example.ts', sourceSha256: 'a'.repeat(64),
+  normalizedSha256: null, snapshotId: null, lineStart: 1, lineEnd: 1,
+};
+const corpus = {
+  corpusId: 'consumer', generationId: 'g1', corpusState: 'frozen', coverage: 'complete-in-declared-scope',
+  entities: [{ id: 'symbol:example', kind: 'symbol', name: 'createExample', owner: null,
+    signature: 'function createExample(): void', source, evidenceLevel: 'syntax' }],
+  edges: [],
+};
+assert.deepEqual(validateCorpus(corpus), []);
+assert.equal(searchEntities(corpus, { by: 'symbol', value: 'createExample' }).status, 'ok');
+
+const investigator = createRepositoryInvestigator({
+  corpus,
+  route: 'investigate',
+  readRanges: async (ranges) => ({
+    schemaVersion: 1, status: 'ok', corpusId: 'consumer', generationId: 'g1', diagnostics: [],
+    texts: ranges.map((range) => ({ source: range, path: range.path, lineStart: 1, lineEnd: 1,
+      text: 'export function createExample(): void {}' })),
+  }),
+});
+assert.equal((await investigator.investigate({ query: 'createExample' })).status, 'ok');
+
+const cpp = extractCpp({
+  path: 'include/example.hpp', text: 'class Example {};', corpusId: 'consumer', generationId: 'g1',
+});
+assert.equal(cpp.readiness, 'ready-for-lexical-evidence');
+assert.equal(cpp.entities.some((entity) => entity.name === 'Example'), true);

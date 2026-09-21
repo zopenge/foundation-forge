@@ -154,12 +154,12 @@ importers:
 
   packages/repository-context:
     dependencies:
-      '@openge/forge-deterministic-json':
-        specifier: workspace:*
-        version: link:../deterministic-json
       '@openge/forge-generated-artifacts':
         specifier: workspace:0.1.0
         version: link:../generated-artifacts
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
 
   packages/repository-files: {}
 
