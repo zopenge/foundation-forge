@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { pathToFileURL } from 'node:url';
+import { realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { createRepositoryInvestigator } from '../investigation/investigator.js';
 import { buildRepositoryCorpus } from './build.js';
 import type { RepositoryLanguage } from './contracts.js';
@@ -9,6 +10,19 @@ import { loadCurrentGeneration } from './store.js';
 export interface RepositoryContextCliIo {
   write(value: string): void;
 }
+
+export const isRepositoryContextCliEntry = (
+  entry: string | undefined,
+  moduleUrl: string,
+  realpath: (value: string) => string = realpathSync,
+): boolean => {
+  if (entry === undefined) return false;
+  try {
+    return realpath(entry) === realpath(fileURLToPath(moduleUrl));
+  } catch {
+    return false;
+  }
+};
 
 const parse = (args: readonly string[]): { readonly command: string; readonly values: ReadonlyMap<string, readonly string[]> } => {
   const [command = '', ...rest] = args;
@@ -101,6 +115,6 @@ export const runRepositoryContextCli = async (
 };
 
 const entry = process.argv[1];
-if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {
+if (isRepositoryContextCliEntry(entry, import.meta.url)) {
   process.exitCode = await runRepositoryContextCli(process.argv.slice(2));
 }
