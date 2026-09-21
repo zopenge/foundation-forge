@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'vitest';
-import { runRepositoryContextCli } from '../src/node/cli.js';
+import { isRepositoryContextCliEntry, runRepositoryContextCli } from '../src/node/cli.js';
 import { createTemporaryRepository, type TemporaryRepository } from './node-fixtures.js';
 
 const repositories: TemporaryRepository[] = [];
@@ -30,4 +30,15 @@ test('unknown flags return INVALID_ARGUMENT without throwing', async () => {
   const outputs: string[] = [];
   expect(await runRepositoryContextCli(['check', '--wat'], { write: (value) => outputs.push(value) })).toBe(1);
   expect(JSON.parse(outputs[0] ?? '{}').diagnostics[0].code).toBe('INVALID_ARGUMENT');
+});
+
+test('CLI entry detection resolves package-manager symlinks before comparing paths', () => {
+  const canonical = 'C:\\store\\repository-context\\dist\\node\\cli.js';
+  const realpath = (value: string): string => value.includes('node_modules') ? canonical : value;
+
+  expect(isRepositoryContextCliEntry(
+    'C:\\repo\\node_modules\\@openge\\forge-repository-context\\dist\\node\\cli.js',
+    'file:///C:/store/repository-context/dist/node/cli.js',
+    realpath,
+  )).toBe(true);
 });
