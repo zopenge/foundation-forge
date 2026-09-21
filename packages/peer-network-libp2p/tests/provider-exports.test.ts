@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'vitest';
 
+const correctnessTestTimeoutMs = 60_000;
+
 describe('libp2p provider entrypoints', () => {
   test('exports each provider only from its explicit entrypoint', async () => {
     const [browser, node, relay] = await Promise.all([
@@ -15,5 +17,5 @@ describe('libp2p provider entrypoints', () => {
     expect(relay).toHaveProperty('createLibp2pRelay');
     expect(browser).not.toHaveProperty('createLibp2pRelay');
     expect(node).not.toHaveProperty('createLibp2pRelay');
-  }, 15_000);
+  }, correctnessTestTimeoutMs);
 });

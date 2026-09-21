@@ -29,13 +29,32 @@ Release workflow 在 Changesets 之前会对 canonical npm registry 执行一次
 
 ## 仓库配置
 
-- GitHub Actions workflow 权限为 **Read and write**，并允许 Actions 创建和
-  审批 pull request。
-- GitHub `npm` environment 存在，并应用维护者审批策略。
+- GitHub App 只安装在 Foundation Forge 仓库，权限限定为 **Contents: Read and
+  write** 与 **Pull requests: Read and write**。仓库 Actions Variable
+  `RELEASE_APP_CLIENT_ID` 保存 App client ID；现有 GitHub `npm` environment 的
+  secret `RELEASE_APP_PRIVATE_KEY` 保存 App private key。不要把 private key 放进
+  仓库 secret、变量、文件或日志。
+- GitHub `npm` environment 存在，并应用维护者审批策略。Release job 通过该
+  environment 读取 private key；配置缺失时，workflow 会在创建 token 和运行
+  Changesets 前明确失败，只报告缺失的配置名称，不输出配置值。
 - 每个公开 package 信任 release policy 指定的 GitHub repository、
   `release.yml` workflow 和 `npm` environment，且具有 publish 权限。
 - Release workflow 保留 `contents: write`、`pull-requests: write` 和
   `id-token: write`，且不读取 npm publishing token。
+- `main` push 路径用 `actions/create-github-app-token@v3` 创建仅限当前仓库的短期
+  installation token，并把它显式传给 `changesets/action@v2`。token 只请求
+  contents 与 pull requests 写权限，并在 job 结束时由 action 撤销；此路径不回退到
+  默认 `GITHUB_TOKEN`。
+
+凭据职责保持分离：checkout 使用 workflow token 完成源码读取，手工
+`workflow_dispatch` 路径仍用它推送脚本生成的 tag；Changesets 创建版本 commit、
+分支、`Version Packages` PR、tag 与 GitHub Release 时使用仓库范围的 App token；
+npm publish 继续只使用 `npm` environment 约束的 OIDC Trusted Publishing。
+
+配置完成后的真实事件验收应由一次新的 `main` push 触发。确认生成或更新的
+`Version Packages` PR 自动产生 `pull_request` workflow run，并实际启动 Node
+22、24、26 三个 job；不通过关闭/重开 PR、手工批准、重跑或跳过 CI 来制造成功。
+本地 YAML 与测试通过只能证明配置结构和凭据映射正确，不能替代这次 GitHub 事件验收。
 
 仓库、package、版本、public exports、内部依赖和发布顺序均从 workspace、
 manifest 与 Git 元数据推导。只有 workflow、environment、发布分支、npm
