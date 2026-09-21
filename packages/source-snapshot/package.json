@@ -1,6 +1,6 @@
 {
   "name": "@openge/forge-source-snapshot",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Deterministic Git source snapshots with secure packing, publication, verification and retention",
   "type": "module",
   "main": "./dist/index.js",
@@ -49,7 +49,7 @@
   "dependencies": {
     "@openge/forge-artifact-integrity": "workspace:0.1.0",
     "@openge/forge-deterministic-json": "workspace:0.1.0-rc.1",
-    "@openge/forge-generated-artifacts": "workspace:0.1.0",
+    "@openge/forge-generated-artifacts": "workspace:0.1.1",
     "@openge/forge-path-safety": "workspace:0.1.1",
     "@openge/forge-repository-files": "workspace:0.1.0"
   },

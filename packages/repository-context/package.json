@@ -1,6 +1,6 @@
 {
   "name": "@openge/forge-repository-context",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Deterministic repository context planning and validation primitives",
   "type": "module",
   "main": "./dist/index.js",
@@ -60,7 +60,7 @@
     "url": "https://github.com/zopenge/foundation-forge/issues"
   },
   "dependencies": {
-    "@openge/forge-generated-artifacts": "workspace:0.1.0",
+    "@openge/forge-generated-artifacts": "workspace:0.1.1",
     "typescript": "6.0.3"
   }
 }
