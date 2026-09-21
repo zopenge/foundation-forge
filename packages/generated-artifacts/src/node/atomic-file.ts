@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { open, rename, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { generatedArtifactErrorCodes as codes } from '../contracts.js';
 import { GeneratedArtifactError } from '../errors.js';
 import { assertSafePath, ensureParentDirectories, systemErrorCode, targetPath } from './safe-target.js';
@@ -20,9 +21,7 @@ export async function atomicWriteArtifact(root: string, path: string, content: U
     await handle.sync();
     await handle.close();
     handle = undefined;
-    await assertSafePath(target, path);
-    await assertSafePath(temporary, path);
-    await rename(temporary, target);
+    await renameWithBoundedRetry(temporary, target, path);
     created = false;
   } catch (cause) { failure = cause; }
   finally {
@@ -41,5 +40,23 @@ export async function atomicWriteArtifact(root: string, path: string, content: U
   if (failure !== undefined) {
     if (failure instanceof GeneratedArtifactError) throw failure;
     throw new GeneratedArtifactError(codes.writeFailed, { path, operation: 'atomic-write', systemCode: systemErrorCode(failure) }, failure);
+  }
+}
+
+const renameRetryDelays = [10, 25, 50] as const;
+
+async function renameWithBoundedRetry(temporary: string, target: string, path: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    // Windows 的并发 rename 可能短暂返回 EPERM；重试前仍须拒绝路径替换。
+    await assertSafePath(target, path);
+    await assertSafePath(temporary, path);
+    try {
+      await rename(temporary, target);
+      return;
+    } catch (cause) {
+      const waitMs = renameRetryDelays[attempt];
+      if (process.platform !== 'win32' || systemErrorCode(cause) !== 'EPERM' || waitMs === undefined) throw cause;
+      await delay(waitMs);
+    }
   }
 }
