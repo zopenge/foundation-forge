@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, test } from 'vitest';
 import { runSourceSnapshotCli } from '../src/node.js';
-import { addCommittedFile, createRepository, runGit } from './node-fixtures.js';
+import { addCommittedFile, addFixtureSubmodule, createRepository, runGit } from './node-fixtures.js';
 
 const roots: string[] = [];
 const now = Date.parse('2026-09-15T00:00:00.000Z');
@@ -37,7 +37,7 @@ test('CLI plan/export/verify/status/prune-preview workflow emits metadata only',
 test('CLI forwards the explicit checked-out submodule head policy', async () => {
   const source = await createRepository(); const sub = await createRepository(); roots.push(source, sub);
   await addCommittedFile(sub, 'nested.ts');
-  await runGit(source, ['-c', 'protocol.file.allow=always', 'submodule', 'add', '--quiet', sub, 'modules/lib']);
+  await addFixtureSubmodule(source, sub);
   await runGit(source, ['commit', '--quiet', '-am', 'submodule']);
   await writeFile(join(source, 'modules/lib/nested.ts'), 'changed\n', 'utf8');
   await runGit(join(source, 'modules/lib'), ['add', 'nested.ts']); await runGit(join(source, 'modules/lib'), ['commit', '--quiet', '-m', 'drift']);

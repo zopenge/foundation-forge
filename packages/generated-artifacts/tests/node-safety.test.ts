@@ -7,7 +7,7 @@ import { fixture, options } from './fixtures.js';
 
 vi.mock('node:fs/promises', async () => ({ ...await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises') }));
 const cleanups: (() => Promise<void>)[] = [];
-afterEach(async () => { vi.restoreAllMocks(); for (const cleanup of cleanups.splice(0)) await cleanup(); });
+afterEach(async () => { vi.restoreAllMocks(); vi.unstubAllGlobals(); for (const cleanup of cleanups.splice(0)) await cleanup(); });
 async function root(): Promise<string> { const value = await fixture(); cleanups.push(value.cleanup); return value.root; }
 const ioFailure = (): Error => Object.assign(new Error('injected failure'), { code: 'EIO' });
 
@@ -90,5 +90,54 @@ describe('publication failure and race boundaries', () => {
     const result = await publishGeneratedArtifacts(directory, defineGeneratedArtifactPlan({ artifacts: [], retiredPaths: ['z', 'a'] }), options);
     expect(result).toMatchObject({ removed: ['z'], diagnostics: [{ code: 'GENERATED_ARTIFACT_REMOVE_FAILED', path: 'a' }] });
     expect(await filesystem.readdir(directory)).toEqual(['a']);
+  });
+});
+
+// 只模拟操作系统失败边界，实际临时文件、发布和清理路径仍执行。
+const simulatePlatform = (platform: string): void => {
+  vi.stubGlobal('process', new Proxy(process, { get: (target, key) => key === 'platform' ? platform : Reflect.get(target, key) }));
+};
+const permissionFailure = (): Error => Object.assign(new Error('injected sharing contention'), { code: 'EPERM' });
+describe('bounded Windows rename contention recovery', () => {
+  it('publishes the same flushed temporary file after transient EPERM without deleting the target', async () => {
+    simulatePlatform('win32');
+    const directory = await root(); await filesystem.writeFile(join(directory, 'x'), 'original');
+    const originalRename = filesystem.rename;
+    const rename = vi.spyOn(filesystem, 'rename').mockRejectedValueOnce(permissionFailure()).mockRejectedValueOnce(permissionFailure()).mockImplementation(originalRename);
+    const unlink = vi.spyOn(filesystem, 'unlink');
+    const result = await publishGeneratedArtifacts(directory, defineGeneratedArtifactPlan({ artifacts: [{ path: 'x', content: 'new' }] }), options);
+    expect(result).toEqual({ written: ['x'], unchanged: [], removed: [], diagnostics: [] });
+    expect(rename).toHaveBeenCalledTimes(3); expect(new Set(rename.mock.calls.map(args => args[0])).size).toBe(1);
+    expect(unlink).not.toHaveBeenCalled(); expect(await filesystem.readFile(join(directory, 'x'), 'utf8')).toBe('new');
+    expect(await filesystem.readdir(directory)).toEqual(['x']);
+  });
+  it('bounds permanent EPERM and preserves originals and retired files while cleaning the temporary file', async () => {
+    simulatePlatform('win32'); const directory = await root();
+    await filesystem.writeFile(join(directory, 'x'), 'original'); await filesystem.writeFile(join(directory, 'old'), 'retired');
+    const rename = vi.spyOn(filesystem, 'rename').mockRejectedValue(permissionFailure());
+    const result = await publishGeneratedArtifacts(directory, defineGeneratedArtifactPlan({ artifacts: [{ path: 'x', content: 'new' }], retiredPaths: ['old'] }), options);
+    expect(rename).toHaveBeenCalledTimes(4); expect(result).toMatchObject({ written: [], removed: [], diagnostics: [{ code: 'GENERATED_ARTIFACT_WRITE_FAILED', details: { systemCode: 'EPERM' } }] });
+    expect(await filesystem.readFile(join(directory, 'x'), 'utf8')).toBe('original'); expect(await filesystem.readFile(join(directory, 'old'), 'utf8')).toBe('retired');
+    expect((await filesystem.readdir(directory)).sort()).toEqual(['old', 'x']);
+  });
+  for (const [platform, code] of [['linux', 'EPERM'], ['win32', 'EIO']] as const) it('does not retry ' + platform + ' ' + code, async () => {
+    simulatePlatform(platform); const directory = await root();
+    const rename = vi.spyOn(filesystem, 'rename').mockRejectedValue(Object.assign(new Error('injected failure'), { code }));
+    const result = await publishGeneratedArtifacts(directory, defineGeneratedArtifactPlan({ artifacts: [{ path: 'x', content: 'new' }] }), options);
+    expect(rename).toHaveBeenCalledTimes(1); expect(result.diagnostics).toMatchObject([{ code: 'GENERATED_ARTIFACT_WRITE_FAILED', details: { systemCode: code } }]);
+    expect(await filesystem.readdir(directory)).toEqual([]);
+  });
+  for (const replacement of ['target', 'temporary']) it('rechecks a replaced ' + replacement + ' before retrying rename', async () => {
+    simulatePlatform('win32'); const directory = await root(); const external = await root();
+    await filesystem.writeFile(join(external, 'outside'), 'untouched');
+    const rename = vi.spyOn(filesystem, 'rename').mockImplementationOnce(async (temporary, target) => {
+      const path = replacement === 'target' ? target : temporary;
+      if (replacement === 'temporary') await filesystem.unlink(path);
+      await filesystem.symlink(join(external, 'outside'), path); throw permissionFailure();
+    });
+    const result = await publishGeneratedArtifacts(directory, defineGeneratedArtifactPlan({ artifacts: [{ path: 'x', content: 'new' }] }), options);
+    expect(rename).toHaveBeenCalledTimes(1); expect(result.written).toEqual([]);
+    expect(result.diagnostics).toMatchObject([{ code: 'GENERATED_ARTIFACT_SYMLINK_REJECTED' }]);
+    expect(await filesystem.readFile(join(external, 'outside'), 'utf8')).toBe('untouched');
   });
 });

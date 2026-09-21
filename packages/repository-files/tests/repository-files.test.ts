@@ -65,19 +65,21 @@ describe('repository discovery', () => {
 
   test('recursively lists tracked and untracked files from initialized submodules', async () => {
     const root = await createRoot();
-    const submodule = await createRoot();
+    const submodule = join(root, 'modules', 'nested');
+    await mkdir(submodule, { recursive: true });
+    await runGit(submodule, ['init', '--quiet']);
     await writeFile(join(submodule, 'tracked.ts'), '', 'utf8');
     await runGit(submodule, ['add', 'tracked.ts']);
     await runGit(submodule, ['commit', '--quiet', '-m', 'initial']);
-    await runGit(root, [
-      '-c',
-      'protocol.file.allow=always',
-      'submodule',
-      'add',
-      '--quiet',
-      submodule,
-      'modules/nested',
-    ]);
+    const commit = (await runGit(submodule, ['rev-parse', 'HEAD'])).trim();
+    await writeFile(join(root, '.gitmodules'), [
+      '[submodule "modules/nested"]',
+      '\tpath = modules/nested',
+      '\turl = ./modules/nested',
+      '',
+    ].join('\n'), 'utf8');
+    await runGit(root, ['add', '.gitmodules']);
+    await runGit(root, ['update-index', '--add', '--cacheinfo', `160000,${commit},modules/nested`]);
     await writeFile(join(root, 'root-untracked.ts'), '', 'utf8');
     await writeFile(join(root, 'modules', 'nested', 'nested-untracked.ts'), '', 'utf8');
 

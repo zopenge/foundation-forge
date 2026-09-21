@@ -1,7 +1,7 @@
-export type * from './contracts.js';
-export { RepositoryContextError } from './errors.js';
-export { createRepositoryContextRegistry } from './registry.js';
-export { buildRepositoryContextSelection, stableUniqueRepositoryContextValues } from './selection.js';
-export { buildRepositoryContextImpactSlice } from './impact.js';
-export { calculateRepositoryContextReductionPercent, evaluateRepositoryContextBudget } from './budgets.js';
-export { compareRepositoryContextOutputs, normalizeRepositoryContextNewlines, serializeRepositoryContextJson } from './outputs.js';
+export type * from './core/contracts.js';
+export { validateCorpus } from './core/validate.js';
+export { searchEntities, describeEntities } from './core/search.js';
+export { queryRelations } from './core/relations.js';
+export { fitResponse } from './core/budget.js';
+export type * from './investigation/contracts.js';
+export { createRepositoryInvestigator } from './investigation/investigator.js';
