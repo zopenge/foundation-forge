@@ -1,3 +1,5 @@
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { afterEach, expect, test } from 'vitest';
 import { isRepositoryContextCliEntry, runRepositoryContextCli } from '../src/node/cli.js';
 import { createTemporaryRepository, type TemporaryRepository } from './node-fixtures.js';
@@ -33,12 +35,13 @@ test('unknown flags return INVALID_ARGUMENT without throwing', async () => {
 });
 
 test('CLI entry detection resolves package-manager symlinks before comparing paths', () => {
-  const canonical = 'C:\\store\\repository-context\\dist\\node\\cli.js';
-  const realpath = (value: string): string => value.includes('node_modules') ? canonical : value;
+  const linked = resolve('node_modules/@openge/forge-repository-context/dist/node/cli.js');
+  const canonical = resolve('store/repository-context/dist/node/cli.js');
+  const realpath = (value: string): string => value === linked ? canonical : value;
 
   expect(isRepositoryContextCliEntry(
-    'C:\\repo\\node_modules\\@openge\\forge-repository-context\\dist\\node\\cli.js',
-    'file:///C:/store/repository-context/dist/node/cli.js',
+    linked,
+    pathToFileURL(canonical).href,
     realpath,
   )).toBe(true);
 });
