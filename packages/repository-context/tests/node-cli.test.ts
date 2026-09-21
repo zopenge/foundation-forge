@@ -45,3 +45,10 @@ test('CLI entry detection resolves package-manager symlinks before comparing pat
     realpath,
   )).toBe(true);
 });
+
+test('CLI entry detection fails closed for missing or unreadable paths', () => {
+  const unreadable = (): string => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); };
+
+  expect(isRepositoryContextCliEntry(undefined, import.meta.url)).toBe(false);
+  expect(isRepositoryContextCliEntry('missing-cli.js', import.meta.url, unreadable)).toBe(false);
+});
