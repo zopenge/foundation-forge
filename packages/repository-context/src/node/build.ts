@@ -21,6 +21,10 @@ const sha256 = (value: Uint8Array | string): string => createHash('sha256').upda
 const isTypeScriptPath = (path: string): boolean => /\.(?:[cm]?[jt]sx?)$/iu.test(path);
 const isCppPath = (path: string): boolean => /\.(?:c|cc|cpp|cxx|h|hh|hpp|hxx|inl)$/iu.test(path);
 
+export const appendAll = <T>(target: T[], values: readonly T[]): void => {
+  for (const value of values) target.push(value);
+};
+
 export const buildRepositoryCorpus = async (
   options: BuildRepositoryCorpusOptions,
 ): Promise<BuildRepositoryCorpusResult> => {
@@ -55,9 +59,9 @@ export const buildRepositoryCorpus = async (
           corpusId: options.corpusId,
           generationId,
         });
-        entities.push(...extracted.entities);
-        edges.push(...extracted.edges);
-        diagnostics.push(...extracted.diagnostics);
+        appendAll(entities, extracted.entities);
+        appendAll(edges, extracted.edges);
+        appendAll(diagnostics, extracted.diagnostics);
       }
     }
     for (const file of before.files.filter((item) => isCppPath(item.path))) {
@@ -67,9 +71,9 @@ export const buildRepositoryCorpus = async (
         corpusId: options.corpusId,
         generationId,
       });
-      entities.push(...extracted.entities);
-      edges.push(...extracted.edges);
-      diagnostics.push(...extracted.diagnostics);
+      appendAll(entities, extracted.entities);
+      appendAll(edges, extracted.edges);
+      appendAll(diagnostics, extracted.diagnostics);
     }
     if (before.files.length === 0) diagnostics.push({ code: 'EMPTY_INPUT_SET', details: {} });
     if (diagnostics.length > 0 || entities.length === 0) {

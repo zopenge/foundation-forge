@@ -54,7 +54,7 @@ forge-repository-context check \
   --index .tmp/repository-context
 ```
 
-构建只扫描明确 scope，拒绝绝对路径、`..`、符号链接逃逸、秘密文件和受保护目录。它在提取前后核对文件集合与摘要；任何漂移都会返回 `stale`，不会更新 `current.json`。generation 内容先原子发布，成功后才原子更新 current 指针。
+构建只扫描明确 scope，拒绝绝对路径、`..`、符号链接逃逸、秘密文件和受保护目录，并跳过 `dist`、`coverage` 等常规派生输出。它在提取前后核对文件集合与摘要；任何漂移都会返回 `stale`，不会更新 `current.json`。generation 内容先原子发布，成功后才原子更新 current 指针。
 
 索引是本地派生缓存，默认位于 `.tmp/repository-context/`，不应提交。
 
