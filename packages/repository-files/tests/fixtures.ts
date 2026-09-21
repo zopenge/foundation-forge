@@ -11,8 +11,6 @@ export const createTestRepository = async (): Promise<string> => {
   const directory = resolve(testRoot, randomUUID());
   await mkdir(directory, { recursive: true });
   await runGit(directory, ['init', '--quiet']);
-  await runGit(directory, ['config', 'user.email', 'test@example.com']);
-  await runGit(directory, ['config', 'user.name', 'Test User']);
   return directory;
 };
 
@@ -23,6 +21,17 @@ export const removeTestRepository = async (directory: string): Promise<void> => 
   await rm(directory, { force: true, recursive: true });
 };
 
-export const runGit = async (cwd: string, args: readonly string[]): Promise<void> => {
-  await execFileAsync('git', [...args], { cwd, encoding: 'utf8' });
+export const runGit = async (cwd: string, args: readonly string[]): Promise<string> => {
+  const { stdout } = await execFileAsync('git', [...args], {
+    cwd,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      GIT_AUTHOR_EMAIL: 'test@example.com',
+      GIT_AUTHOR_NAME: 'Test User',
+      GIT_COMMITTER_EMAIL: 'test@example.com',
+      GIT_COMMITTER_NAME: 'Test User',
+    },
+  });
+  return stdout;
 };

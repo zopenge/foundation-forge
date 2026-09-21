@@ -24,3 +24,13 @@ export const addCommittedFile = async (root: string, path: string, content = 'ex
   await runGit(root, ['commit', '--quiet', '-m', `add ${path}`]);
 };
 export const removeRepository = async (root: string): Promise<void> => { await rm(root, { recursive: true, force: true }); };
+
+// 使用原生 clone 建立真实 gitlink，避免 Windows submodule add 的 shell 启动开销。
+export const addFixtureSubmodule = async (root: string, source: string): Promise<void> => {
+  const gitDir = join(root, '.git', 'modules', 'modules', 'lib');
+  await mkdir(join(gitDir, '..'), { recursive: true });
+  await runGit(root, ['clone', '--quiet', '--local', '--separate-git-dir', gitDir, source, 'modules/lib']);
+  await writeFile(join(root, '.gitmodules'), '[submodule "modules/lib"]\n\tpath = modules/lib\n\turl = ' + source.replaceAll('\\', '/') + '\n', 'utf8');
+  await runGit(root, ['config', 'submodule.modules/lib.url', source]);
+  await runGit(root, ['add', '.gitmodules', 'modules/lib']);
+};

@@ -9,7 +9,7 @@ import {
   verifyPublishedSourceSnapshot,
   verifyRepositorySnapshotFreeze,
 } from '../src/node.js';
-import { addCommittedFile, createRepository, runGit } from './node-fixtures.js';
+import { addCommittedFile, addFixtureSubmodule, createRepository, runGit } from './node-fixtures.js';
 
 const roots: string[] = [];
 const now = Date.parse('2026-09-15T00:00:00.000Z');
@@ -42,7 +42,7 @@ test('plans tracked and untracked source with caller-owned policy and grouping',
 test('plans an explicitly allowed checked-out submodule head and records gitlink provenance', async () => {
   const source = await createRepository(); const sub = await createRepository(); roots.push(source, sub);
   await addCommittedFile(sub, 'nested.ts');
-  await runGit(source, ['-c', 'protocol.file.allow=always', 'submodule', 'add', '--quiet', sub, 'modules/lib']);
+  await addFixtureSubmodule(source, sub);
   await runGit(source, ['commit', '--quiet', '-am', 'submodule']);
   const parentGitlink = (await runGit(source, ['rev-parse', 'HEAD:modules/lib'])).trim();
   await writeFile(join(source, 'modules/lib/nested.ts'), 'changed\n', 'utf8');
