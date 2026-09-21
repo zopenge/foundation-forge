@@ -155,7 +155,7 @@ importers:
   packages/repository-context:
     dependencies:
       '@openge/forge-generated-artifacts':
-        specifier: workspace:0.1.0
+        specifier: workspace:0.1.1
         version: link:../generated-artifacts
       typescript:
         specifier: 6.0.3
@@ -174,7 +174,7 @@ importers:
         specifier: workspace:0.1.0-rc.1
         version: link:../deterministic-json
       '@openge/forge-generated-artifacts':
-        specifier: workspace:0.1.0
+        specifier: workspace:0.1.1
         version: link:../generated-artifacts
       '@openge/forge-path-safety':
         specifier: workspace:0.1.1

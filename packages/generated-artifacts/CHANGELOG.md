@@ -1,5 +1,11 @@
 # 更新日志
 
+## 0.1.1
+
+### Patch Changes
+
+- 665bd93: 在 Windows 上为原子发布的临时 `EPERM` 增加有限重试，并在每次重试前重新校验安全路径。
+
 ## 0.1.0
 
 ### Minor Changes

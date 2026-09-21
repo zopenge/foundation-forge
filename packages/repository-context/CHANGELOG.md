@@ -1,5 +1,16 @@
 # @openge/forge-repository-context
 
+## 1.0.0
+
+### Major Changes
+
+- b92fafa: 用经过正式验证的仓库调查、语言适配和可验证 generation API 替换旧的上下文选择与输出比较表面。
+
+### Patch Changes
+
+- Updated dependencies [665bd93]
+  - @openge/forge-generated-artifacts@0.1.1
+
 ## 0.1.0
 
 ### Minor Changes
