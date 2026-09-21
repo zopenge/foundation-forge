@@ -3,7 +3,15 @@ import { lstat, readFile, readdir, realpath } from 'node:fs/promises';
 import { relative, resolve, sep } from 'node:path';
 import type { RepositoryLanguage, GenerationFileRecord } from './contracts.js';
 
-const ignoredDirectories = new Set(['.git', '.hg', '.svn', '.tmp', 'node_modules']);
+const ignoredDirectories = new Set([
+  '.git',
+  '.hg',
+  '.svn',
+  '.tmp',
+  'coverage',
+  'dist',
+  'node_modules',
+]);
 const secretBasenames = new Set(['.npmrc', '.yarnrc', '.pypirc']);
 const privateKeyPattern = /(?:^|\/)(?:id_(?:rsa|dsa|ecdsa|ed25519)|[^/]*private[^/]*\.(?:pem|key)|[^/]*\.p12)$/iu;
 
