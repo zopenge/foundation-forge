@@ -8,4 +8,4 @@ export {
 export { DeterministicJsonError } from './errors.js';
 export { sortJsonValue } from './sorting.js';
 export { stringifyDeterministicJson } from './stringify.js';
-export { assertJsonValue } from './validation.js';
+export { assertJsonValue, cloneJsonValue } from './validation.js';
