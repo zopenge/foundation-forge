@@ -1,22 +1,24 @@
 import type { Corpus, Entity, EntityEnvelope, SearchRequest } from './contracts.js';
+import { pathInScope } from './scope.js';
+import { normalizeSearchText, tokenize } from './tokenize.js';
 import { validateCorpus } from './validate.js';
-
-const normalizeText = (value: string): string => value.normalize('NFKC').toLocaleLowerCase('en-US');
-const queryTokens = (value: string): readonly string[] => normalizeText(value)
-  .replace(/([a-z0-9])([A-Z])/gu, '$1 $2')
-  .split(/[^\p{L}\p{N}]+/u)
-  .filter((item) => item.length > 0);
 
 const inScope = (entity: Entity, scope: readonly string[] | undefined): boolean => {
   if (!scope || scope.length === 0) return true;
-  return scope.some((prefix) => entity.source.path.startsWith(prefix) || entity.id.startsWith(prefix));
+  return scope.some((prefix) => pathInScope(entity.source.path, prefix));
 };
 
-const lexicalScore = (entity: Entity, tokens: readonly string[]): number => {
-  const haystack = normalizeText([
+const lexicalScore = (entity: Entity, query: string, tokens: readonly string[]): number => {
+  const normalizedQuery = normalizeSearchText(query);
+  const normalizedName = normalizeSearchText(entity.name);
+  const normalizedPath = normalizeSearchText(entity.source.path);
+  const haystackTokens = new Set(tokenize([
     entity.name, entity.owner ?? '', entity.signature ?? '', entity.source.path,
-  ].join(' '));
-  return tokens.reduce((score, token) => score + (haystack.includes(token) ? 1 : 0), 0);
+  ].join(' ')));
+  const exactName = normalizedName === normalizedQuery ? 100 : 0;
+  const exactPath = normalizedPath === normalizedQuery ? 80 : 0;
+  const tokenScore = tokens.reduce((score, token) => score + (haystackTokens.has(token) ? 4 : 0), 0);
+  return exactName + exactPath + tokenScore;
 };
 
 const makeCursor = (request: SearchRequest, corpus: Corpus, offset: number): string => {
@@ -67,10 +69,10 @@ export const searchEntities = (corpus: Corpus, request: SearchRequest): EntityEn
     return { ...base(corpus, 'error'), diagnostics: [{ code: 'CURSOR_MISMATCH', details: {} }], entities: [] };
   }
   const scoped = corpus.entities.filter((entity) => inScope(entity, request.scope));
-  const normalizedValue = normalizeText(request.value);
+  const normalizedValue = normalizeSearchText(request.value);
   const exact = scoped.filter((entity) => request.by === 'path'
-    ? entity.kind !== 'symbol' && normalizeText(entity.source.path) === normalizedValue
-    : request.by === 'symbol' ? normalizeText(entity.name) === normalizedValue : false);
+    ? entity.kind !== 'symbol' && normalizeSearchText(entity.source.path) === normalizedValue
+    : request.by === 'symbol' ? normalizeSearchText(entity.name) === normalizedValue : false);
   if (exact.length > 0) {
     const ordered = [...exact].sort((left, right) => left.id.localeCompare(right.id));
     const page = ordered.slice(offset, offset + limit);
@@ -78,9 +80,9 @@ export const searchEntities = (corpus: Corpus, request: SearchRequest): EntityEn
     return { ...base(corpus, ordered.length > 1 ? 'ambiguous' : 'ok'), entities: page,
       truncated: hasMore, nextCursor: hasMore ? makeCursor(request, corpus, offset + page.length) : null };
   }
-  const tokens = queryTokens(request.value);
+  const tokens = tokenize(request.value);
   const ranked = scoped
-    .map((entity) => ({ entity, score: lexicalScore(entity, tokens) }))
+    .map((entity) => ({ entity, score: lexicalScore(entity, request.value, tokens) }))
     .filter((entry) => entry.score > 0)
     .sort((left, right) => right.score - left.score
       || left.entity.source.path.localeCompare(right.entity.source.path)

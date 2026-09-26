@@ -8,14 +8,29 @@ export interface GenerationFileRecord {
   readonly size: number;
 }
 
+export type SemanticInputKind = 'tsconfig' | 'package-json' | 'workspace-manifest' | 'lockfile' | 'module-target' | 'missing-module-target';
+
+export interface SemanticInputRecord {
+  readonly kind: SemanticInputKind;
+  readonly path: string;
+  readonly state: 'present' | 'missing';
+  readonly sha256: string | null;
+  readonly resolvedPath: string | null;
+}
+
 export interface StoredRepositoryGeneration {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 2;
   readonly corpusId: string;
   readonly generationId: string;
   readonly inputDigest: string;
   readonly scopes: readonly string[];
   readonly languages: readonly RepositoryLanguage[];
   readonly files: readonly GenerationFileRecord[];
+  readonly semanticConfigPath: string | null;
+  readonly semanticInputs: readonly SemanticInputRecord[];
+  readonly configurationDigest: string;
+  readonly extractorVersion: string;
+  readonly sortingVersion: string;
   readonly corpus: Corpus;
 }
 
