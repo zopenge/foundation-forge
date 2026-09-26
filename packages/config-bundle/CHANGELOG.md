@@ -1,5 +1,12 @@
 # 变更记录
 
+## 0.1.1
+
+### Patch Changes
+
+- Updated dependencies [aae44f3]
+  - @openge/forge-deterministic-json@0.1.0
+
 ## 0.1.0
 
 ### Minor Changes
