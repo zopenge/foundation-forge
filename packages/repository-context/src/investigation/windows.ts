@@ -99,12 +99,10 @@ export const bestWindow = (
     for (let index = start; index < start + size; index += 1) {
       const line = lines[index] ?? '';
       structure += lineStructureScore(line, intent);
-      if (!line.trim().startsWith('//')) {
-        const lineTokens = normalizedAffinityTokens(line);
-        windowTokens.push(...rawAffinityTokens(line));
-        for (const token of query) {
-          if (lineTokens.some((value) => value === token || value.startsWith(token) || token.startsWith(value))) hits.add(token);
-        }
+      const lineTokens = normalizedAffinityTokens(line);
+      windowTokens.push(...rawAffinityTokens(line));
+      for (const token of query) {
+        if (lineTokens.some((value) => value === token || value.startsWith(token) || token.startsWith(value))) hits.add(token);
       }
     }
     const symbolUseBonus = lastSymbolUseLine >= start && lastSymbolUseLine < start + size ? 6 : 0;
@@ -148,7 +146,6 @@ export const bestRecoveryHint = (
       let maxLineHits = 0;
       for (const line of slice) {
         structure += lineStructureScore(line, intent);
-        if (line.trim().startsWith('//')) continue;
         const lineTokens = normalizedAffinityTokens(line);
         const lineHits = querySet.filter((token) => lineTokens.some(
           (value) => value === token || value.startsWith(token) || token.startsWith(value),
@@ -168,7 +165,9 @@ export const bestRecoveryHint = (
       const score = hits.size * 3 + Math.min(16, structure) + identifierHits * 18 + hyphenHits * 14
         + numberHits * 24 + anchorHits * 20 + exactTokenHits * 5 + Math.max(0, maxLineHits - 1) * 12
         + decisionScore;
-      if (score > (best?.score ?? 0)) best = { source: file.source, path: file.path, lineStart, lineEnd, text, score };
+      if (score > (best?.score ?? 0)) best = {
+        source: { ...file.source, lineStart, lineEnd }, path: file.path, lineStart, lineEnd, text, score,
+      };
     }
   }
   return best;

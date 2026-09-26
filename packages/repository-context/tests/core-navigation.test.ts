@@ -37,4 +37,24 @@ describe('repository context core navigation', () => {
     expect(fitted.status).toBe('error');
     expect(fitted.diagnostics[0]?.code).toBe('BUDGET_TOO_SMALL');
   });
+
+  test('treats scopes as path boundaries rather than raw string prefixes', () => {
+    const base = corpusFixture();
+    const first = base.entities[0];
+    if (first === undefined) throw new Error('fixture must contain an entity');
+    const corpus = {
+      ...base,
+      entities: [
+        ...base.entities,
+        {
+          ...first,
+          id: 'symbol:prefix-collision',
+          source: { ...first.source, path: 'src/session.ts-extra' },
+        },
+      ],
+    };
+    const result = searchEntities(corpus, { by: 'text', value: 'createSession', scope: ['src/session.ts'], limit: 5 });
+    expect(result.entities.map((item) => item.id)).toContain('symbol:session:createSession');
+    expect(result.entities.map((item) => item.id)).not.toContain('symbol:prefix-collision');
+  });
 });
