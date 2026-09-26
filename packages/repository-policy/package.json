@@ -1,7 +1,7 @@
 {
-  "name": "@openge/forge-config-bundle",
-  "version": "0.1.1",
-  "description": "Deterministic manifest-backed configuration bundles and explicit Node.js import transactions",
+  "name": "@openge/forge-repository-policy",
+  "version": "0.1.0-rc.0",
+  "description": "Deterministic repository policy selection and validation primitives",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -15,6 +15,9 @@
       "browser": null,
       "import": "./dist/node.js"
     }
+  },
+  "bin": {
+    "forge-repository-policy": "./dist/node/cli.js"
   },
   "files": [
     "dist",
@@ -40,17 +43,16 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/zopenge/foundation-forge.git",
-    "directory": "packages/config-bundle"
+    "directory": "packages/repository-policy"
   },
   "homepage": "https://github.com/zopenge/foundation-forge#readme",
   "bugs": {
     "url": "https://github.com/zopenge/foundation-forge/issues"
   },
   "dependencies": {
-    "@openge/forge-archive-zip": "workspace:0.1.1",
-    "@openge/forge-archive-safety": "workspace:0.1.1",
-    "@openge/forge-artifact-integrity": "workspace:0.1.0",
-    "@openge/forge-deterministic-json": "workspace:0.1.0",
-    "@openge/forge-path-safety": "workspace:0.1.1"
+    "@openge/forge-artifact-integrity": "workspace:*",
+    "@openge/forge-deterministic-json": "workspace:*",
+    "@openge/forge-path-safety": "workspace:0.1.1",
+    "jsonc-parser": "3.3.1"
   }
 }
