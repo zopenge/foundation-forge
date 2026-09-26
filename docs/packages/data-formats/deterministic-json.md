@@ -21,6 +21,7 @@ pnpm add @openge/forge-deterministic-json
 ## 核心能力
 
 - `assertJsonValue`：验证严格 JSON 值。
+- `cloneJsonValue`：严格校验并返回独立 JSON 副本，保留对象键的枚举顺序和数组顺序，供后续 schema 校验或异步处理复用。
 - `sortJsonValue`：递归复制并按 UTF-16 code-unit 顺序排序对象键；数组顺序保持不变。
 - `stringifyDeterministicJson`：按稳定顺序序列化，可控制缩进和末尾换行。
 - `DeterministicJsonError` 与稳定错误码。
@@ -39,6 +40,8 @@ const output = stringifyDeterministicJson(
 ## 行为与限制
 
 循环引用、稀疏数组、访问器、自定义 prototype、`undefined`、`bigint` 和非有限数值都会被拒绝，而不是静默转换。它不负责 schema 校验、摘要计算、文件 I/O 或持久化。
+
+复制接口不会执行 getter 或 `toJSON`。合法的 `__proto__` 自有数据键会完整保留，不改变副本的 prototype；普通对象和 null-prototype 输入均复制为普通 JSON 对象。副本与输入不共享可变对象，但不会自动冻结。
 
 ## 与其他 Foundation Forge 包的关系
 
