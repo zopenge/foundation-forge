@@ -8,6 +8,10 @@ export const assertJsonValue = (value: unknown): asserts value is JsonValue => {
   visitJsonValue(value, '$', new WeakSet(), false);
 };
 
+export const cloneJsonValue = (value: unknown): JsonValue => (
+  visitJsonValue(value, '$', new WeakSet(), false)
+);
+
 export const cloneSortedJsonValue = (value: unknown): JsonValue => (
   visitJsonValue(value, '$', new WeakSet(), true)
 );
@@ -120,7 +124,18 @@ const visitObject = (
         { reason: 'non-enumerable-property' },
       );
     }
-    output[key] = visitJsonValue(descriptor.value, propertyPath, ancestors, sortKeys);
+    const copied = visitJsonValue(descriptor.value, propertyPath, ancestors, sortKeys);
+    // JSON 数据键不能触发 Object.prototype 上的原型设置器。
+    if (key === '__proto__') {
+      Object.defineProperty(output, key, {
+        value: copied,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+    } else {
+      output[key] = copied;
+    }
   }
   return output;
 };
