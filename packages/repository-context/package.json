@@ -1,6 +1,6 @@
 {
   "name": "@openge/forge-repository-context",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "description": "Deterministic repository context planning and validation primitives",
   "type": "module",
   "main": "./dist/index.js",
@@ -40,7 +40,8 @@
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc -p tsconfig.json --noEmit --pretty false",
     "test": "vitest run",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage --maxWorkers=2",
+    "test:coverage:fast": "vitest run --coverage --maxWorkers=5"
   },
   "sideEffects": false,
   "engines": {
@@ -61,6 +62,7 @@
   },
   "dependencies": {
     "@openge/forge-generated-artifacts": "workspace:0.1.1",
+    "@openge/forge-source-snapshot": "workspace:0.2.1",
     "typescript": "6.0.3"
   }
 }

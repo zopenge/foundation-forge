@@ -8,11 +8,33 @@ import type { StoredRepositoryGeneration } from './contracts.js';
 const filesystemOptions = { pathCaseSensitivity: process.platform === 'win32' ? 'case-insensitive' as const : 'case-sensitive' as const };
 
 const parseGeneration = (source: string): StoredRepositoryGeneration => {
-  const value = JSON.parse(source) as Partial<StoredRepositoryGeneration>;
-  if (value.schemaVersion !== 1 || typeof value.generationId !== 'string' || !value.corpus) {
+  const value = JSON.parse(source) as Readonly<Record<string, unknown>>;
+  if (value.schemaVersion === 1) {
+    throw Object.assign(new Error('repository generation schema upgrade required'), { code: 'INDEX_SCHEMA_UPGRADE_REQUIRED' });
+  }
+  if (value.schemaVersion !== 2 || typeof value.corpusId !== 'string' || typeof value.generationId !== 'string'
+    || typeof value.inputDigest !== 'string' || !Array.isArray(value.scopes) || !Array.isArray(value.languages)
+    || !value.corpus || typeof value.corpus !== 'object' || !Array.isArray(value.files) || !Array.isArray(value.semanticInputs)
+    || (value.semanticConfigPath !== null && typeof value.semanticConfigPath !== 'string')
+    || typeof value.configurationDigest !== 'string' || typeof value.extractorVersion !== 'string'
+    || typeof value.sortingVersion !== 'string') {
     throw Object.assign(new Error('invalid repository generation'), { code: 'CORRUPT_INDEX' });
   }
-  return value as StoredRepositoryGeneration;
+  return {
+    schemaVersion: 2,
+    corpusId: value.corpusId,
+    generationId: value.generationId,
+    inputDigest: value.inputDigest,
+    scopes: value.scopes as StoredRepositoryGeneration['scopes'],
+    languages: value.languages as StoredRepositoryGeneration['languages'],
+    files: value.files as StoredRepositoryGeneration['files'],
+    semanticConfigPath: value.semanticConfigPath as string | null,
+    semanticInputs: value.semanticInputs as StoredRepositoryGeneration['semanticInputs'],
+    configurationDigest: value.configurationDigest,
+    extractorVersion: value.extractorVersion,
+    sortingVersion: value.sortingVersion,
+    corpus: value.corpus as StoredRepositoryGeneration['corpus'],
+  };
 };
 
 export interface BuildLock {

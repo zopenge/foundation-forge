@@ -6,6 +6,7 @@ import { extractTypeScript } from '../adapters/typescript.js';
 import type { Diagnostic, Edge, Entity } from '../core/contracts.js';
 import { validateCorpus } from '../core/validate.js';
 import { discoverSourceSnapshot } from './discovery.js';
+import { discoverSemanticInputs, repositoryInputDigest } from './semantic-inputs.js';
 import type {
   BuildRepositoryCorpusOptions,
   BuildRepositoryCorpusResult,
@@ -29,18 +30,24 @@ export const buildRepositoryCorpus = async (
   options: BuildRepositoryCorpusOptions,
 ): Promise<BuildRepositoryCorpusResult> => {
   const before = await discoverSourceSnapshot(options.rootDir, options.scopes, options.languages);
-  const configBytes = options.tsconfigPath === undefined ? null : await readFile(resolve(options.tsconfigPath));
+  const semanticBefore = await discoverSemanticInputs({
+    rootDir: options.rootDir,
+    sourceFiles: before.files,
+    ...(options.tsconfigPath === undefined ? {} : { tsconfigPath: options.tsconfigPath }),
+  });
   const identity = JSON.stringify({
-    schemaVersion: 1,
+    schemaVersion: 2,
     corpusId: options.corpusId,
     scopes: [...options.scopes].sort(),
     languages: [...options.languages].sort(),
     files: before.files,
-    tsconfigSha256: configBytes === null ? null : sha256(configBytes),
-    extractorVersion: 'fvc09-v1',
+    semanticConfigPath: semanticBefore.semanticConfigPath,
+    semanticInputs: semanticBefore.inputs,
+    configurationDigest: semanticBefore.configurationDigest,
+    extractorVersion: 'repository-context-v2',
     sortingVersion: 'v1',
   });
-  const inputDigest = before.digest;
+  const inputDigest = repositoryInputDigest(before.digest, semanticBefore.digest);
   const generationId = `generation-${sha256(identity)}`;
   const lock = await acquireBuildLock(options.indexRoot, inputDigest);
   try {
@@ -104,14 +111,32 @@ export const buildRepositoryCorpus = async (
         generation: null,
       };
     }
+    const semanticAfter = await discoverSemanticInputs({
+      rootDir: options.rootDir,
+      sourceFiles: after.files,
+      ...(options.tsconfigPath === undefined ? {} : { tsconfigPath: options.tsconfigPath }),
+    });
+    if (semanticAfter.digest !== semanticBefore.digest) {
+      return {
+        status: 'stale',
+        corpus: null,
+        diagnostics: [{ code: 'SEMANTIC_INPUT_CHANGED', details: { phase: 'build' } }],
+        generation: null,
+      };
+    }
     const generation: StoredRepositoryGeneration = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       corpusId: options.corpusId,
       generationId,
       inputDigest,
       scopes: [...options.scopes].sort(),
       languages: [...options.languages].sort(),
       files: before.files,
+      semanticConfigPath: semanticBefore.semanticConfigPath,
+      semanticInputs: semanticBefore.inputs,
+      configurationDigest: semanticBefore.configurationDigest,
+      extractorVersion: 'repository-context-v2',
+      sortingVersion: 'v1',
       corpus,
     };
     await publishRepositoryGeneration(options.indexRoot, generation, lock);
