@@ -1,6 +1,6 @@
 {
   "name": "@openge/forge-repository-context",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Deterministic repository context planning and validation primitives",
   "type": "module",
   "main": "./dist/index.js",
@@ -62,7 +62,7 @@
   },
   "dependencies": {
     "@openge/forge-generated-artifacts": "workspace:0.1.1",
-    "@openge/forge-source-snapshot": "workspace:0.2.1",
+    "@openge/forge-source-snapshot": "workspace:0.2.2",
     "typescript": "6.0.3"
   }
 }
