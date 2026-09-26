@@ -52,6 +52,8 @@ pnpm install
 pnpm check
 ```
 
+`pnpm check` stores successful validation evidence and verified tarballs in the ignored `.tmp/check-cache/` directory. Exact repeats reuse that evidence; documentation, evaluation tools, script tests, and affected package groups select the relevant checks while verifying unchanged inputs and outputs. See [validation modes](docs/maintenance/validation.md) for the scope of each check. Use `pnpm check:full` to run every check from a clean package build regardless of the cache.
+
 ## Versioning and releases
 
 Packages follow Semantic Versioning and use Changesets. Related package families may share fixed versions while unrelated packages evolve independently. Release candidates use the `next` npm dist-tag; stable releases use `latest`.

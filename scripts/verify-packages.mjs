@@ -7,4 +7,5 @@ const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
 await verifyLocalPackages({
   repositoryRoot,
   verificationRoot: resolve(repositoryRoot, '.tmp', 'package-verification'),
+  tarballCacheRoot: resolve(repositoryRoot, '.tmp', 'check-cache', 'packs'),
 });

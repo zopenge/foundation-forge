@@ -1,6 +1,7 @@
-import { spawnSync } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
 import {
   access,
+  copyFile,
   cp,
   mkdir,
   readFile,
@@ -8,7 +9,10 @@ import {
   rm,
   writeFile,
 } from 'node:fs/promises';
-import { dirname, relative, resolve } from 'node:path';
+import { availableParallelism } from 'node:os';
+import { basename, dirname, relative, resolve } from 'node:path';
+import { performance } from 'node:perf_hooks';
+import { promisify } from 'node:util';
 
 import { createPackageManagerInvocation } from './package-manager-command.mjs';
 import {
@@ -21,6 +25,29 @@ import {
 import { discoverWorkspacePackageModel } from './workspace-packages.mjs';
 
 const ignoredDirectories = new Set(['.git', '.tmp', 'coverage', 'dist', 'node_modules']);
+const execFileAsync = promisify(execFile);
+const packageConcurrency = Math.min(8, availableParallelism());
+
+export const runBounded = async (items, limit, task) => {
+  if (!Number.isSafeInteger(limit) || limit < 1) throw new Error('invalid task concurrency');
+  const results = new Array(items.length);
+  let next = 0;
+  let failed = false;
+  let failure;
+  const worker = async () => {
+    while (!failed && next < items.length) {
+      const index = next++;
+      try { results[index] = await task(items[index], index); }
+      catch (error) {
+        if (!failed) failure = error;
+        failed = true;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  if (failed) throw failure;
+  return results;
+};
 
 const run = (command, args, { cwd, env = process.env } = {}) => {
   const result = spawnSync(command, args, {
@@ -41,9 +68,27 @@ const run = (command, args, { cwd, env = process.env } = {}) => {
   return result.stdout.trim();
 };
 
+export const runCaptured = async (command, args, { cwd, env = process.env } = {}) => {
+  try {
+    const result = await execFileAsync(command, args, {
+      cwd, env, maxBuffer: 16 * 1_024 * 1_024, windowsHide: true, shell: false,
+    });
+    return result.stdout.trim();
+  } catch (error) {
+    throw new Error([
+      `${command} ${args.join(' ')} failed with status ${String(error.code ?? error.signal)}`,
+      error.stdout, error.stderr,
+    ].filter(Boolean).join('\n'), { cause: error });
+  }
+};
+
 const runPnpm = (args, options) => {
   const invocation = createPackageManagerInvocation('pnpm', args);
   return run(invocation.command, invocation.args, options);
+};
+const runPnpmAsync = (args, options) => {
+  const invocation = createPackageManagerInvocation('pnpm', args);
+  return runCaptured(invocation.command, invocation.args, options);
 };
 
 const pathExists = async (path) => {
@@ -89,7 +134,7 @@ const listMarkdownFiles = async (root, directory = root) => {
   return results.sort();
 };
 
-const verifyDocumentationLinks = async (repositoryRoot) => {
+export const verifyDocumentationLinks = async (repositoryRoot) => {
   const markdownLink = /\[[^\]]*\]\(([^)]+)\)/gu;
   for (const markdownPath of await listMarkdownFiles(repositoryRoot)) {
     const source = await readFile(resolve(repositoryRoot, markdownPath), 'utf8');
@@ -111,7 +156,7 @@ const verifyDocumentationLinks = async (repositoryRoot) => {
 
 const repositoryUrl = (repository) => typeof repository === 'string' ? repository : repository?.url;
 
-const verifyManifest = async (packageValue, rootManifest) => {
+export const verifyManifest = async (packageValue, rootManifest) => {
   const { manifest, name } = packageValue;
   if (manifest.private === true || manifest.publishConfig?.access !== 'public') {
     throw new Error(`${name} is not configured as a public package`);
@@ -174,40 +219,48 @@ const verifyTarball = (packageValue, tarballPath, repositoryRoot) => {
   if (packedManifest.includes('workspace:')) {
     throw new Error(`${packageValue.name} tarball contains unresolved workspace dependencies`);
   }
+  const packedPackage = JSON.parse(packedManifest);
+  if (packedPackage.name !== packageValue.name || packedPackage.version !== packageValue.version) {
+    throw new Error(`${packageValue.name} tarball identity differs from the workspace manifest`);
+  }
   return entries;
 };
 
 const packageSlug = (name) => name.replace(/^@/u, '').replaceAll('/', '-');
 
-const packPackages = async (model, verificationRoot) => {
+export const packPackages = async (model, verificationRoot, { reusedTarballs } = {}) => {
   const packDirectory = resolve(verificationRoot, 'packs');
   const extractDirectory = resolve(verificationRoot, 'extracted');
   await mkdir(packDirectory, { recursive: true });
   await mkdir(extractDirectory, { recursive: true });
-  const tarballs = new Map();
-  const extractedPackages = [];
-  for (const packageValue of model.packages) {
-    const before = new Set(await readdir(packDirectory));
-    runPnpm(['--filter', packageValue.name, 'pack', '--pack-destination', packDirectory], {
-      cwd: model.repositoryRoot,
-    });
-    const created = (await readdir(packDirectory)).filter((name) => !before.has(name));
-    if (created.length !== 1) {
-      throw new Error(`${packageValue.name} produced ${String(created.length)} tarballs`);
+  const rows = await runBounded(model.packages, packageConcurrency, async (packageValue, index) => {
+    let tarballPath = reusedTarballs?.get(packageValue.name);
+    if (tarballPath === undefined) {
+      const destination = resolve(packDirectory, String(index));
+      await mkdir(destination);
+      await runPnpmAsync(['--filter', packageValue.name, 'pack', '--pack-destination', destination], {
+        cwd: model.repositoryRoot,
+      });
+      const created = await readdir(destination);
+      if (created.length !== 1) {
+        throw new Error(`${packageValue.name} produced ${String(created.length)} tarballs`);
+      }
+      tarballPath = resolve(destination, created[0]);
     }
-    const tarballPath = resolve(packDirectory, created[0]);
     const entries = verifyTarball(packageValue, tarballPath, model.repositoryRoot);
-    process.stdout.write(`${packageValue.name}: verified ${String(entries.length)} packed files\n`);
-    tarballs.set(packageValue.name, tarballPath);
-    const extractedRoot = resolve(extractDirectory, packageSlug(packageValue.name));
+    const extractedRoot = resolve(extractDirectory, String(index));
     await mkdir(extractedRoot, { recursive: true });
     run('tar', ['-xzf', tarballPath, '-C', extractedRoot], { cwd: model.repositoryRoot });
-    extractedPackages.push({
-      ...packageValue,
-      packageRoot: resolve(extractedRoot, 'package'),
-    });
+    return { packageValue, tarballPath, packedFiles: entries.length,
+      extractedPackage: { ...packageValue,
+        packageRoot: resolve(extractedRoot, 'package') } };
+  });
+  const tarballs = new Map(rows.map(({ packageValue, tarballPath }) =>
+    [packageValue.name, tarballPath]));
+  for (const row of rows) {
+    process.stdout.write(`${row.packageValue.name}: verified ${String(row.packedFiles)} packed files\n`);
   }
-  return { extractedPackages, tarballs };
+  return { extractedPackages: rows.map((row) => row.extractedPackage), tarballs };
 };
 
 export const preparePackagesForPacking = async ({
@@ -226,11 +279,24 @@ const packageInstallationPath = (consumerRoot, packageName) => resolve(
   ...packageName.split('/'),
 );
 
+export const runConsumerChecks = async ({ importCheck, smokeChecks }) => {
+  const start = (task) => {
+    try { return Promise.resolve(task()); }
+    catch (error) { return Promise.reject(error); }
+  };
+  const results = await Promise.allSettled([start(importCheck), start(smokeChecks)]);
+  const failure = results.find((result) => result.status === 'rejected');
+  if (failure) throw failure.reason;
+  return results[0].value;
+};
+
 export const runCleanPackageConsumer = async ({
   consumerRoot,
   model,
   references,
+  smokePackageNames,
 }) => {
+  const started = performance.now();
   const { dependencies, overrides } = createConsumerConfiguration({
     packages: model.packages,
     references,
@@ -257,46 +323,82 @@ export const runCleanPackageConsumer = async ({
   );
   await writeFile(resolve(consumerRoot, 'verify.mjs'), createConsumerImportScript(model.packages), 'utf8');
   runPnpm(['install', '--prefer-offline', '--frozen-lockfile=false'], { cwd: consumerRoot });
-  const importOutput = run(process.execPath, ['verify.mjs'], { cwd: consumerRoot });
-
+  process.stdout.write(`pack:check consumer install: ${((performance.now() - started) / 1_000).toFixed(2)}s\n`);
   const binaries = Object.fromEntries(model.packages.flatMap((packageValue) => packageValue.bins.map(
     ({ name, target }) => [name, resolve(packageInstallationPath(consumerRoot, packageValue.name), target)],
   )));
-  for (const packageValue of model.packages) {
-    if (packageValue.verification.consumerScript === undefined) continue;
-    const targetRoot = resolve(consumerRoot, 'package-consumers', packageSlug(packageValue.name));
-    await cp(resolve(packageValue.packageRoot, 'package-consumer'), targetRoot, { recursive: true });
-    run(process.execPath, ['verify.mjs'], {
-      cwd: targetRoot,
-      env: {
-        ...process.env,
-        PACKAGE_CONSUMER_BINARIES: JSON.stringify(binaries),
-        PACKAGE_CONSUMER_ROOT: consumerRoot,
-      },
-    });
-  }
+  const smokes = model.packages.filter((packageValue) =>
+    packageValue.verification.consumerScript !== undefined
+      && (smokePackageNames === undefined || smokePackageNames.has(packageValue.name)));
+  const importOutput = await runConsumerChecks({
+    importCheck: async () => {
+      const start = performance.now();
+      const output = await runCaptured(process.execPath, ['verify.mjs'], { cwd: consumerRoot });
+      process.stdout.write(`pack:check consumer imports: ${((performance.now() - start) / 1_000).toFixed(2)}s\n`);
+      return output;
+    },
+    smokeChecks: async () => {
+      const start = performance.now();
+      await runBounded(smokes, packageConcurrency, async (packageValue) => {
+        const targetRoot = resolve(consumerRoot, 'package-consumers', packageSlug(packageValue.name));
+        await cp(resolve(packageValue.packageRoot, 'package-consumer'), targetRoot, { recursive: true });
+        await runCaptured(process.execPath, ['verify.mjs'], {
+          cwd: targetRoot,
+          env: {
+            ...process.env,
+            PACKAGE_CONSUMER_BINARIES: JSON.stringify(binaries),
+            PACKAGE_CONSUMER_ROOT: consumerRoot,
+          },
+        });
+      });
+      process.stdout.write(`pack:check consumer smokes: ${((performance.now() - start) / 1_000).toFixed(2)}s\n`);
+    },
+  });
   return `${importOutput}\nClean package consumer executed discovered smoke fixtures.`;
 };
 
-export const verifyLocalPackages = async ({ repositoryRoot, verificationRoot }) => {
+export const verifyLocalPackages = async ({ repositoryRoot, verificationRoot, tarballCacheRoot, onBuilt }) => {
   if (relative(repositoryRoot, verificationRoot).startsWith('..')) {
     throw new Error('package verification directory escaped the repository');
   }
   await rm(verificationRoot, { force: true, recursive: true });
+  let phaseStart = performance.now();
+  const reportPhase = (name) => {
+    const now = performance.now();
+    process.stdout.write(`pack:check ${name}: ${((now - phaseStart) / 1_000).toFixed(2)}s\n`);
+    phaseStart = now;
+  };
   try {
     const model = await discoverWorkspacePackageModel({ repositoryRoot });
     await verifyRepositoryHygiene(repositoryRoot);
     await verifyDocumentationLinks(repositoryRoot);
     for (const packageValue of model.packages) await verifyManifest(packageValue, model.rootManifest);
+    reportPhase('metadata');
     await preparePackagesForPacking({ model });
+    reportPhase('build');
+    onBuilt?.();
     const { extractedPackages, tarballs } = await packPackages(model, verificationRoot);
     await verifyBrowserBoundaries(extractedPackages);
+    reportPhase('tarballs and browser boundaries');
     const consumerRoot = resolve(verificationRoot, 'consumer');
     const references = new Map(model.packages.map(({ name }) => {
       const tarball = tarballs.get(name);
       return [name, `file:${relative(consumerRoot, tarball).replaceAll('\\', '/')}`];
     }));
     process.stdout.write(`${await runCleanPackageConsumer({ consumerRoot, model, references })}\n`);
+    reportPhase('clean consumer');
+    if (tarballCacheRoot !== undefined) {
+      await mkdir(tarballCacheRoot, { recursive: true });
+      const manifest = {};
+      for (const [name, tarball] of tarballs) {
+        const filename = basename(tarball);
+        await copyFile(tarball, resolve(tarballCacheRoot, filename));
+        manifest[name] = filename;
+      }
+      await writeFile(resolve(tarballCacheRoot, 'tarballs.json'),
+        `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+    }
+    reportPhase('tarball cache');
   } finally {
     await rm(verificationRoot, { force: true, recursive: true });
   }
