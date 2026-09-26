@@ -1,0 +1,58 @@
+{
+  "name": "@openge/forge-repository-policy",
+  "version": "0.1.0-rc.0",
+  "description": "Deterministic repository policy selection and validation primitives",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "browser": null,
+      "import": "./dist/node.js"
+    }
+  },
+  "bin": {
+    "forge-repository-policy": "./dist/node/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "eslint . --max-warnings 0",
+    "typecheck": "tsc -p tsconfig.json --noEmit --pretty false",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22.14.0"
+  },
+  "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zopenge/foundation-forge.git",
+    "directory": "packages/repository-policy"
+  },
+  "homepage": "https://github.com/zopenge/foundation-forge#readme",
+  "bugs": {
+    "url": "https://github.com/zopenge/foundation-forge/issues"
+  },
+  "dependencies": {
+    "@openge/forge-artifact-integrity": "workspace:*",
+    "@openge/forge-deterministic-json": "workspace:*",
+    "@openge/forge-path-safety": "workspace:0.1.1",
+    "jsonc-parser": "3.3.1"
+  }
+}
