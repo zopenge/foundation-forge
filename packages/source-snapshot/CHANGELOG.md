@@ -1,5 +1,12 @@
 # @openge/forge-source-snapshot
 
+## 0.2.2
+
+### Patch Changes
+
+- Updated dependencies [aae44f3]
+  - @openge/forge-deterministic-json@0.1.0
+
 ## 0.2.1
 
 ### Patch Changes

@@ -1,5 +1,11 @@
 # @openge/forge-repository-context
 
+## 1.1.1
+
+### Patch Changes
+
+- @openge/forge-source-snapshot@0.2.2
+
 ## 1.1.0
 
 ### Minor Changes

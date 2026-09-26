@@ -76,7 +76,7 @@ importers:
         specifier: workspace:0.1.0
         version: link:../artifact-integrity
       '@openge/forge-deterministic-json':
-        specifier: workspace:0.1.0-rc.1
+        specifier: workspace:0.1.0
         version: link:../deterministic-json
       '@openge/forge-path-safety':
         specifier: workspace:0.1.1
@@ -161,7 +161,7 @@ importers:
         specifier: workspace:0.1.1
         version: link:../generated-artifacts
       '@openge/forge-source-snapshot':
-        specifier: workspace:0.2.1
+        specifier: workspace:0.2.2
         version: link:../source-snapshot
       typescript:
         specifier: 6.0.3
@@ -192,7 +192,7 @@ importers:
         specifier: workspace:0.1.0
         version: link:../artifact-integrity
       '@openge/forge-deterministic-json':
-        specifier: workspace:0.1.0-rc.1
+        specifier: workspace:0.1.0
         version: link:../deterministic-json
       '@openge/forge-generated-artifacts':
         specifier: workspace:0.1.1
