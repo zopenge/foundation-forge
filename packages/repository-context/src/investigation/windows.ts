@@ -165,7 +165,9 @@ export const bestRecoveryHint = (
       const score = hits.size * 3 + Math.min(16, structure) + identifierHits * 18 + hyphenHits * 14
         + numberHits * 24 + anchorHits * 20 + exactTokenHits * 5 + Math.max(0, maxLineHits - 1) * 12
         + decisionScore;
-      if (score > (best?.score ?? 0)) best = { source: file.source, path: file.path, lineStart, lineEnd, text, score };
+      if (score > (best?.score ?? 0)) best = {
+        source: { ...file.source, lineStart, lineEnd }, path: file.path, lineStart, lineEnd, text, score,
+      };
     }
   }
   return best;

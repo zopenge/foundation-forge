@@ -15,3 +15,5 @@ Balance candidates across explicitly named directories in multi-component querie
 Repository-context generation indexes now use schema v2; schema v1 local caches must be rebuilt instead of being treated as current.
 
 当调查证据或批量读取的完整响应已满足总字节预算时，保留全部正文，避免平均分配文本额度造成不必要的裁剪。
+
+修正恢复片段的 SourceRef 行范围，使调查首查与续页的完整范围声明对应真实源码切片，避免将十行片段误标为整文件。
