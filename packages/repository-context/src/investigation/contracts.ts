@@ -1,4 +1,5 @@
 import type { Corpus, Diagnostic, SourceRef } from '../core/contracts.js';
+import type { EvidenceUnit } from './evidence-contracts.js';
 
 export type InvestigationRoute = 'investigate' | 'investigate-relations';
 
@@ -45,6 +46,7 @@ export interface InvestigationRelation {
 
 export interface InvestigationEvidence extends ReadRangeText {
   readonly score?: number;
+  readonly wholeFile?: boolean;
 }
 
 export interface ScopeCoverage {
@@ -54,10 +56,11 @@ export interface ScopeCoverage {
 
 export interface InvestigationResult {
   readonly status: 'ok' | 'ambiguous' | 'insufficient' | 'error';
-  readonly reason?: 'NO_USEFUL_CANDIDATE' | 'INVALID_ARGUMENT';
+  readonly reason?: 'NO_USEFUL_CANDIDATE' | 'REQUESTED_SCOPE_MISSING' | 'INVALID_ARGUMENT';
   readonly candidates: readonly InvestigationCandidate[];
   readonly relations: readonly InvestigationRelation[];
   readonly evidence: readonly InvestigationEvidence[];
+  readonly evidenceUnits?: readonly EvidenceUnit[];
   readonly sourceHints: readonly InvestigationEvidence[];
   readonly primaryScopeCoverage: ScopeCoverage;
   readonly truncated?: boolean;
@@ -67,6 +70,7 @@ export interface InvestigationResult {
 export interface InvestigationRequest {
   readonly query: string;
   readonly scope?: readonly string[];
+  readonly evidenceBudget?: Readonly<{ maxBytes: number }>;
 }
 
 export interface RepositoryInvestigator {
@@ -84,4 +88,5 @@ export interface RepositoryInvestigatorOptions {
   }>;
   readonly preferredScopes?: readonly string[];
   readonly promoteRelationEndpoints?: boolean;
+  readonly includeEvidence?: boolean;
 }

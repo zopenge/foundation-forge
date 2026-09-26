@@ -4,4 +4,8 @@ export { searchEntities, describeEntities } from './core/search.js';
 export { queryRelations } from './core/relations.js';
 export { fitResponse } from './core/budget.js';
 export type * from './investigation/contracts.js';
+export type * from './investigation/evidence-contracts.js';
+export type * from './investigation/evidence-plan.js';
 export { createRepositoryInvestigator } from './investigation/investigator.js';
+export { buildEvidenceUnits } from './investigation/evidence-units.js';
+export { selectEvidence } from './investigation/evidence-plan.js';

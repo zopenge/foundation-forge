@@ -12,6 +12,7 @@ export const bestSymbolMatch = (
   tokens: readonly string[],
   allTokens: readonly string[] = tokens,
   namespace: ReadonlySet<string> = new Set(),
+  acronyms: readonly string[] = [],
 ): SymbolMatch | null => {
   const query = [...new Set(tokens.map(affinityToken))];
   const full = allTokens.map(affinityToken);
@@ -27,10 +28,14 @@ export const bestSymbolMatch = (
       ? discriminative.length * 8 : 0;
     const exactPhrase = nameTokens.length >= 2 && containsSequence(full, nameTokens) ? nameTokens.length * 4 : 0;
     const phrase = Math.max(discriminativePhrase, exactPhrase);
+    const acronymMatches = acronyms.filter((acronym) => nameTokens.some((_, index) =>
+      nameTokens.slice(index, index + acronym.length).map((token) => token[0]).join('') === acronym)).length;
+    const lexicalScore = nameOverlap * 20 + signatureOnly * 4 + phrase + acronymMatches * 24;
+    if (lexicalScore === 0) continue;
     const signature = entity.signature ?? '';
     const executableBonus = /\bfunction\b|=>|=\s*(?:async\s*)?\(/u.test(signature) ? 12 : 0;
     const typePenalty = /^\s*export\s+(?:interface|type)\b/u.test(signature) ? 8 : 0;
-    const score = nameOverlap * 20 + signatureOnly * 4 + phrase + executableBonus - typePenalty;
+    const score = lexicalScore + executableBonus - typePenalty;
     if (score > (best?.score ?? 0)) best = { entity, score };
   }
   return best;

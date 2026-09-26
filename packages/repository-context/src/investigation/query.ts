@@ -1,3 +1,5 @@
+import { tokenize } from '../core/tokenize.js';
+
 export interface StructuralIntent {
   readonly decodeOrParse: boolean;
   readonly validation: boolean;
@@ -10,16 +12,52 @@ const stopWords = new Set([
   'package', 'packages', 'implementation', 'contract',
 ]);
 
-export const rawTokens = (value: string): readonly string[] => (
-  value.replace(/([a-z])([A-Z])/gu, '$1 $2').toLowerCase().match(/[a-z0-9]+/gu) ?? []
-).filter((token) => token.length >= 3 && !stopWords.has(token));
+export const rawTokens = (value: string): readonly string[] => tokenize(value)
+  .filter((token) => !stopWords.has(token));
 
-export const queryTokens = (query: string): readonly string[] => [...new Set(rawTokens(query))];
+export const queryTokens = (query: string): readonly string[] => {
+  const instructionVerbs = new Set((query.match(/\b(?:find|locate|identify)\b/giu) ?? [])
+    .map((token) => token.toLowerCase()));
+  return [...new Set(rawTokens(query).filter((token) => !instructionVerbs.has(token)))];
+};
+
+export const queryAcronyms = (query: string): readonly string[] => [...new Set(
+  (query.match(/\b[A-Z]{2,6}\b/gu) ?? []).map((value) => value.toLowerCase()),
+)];
+
+const normalizeQueryPath = (value: string): string => value
+  .replace(/^[`'"({<\x5B]+/u, '')
+  .replace(/[`'")\]}>,.;:!?]+$/u, '')
+  .replaceAll('\\', '/')
+  .replace(/\/{2,}/gu, '/')
+  .replace(/^\.\//u, '')
+  .replace(/\/+$/u, '');
+
+export const queryPathScopes = (query: string, knownRoots: ReadonlySet<string>): readonly string[] => [...new Set(
+  query.split(/\s+/u).flatMap((raw) => {
+    const value = normalizeQueryPath(raw);
+    if (!value.includes('/')
+      || /^[A-Za-z][A-Za-z0-9+.-]*:/u.test(value)
+      || value.startsWith('/')
+      || /^[A-Za-z]:\//u.test(value)
+      || value.split('/').includes('..')) return [];
+    const explicitRelative = /^[`'"({\x5B]*\.\//u.test(raw.replaceAll('\\', '/'));
+    const filePath = /\.[\p{L}\p{N}]+$/u.test(value);
+    return knownRoots.has(value.split('/')[0] ?? '') || explicitRelative || filePath ? [value] : [];
+  }),
+)];
+
+export const queryFileNames = (query: string): readonly string[] => [...new Set(
+  query.split(/\s+/u)
+    .map(normalizeQueryPath)
+    .filter((value) => !value.includes('/') && /\.[\p{L}\p{N}]+$/u.test(value)),
+)];
 
 export const affinityToken = (token: string): string => {
   if (['invalid', 'validate', 'validation', 'validator', 'valid'].includes(token)) return 'valid';
   if (['safe', 'safety'].includes(token)) return 'safe';
   if (['decode', 'decoder', 'decoded', 'decoding', 'decodes'].includes(token)) return 'decode';
+  if (['encode', 'encoder', 'encoded', 'encoding', 'encodes'].includes(token)) return 'encode';
   if (['inspect', 'inspection', 'inspected', 'inspecting'].includes(token)) return 'inspect';
   if (['compare', 'comparison', 'comparisons', 'compared', 'comparing'].includes(token)) return 'compare';
   if (['normalize', 'normalizes', 'normalized', 'normalizing', 'normalization'].includes(token)) return 'normalize';

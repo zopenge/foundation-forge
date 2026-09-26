@@ -28,6 +28,40 @@ test('build and investigate commands emit one structured JSON envelope each', as
   expect(JSON.parse(outputs[0] ?? '{}')).toMatchObject({ status: 'ok' });
 });
 
+test('investigate keeps --scope hard and reports terminal missing scope without parent fallback', async () => {
+  const repository = await createTemporaryRepository();
+  repositories.push(repository);
+  const outputs: string[] = [];
+  const write = (value: string): void => { outputs.push(value); };
+
+  expect(await runRepositoryContextCli([
+    'build', '--root', repository.rootDir, '--index', repository.indexRoot, '--corpus', 'fixture',
+    '--scope', 'src', '--language', 'typescript', '--tsconfig', repository.tsconfigPath,
+  ], { write })).toBe(0);
+  outputs.length = 0;
+
+  expect(await runRepositoryContextCli([
+    'investigate', '--root', repository.rootDir, '--index', repository.indexRoot,
+    '--query', 'worker pool export', '--scope', 'src/missing-worker-pool', '--view', 'evidence',
+  ], { write })).toBe(1);
+
+  expect(outputs).toHaveLength(1);
+  expect(JSON.parse(outputs[0] ?? '{}')).toMatchObject({
+    status: 'insufficient',
+    reason: 'REQUESTED_SCOPE_MISSING',
+    candidates: [],
+    evidence: [],
+    primaryScopeCoverage: {
+      covered: [],
+      missing: ['src/missing-worker-pool'],
+    },
+    diagnostics: [{
+      code: 'REQUESTED_SCOPE_MISSING',
+      details: { scopes: ['src/missing-worker-pool'] },
+    }],
+  });
+});
+
 test('unknown flags return INVALID_ARGUMENT without throwing', async () => {
   const outputs: string[] = [];
   expect(await runRepositoryContextCli(['check', '--wat'], { write: (value) => outputs.push(value) })).toBe(1);
