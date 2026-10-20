@@ -14,6 +14,10 @@ export type ProcessCommandRunner = (
   request: ProcessCommandRequest,
 ) => Promise<ProcessCommandResult>;
 
+export interface ProcessIdentityReaderOptions {
+  readonly runner?: ProcessCommandRunner;
+}
+
 export interface WindowsProcessControlOptions {
   readonly listenerBackend: 'netstat' | 'powershell';
   readonly runner?: ProcessCommandRunner;

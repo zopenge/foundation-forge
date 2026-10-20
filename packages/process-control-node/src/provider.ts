@@ -7,7 +7,10 @@ import {
   type ProcessControlProvider,
   type ProcessDescriptor,
   type ProcessIdentity,
+  type ProcessIdentityReader,
   type ProcessTerminationResult,
+  type ReadProcessIdentityRequest,
+  type ReadProcessIdentityResult,
   type TcpListener,
   type TerminateProcessRequest,
   type TerminateProcessTreeRequest,
@@ -18,8 +21,118 @@ import type {
   PosixProcessControlOptions,
   ProcessCommandResult,
   ProcessCommandRunner,
+  ProcessIdentityReaderOptions,
   WindowsProcessControlOptions,
 } from './contracts.js';
+
+export function createWindowsProcessIdentityReader(
+  options: ProcessIdentityReaderOptions = {},
+): ProcessIdentityReader {
+  return createIdentityReader('windows', options);
+}
+
+export function createPosixProcessIdentityReader(
+  options: ProcessIdentityReaderOptions = {},
+): ProcessIdentityReader {
+  return createIdentityReader('posix', options);
+}
+
+function createIdentityReader(
+  platform: 'posix' | 'windows',
+  options: ProcessIdentityReaderOptions,
+): ProcessIdentityReader {
+  const runner = options.runner ?? runProcessCommand;
+  return { readIdentity: (request) => queryProcessIdentity(platform, runner, request) };
+}
+
+async function queryProcessIdentity(
+  platform: 'posix' | 'windows',
+  runner: ProcessCommandRunner,
+  request: ReadProcessIdentityRequest,
+): Promise<ReadProcessIdentityResult> {
+  validateProcessIds([request.pid]);
+  assertNotAborted(request.signal);
+  const command = platform === 'windows' ? 'powershell.exe' : 'ps';
+  const args = platform === 'windows'
+    ? [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      `$observed = $null; try { try { $observed = [System.Diagnostics.Process]::GetProcessById(${String(request.pid)}) } catch [System.ArgumentException] { exit 0 }; [long]$remainder = 0; $milliseconds = [System.Math]::DivRem(($observed.StartTime.ToUniversalTime().Ticks - 621355968000000000L),10000L,[ref]$remainder); [Console]::WriteLine('{"ProcessId":'+$observed.Id.ToString([System.Globalization.CultureInfo]::InvariantCulture)+',"CreationDate":"/Date('+$milliseconds.ToString([System.Globalization.CultureInfo]::InvariantCulture)+')/"}'); } finally { if ($null -ne $observed) { $observed.Dispose() } }`,
+    ]
+    : ['-o', 'pid=', '-o', 'lstart=', '-p', String(request.pid)];
+  let result: ProcessCommandResult;
+  try {
+    result = await runner({
+      args,
+      command,
+      ...(request.signal === undefined ? {} : { signal: request.signal }),
+    });
+  } catch (error) {
+    assertNotAborted(request.signal);
+    if (error instanceof ProcessControlError) {
+      throw error;
+    }
+    throw new ProcessControlError(processControlErrorCodes.commandFailed, { command }, error);
+  }
+  assertNotAborted(request.signal);
+  if (result.stderr.trim().length > 0) {
+    throw new ProcessControlError(processControlErrorCodes.commandFailed, {
+      command, exitCode: result.exitCode, stderr: result.stderr,
+    });
+  }
+  if (platform === 'posix' && result.exitCode === 1 && result.stdout.trim().length === 0) {
+    return { status: 'ABSENT' };
+  }
+  assertCommandSucceeded(result, command);
+  return platform === 'windows'
+    ? parseWindowsIdentity(result.stdout, request.pid)
+    : parsePosixIdentity(result.stdout, request.pid);
+}
+
+function parseWindowsIdentity(output: string, pid: number): ReadProcessIdentityResult {
+  if (output.trim().length === 0) {
+    return { status: 'ABSENT' };
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(output);
+  } catch (error) {
+    throw new ProcessControlError(processControlErrorCodes.commandFailed, {}, error);
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) {
+      return { status: 'ABSENT' };
+    }
+    if (value.length === 1) {
+      value = value[0];
+    }
+  }
+  if (!isRecord(value) || value.ProcessId !== pid) {
+    throw new ProcessControlError(processControlErrorCodes.processIdentityUnavailable, { pid });
+  }
+  return foundIdentity(pid, value.CreationDate);
+}
+
+function parsePosixIdentity(output: string, pid: number): ReadProcessIdentityResult {
+  const lines = output.split(/\r?\n/u).filter((line) => line.trim().length > 0);
+  if (lines.length === 0) {
+    return { status: 'ABSENT' };
+  }
+  const match = lines.length === 1 ? /^\s*(\d+)\s+(.{24})\s*$/u.exec(lines[0] ?? '') : null;
+  if (match === null || Number(match[1]) !== pid) {
+    throw new ProcessControlError(processControlErrorCodes.processIdentityUnavailable, { pid });
+  }
+  return foundIdentity(pid, match[2]?.trim());
+}
+
+function foundIdentity(pid: number, value: unknown): ReadProcessIdentityResult {
+  const startToken = readNonEmptyString(value);
+  if (startToken === undefined || startToken.trim().length === 0) {
+    throw new ProcessControlError(processControlErrorCodes.processIdentityUnavailable, { pid });
+  }
+  return { identity: { pid, startToken }, status: 'FOUND' };
+}
 
 export function createWindowsProcessControl(
   options: WindowsProcessControlOptions,
