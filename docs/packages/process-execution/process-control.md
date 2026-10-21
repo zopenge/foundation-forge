@@ -19,6 +19,7 @@ pnpm add @openge/forge-process-control
 ## 核心能力
 
 - `ProcessIdentity`：用 PID 与稳定 start token 共同标识进程，降低 PID 复用误杀风险。
+- `ProcessIdentityReader`：只读指定 PID 的身份，不要求进程描述、监听发现或终止能力。
 - `ProcessDescriptor`、`TcpListener` 与进程/监听查询 contract。
 - 单进程和进程树终止 request、policy、result contract。
 - `ProcessControlProvider`：由平台实现提供发现和终止能力。
@@ -31,6 +32,25 @@ import { selectTcpListeners } from '@openge/forge-process-control';
 
 const selected = selectTcpListeners(discoveredListeners, { ports: [3000, 5173] });
 ```
+
+只需要身份的租约管理层或进程监测层可以依赖窄契约：
+
+```ts
+import type {
+  ProcessIdentityReader,
+  ReadProcessIdentityRequest,
+  ReadProcessIdentityResult,
+} from '@openge/forge-process-control';
+
+function readIdentity(
+  reader: ProcessIdentityReader,
+  request: ReadProcessIdentityRequest,
+): Promise<ReadProcessIdentityResult> {
+  return reader.readIdentity(request);
+}
+```
+
+`FOUND` 的 `identity` 仅包含 `pid`、`startToken`；`ABSENT` 表示查询已确认目标不存在。权限不足、查询失败、无效或缺失的 start token、无法解析或无法确认身份的结果均以 `ProcessControlError` 拒绝，调用方不能将这些拒绝转换为 `ABSENT`。start token 是来源相关的不透明值，比较时应使用同一合法来源，不应自行生成或推断。
 
 ## 行为与限制
 

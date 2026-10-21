@@ -1,8 +1,9 @@
 import { execFile } from 'node:child_process';
+import { ProcessControlError, processControlErrorCodes } from '@openge/forge-process-control';
 
 import type { ProcessCommandRunner } from './contracts.js';
 
-export const runProcessCommand: ProcessCommandRunner = async (request) => new Promise((resolve) => {
+export const runProcessCommand: ProcessCommandRunner = async (request) => new Promise((resolve, reject) => {
   execFile(
     request.command,
     [...request.args],
@@ -13,11 +14,17 @@ export const runProcessCommand: ProcessCommandRunner = async (request) => new Pr
       windowsHide: true,
     },
     (error, stdout, stderr) => {
-      const exitCode = error === null
-        ? 0
-        : typeof error.code === 'number'
-          ? error.code
-          : 1;
+      if (error !== null && typeof error.code !== 'number') {
+        reject(new ProcessControlError(
+          request.signal?.aborted === true
+            ? processControlErrorCodes.operationAborted
+            : processControlErrorCodes.commandFailed,
+          { command: request.command },
+          error,
+        ));
+        return;
+      }
+      const exitCode = typeof error?.code === 'number' ? error.code : 0;
       resolve({ exitCode, stderr, stdout });
     },
   );

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setImmediate } from 'node:timers';
 import test from 'node:test';
 
 import {
@@ -11,7 +12,20 @@ import {
   loadPackageVerification,
   verifyBrowserBoundaries,
 } from '../package-verification.mjs';
-import { preparePackagesForPacking } from '../package-consumer-runner.mjs';
+import * as packageRunner from '../package-consumer-runner.mjs';
+
+const { preparePackagesForPacking, runBounded, runCaptured, runConsumerChecks } = packageRunner;
+
+test('documentation links reject missing local targets and accept present targets', async (context) => {
+  assert.equal(typeof packageRunner.verifyDocumentationLinks, 'function');
+  await mkdir(join('.tmp', 'tests'), { recursive: true });
+  const root = await mkdtemp(join('.tmp', 'tests', 'documentation-links-'));
+  context.after(() => rm(root, { force: true, recursive: true }));
+  await writeFile(join(root, 'README.md'), '[target](./target.md)\n');
+  await assert.rejects(packageRunner.verifyDocumentationLinks(root), /missing local target/u);
+  await writeFile(join(root, 'target.md'), '# Target\n');
+  await packageRunner.verifyDocumentationLinks(root);
+});
 
 const createPackage = async (context, {
   bins = [],
@@ -165,4 +179,102 @@ test('removes stale build output before rebuilding packages for packing', async 
   });
 
   assert.deepEqual(await readdir(join(packageRoot, 'dist')), ['fresh.js']);
+});
+
+test('bounded package work preserves order and drains active jobs after failure', async () => {
+  assert.equal(typeof runBounded, 'function');
+  const pending = () => {
+    let resolve;
+    let reject;
+    const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+    return { promise, resolve, reject };
+  };
+  const gates = [pending(), pending(), pending()];
+  const started = [pending(), pending(), pending()];
+  const jobs = [];
+  let active = 0;
+  let peak = 0;
+  const work = runBounded(['first', 'second', 'third'], 2, async (name, index) => {
+    jobs.push(name);
+    active += 1;
+    peak = Math.max(peak, active);
+    started[index].resolve();
+    try { return await gates[index].promise; }
+    finally { active -= 1; }
+  });
+  await Promise.all([started[0].promise, started[1].promise]);
+  assert.deepEqual(jobs, ['first', 'second']);
+  gates[1].resolve('second-result');
+  await started[2].promise;
+  gates[0].resolve('first-result');
+  gates[2].resolve('third-result');
+  assert.deepEqual(await work, ['first-result', 'second-result', 'third-result']);
+  assert.equal(peak, 2);
+
+  const secondStarted = pending();
+  const finishSecond = pending();
+  let secondFinished = false;
+  const failed = runBounded(['first', 'second', 'never'], 2, async (name) => {
+    jobs.push(name);
+    if (name === 'first') {
+      await secondStarted.promise;
+      throw new Error('first failed');
+    }
+    secondStarted.resolve();
+    await finishSecond.promise;
+    secondFinished = true;
+    return name;
+  });
+  await secondStarted.promise;
+  await new Promise((resolve) => setImmediate(resolve));
+  finishSecond.resolve();
+  await assert.rejects(failed, /first failed/u);
+  assert.deepEqual(jobs.slice(3), ['first', 'second']);
+  assert.equal(secondFinished, true);
+
+  const laterFailure = pending();
+  const concurrentFailures = runBounded(['first', 'second'], 2, async (name) => {
+    if (name === 'first') throw new Error('first failure');
+    await laterFailure.promise;
+    throw new Error('later failure');
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  laterFailure.resolve();
+  await assert.rejects(concurrentFailures, /first failure/u);
+});
+
+test('captured package commands retain success and failure output', async () => {
+  assert.equal(typeof runCaptured, 'function');
+  const output = await runCaptured(process.execPath,
+    ['-e', "process.stdout.write('packed\\n')"], { cwd: process.cwd() });
+  assert.equal(output, 'packed');
+  await assert.rejects(runCaptured(process.execPath,
+    ['-e', "process.stderr.write('invalid tarball\\n'); process.exit(7)"],
+    { cwd: process.cwd() }), /status 7[\s\S]*invalid tarball/u);
+});
+
+test('consumer imports and smokes start together and drain on failure', async () => {
+  assert.equal(typeof runConsumerChecks, 'function');
+  let finishSmoke;
+  const smokeDone = new Promise((resolve) => { finishSmoke = resolve; });
+  const started = [];
+  const work = runConsumerChecks({
+    importCheck: async () => { started.push('imports'); throw new Error('import failed'); },
+    smokeChecks: async () => { started.push('smokes'); await smokeDone; },
+  });
+  assert.deepEqual(started, ['imports', 'smokes']);
+  let settled = false;
+  work.catch(() => { settled = true; });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(settled, false);
+  finishSmoke();
+  await assert.rejects(work, /import failed/u);
+  assert.equal(settled, true);
+
+  let smokeStarted = false;
+  await assert.rejects(runConsumerChecks({
+    importCheck: () => { throw new Error('synchronous import failure'); },
+    smokeChecks: async () => { smokeStarted = true; },
+  }), /synchronous import failure/u);
+  assert.equal(smokeStarted, true);
 });

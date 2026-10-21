@@ -4,6 +4,23 @@ export interface ProcessIdentity {
   readonly startToken: string;
 }
 
+export interface ReadProcessIdentityRequest {
+  readonly pid: number;
+  readonly signal?: AbortSignal;
+}
+
+export type ReadProcessIdentityResult =
+  | {
+    readonly identity: Pick<ProcessIdentity, 'pid' | 'startToken'>;
+    readonly status: 'FOUND';
+  }
+  | { readonly status: 'ABSENT' };
+
+/** 仅查询进程身份；无法确认身份时拒绝，不能视为进程不存在。 */
+export interface ProcessIdentityReader {
+  readIdentity(request: ReadProcessIdentityRequest): Promise<ReadProcessIdentityResult>;
+}
+
 export interface ProcessDescriptor extends ProcessIdentity {
   readonly commandLine?: string;
   readonly name?: string;
