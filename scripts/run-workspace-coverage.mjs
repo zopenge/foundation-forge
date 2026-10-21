@@ -1,6 +1,5 @@
 import { spawn } from 'node:child_process';
 import { readdir } from 'node:fs/promises';
-import { availableParallelism } from 'node:os';
 import { resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
@@ -52,7 +51,7 @@ const runPackage = (packageValue) => new Promise((resolvePromise, reject) => {
 
 export const runWorkspaceCoverage = async ({
   packages,
-  concurrency = Math.min(2, availableParallelism()),
+  concurrency = 1,
   run = runPackage,
 } = {}) => {
   const discovered = packages ?? (await discoverWorkspacePackageModel({ repositoryRoot })).packages;

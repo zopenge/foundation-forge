@@ -1,4 +1,5 @@
 import { expect, test, vi } from 'vitest';
+import { resolve } from 'node:path';
 
 import { ProcessControlError, processControlErrorCodes } from '@openge/forge-process-control';
 
@@ -177,6 +178,26 @@ test('Posix reader confirms the ps no-match exit status as absence', async () =>
 
   await expect(createPosixProcessIdentityReader({ runner }).readIdentity({ pid: 42 }))
     .resolves.toEqual({ status: 'ABSENT' });
+});
+
+test('Posix reader rejects a native command launch failure instead of reporting absence', async () => {
+  const { runProcessCommand } = await import('../src/command-runner.js');
+  const reader = createPosixProcessIdentityReader({
+    runner: request => runProcessCommand({
+      ...request,
+      command: resolve('.tmp', 'identity-reader-command-does-not-exist'),
+    }),
+  });
+  await expect(reader.readIdentity({ pid: process.pid })).rejects.toMatchObject({
+    code: processControlErrorCodes.commandFailed,
+    cause: { code: 'ENOENT' },
+  });
+});
+
+test('native command runner preserves a numeric no-match exit status', async () => {
+  const { runProcessCommand } = await import('../src/command-runner.js');
+  await expect(runProcessCommand({ command: process.execPath, args: ['-e', 'process.exit(1)'] }))
+    .resolves.toEqual({ exitCode: 1, stdout: '', stderr: '' });
 });
 
 test.each([

@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
-import { availableParallelism } from 'node:os';
 import { resolve } from 'node:path';
 import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -35,7 +34,7 @@ test('coverage scheduling discovers test files and starts larger suites first', 
   }
 });
 
-test('default coverage scheduling runs no more than two packages at once', async () => {
+test('default coverage scheduling reserves workers for one package at a time', async () => {
   await mkdir(resolve('.tmp/tests'), { recursive: true });
   const root = await mkdtemp(resolve('.tmp/tests', 'coverage-concurrency-'));
   try {
@@ -53,7 +52,7 @@ test('default coverage scheduling runs no more than two packages at once', async
       await delay(20);
       active -= 1;
     } });
-    assert.equal(maximum, Math.min(2, availableParallelism()));
+    assert.equal(maximum, 1);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
