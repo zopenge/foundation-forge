@@ -21,6 +21,7 @@ Provider-neutral TypeScript foundation libraries for reusable cross-platform cap
 | Repository tooling | Git file discovery, repository context planning, text integrity, and deterministic source snapshots | [仓库工具](docs/packages/repository-tooling/README.md) |
 | Workspace tooling | Neutral dependency graphs, pnpm discovery, checks, and CLI integration | [Workspace 工具](docs/packages/workspace-tooling/README.md) |
 | Process execution | Process-control contracts/providers and bounded asynchronous command execution | [进程与命令执行](docs/packages/process-execution/README.md) |
+| Release tooling | Explicit Git integration releases and Vercel production verification | [Git 发布与生产复核](docs/packages/release-tooling/README.md) |
 
 Install only the packages required by your application. Exact package names, public entrypoints, examples, and limitations are documented once in the linked package pages rather than duplicated here.
 

@@ -12,6 +12,7 @@
 | Git 文件发现、上下文规划、文本完整性、确定性源码快照 | [仓库工具](packages/repository-tooling/README.md) |
 | Workspace 依赖图、pnpm 读取与循环检查 | [Workspace 工具](packages/workspace-tooling/README.md) |
 | 进程发现、终止与受控命令执行 | [进程与命令执行](packages/process-execution/README.md) |
+| 固定 Git 提交发布、Vercel 生产部署与域名复核 | [Git 发布与生产复核](packages/release-tooling/README.md) |
 
 ## 怎么阅读
 
