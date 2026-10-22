@@ -87,6 +87,10 @@ export const processControlErrorCodes = {
   processIdentityChanged: 'PROCESS_IDENTITY_CHANGED',
   processIdentityUnavailable: 'PROCESS_IDENTITY_UNAVAILABLE',
   unsupportedBackend: 'UNSUPPORTED_BACKEND',
+  scopeInvalidInput: 'PROCESS_SCOPE_INVALID_INPUT',
+  scopeUnsupported: 'PROCESS_SCOPE_UNSUPPORTED',
+  scopeBinding: 'PROCESS_SCOPE_BINDING',
+  scopeUnknown: 'PROCESS_SCOPE_UNKNOWN',
 } as const;
 
 export type ProcessControlErrorCode = typeof processControlErrorCodes[

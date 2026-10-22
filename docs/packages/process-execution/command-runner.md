@@ -60,7 +60,15 @@ Runner 在 spawn 后通过注入的 Provider 获取稳定进程身份；无法�
 
 `terminationTimeoutMs` 是完整终止管理预算，还用于约束进程退出后继承 pipe 的关闭等待。Provider 不响应或 descendant 长期保持 pipe 打开时，会以结构化 `termination-failure` 收口，而不是无限等待。
 
-Observer 同步执行；observer 异常转成有界 diagnostic，不中断命令生命周期。异步队列、backpressure、日志持久化和 UI 呈现由消费者负责。
+Observer 同步执行；普通命令的 observer 异常转成有界 diagnostic。启用 owned scope 时 observer 异常还会取消作用域，避免启动门观察者失败后继续放行。异步队列、backpressure、日志持久化和 UI 呈现由消费者负责。
+
+### owned scope 与持久化启动门
+
+Node 选项显式注入 Core 的 `ownedScopeProvider`，本包不导入或选择 Node Provider。spec 设置 `ownedScope: { start: 'automatic' | 'manual', binding }`；binding 是 1–256 个可见 ASCII 字符。缺 Provider、非 force 策略、不合法 binding、manual 无有限 timeout、run+manual 都在真实 argv 前拒绝。
+
+manual 使用 start()。runner 先获取 helper 身份、调用 bind，再发送 scope-ready（scopeId/binding/identity）；调用方完成持久化和所有权检查后，调用 `running.authorizeStart()`。并发重复放行幂等；取消、超时、身份失败或结束之后不能恢复授权。automatic 在 bind 与事件交付成功后放行。
+
+timeout 从 scope 启动计时，覆盖手动等待和关闭；输出捕获、上限和事件沿用普通命令实现。清理使用独立的有限预算，结果的 ownedScope 保存完整关闭事实。unknown 一律为 termination-failure，并保留 COMMAND_SCOPE_UNSUPPORTED/FAILED/UNKNOWN 诊断；不会按直接 child 的 exit0 判成功。浏览器根入口仍只有契约。
 
 本包没有同步命令 API、shell execution、全局 SIGINT/SIGTERM handler、service supervision、readiness probe、restart、服务依赖图、端口归属规则或浏览器启动逻辑。
 

@@ -9,6 +9,7 @@ pnpm exec forge-vercel-release login
 pnpm exec forge-vercel-release publish
 pnpm exec forge-vercel-release status
 pnpm exec forge-vercel-release verify --sha <full-40-character-sha>
+pnpm exec forge-vercel-release recover
 ```
 
 ## Configuration
@@ -17,7 +18,8 @@ The default file is `release.config.json`, relative to `--cwd` (default: the cur
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
+  "source": { "mode": "workspace" },
   "git": {
     "remote": "origin",
     "repository": "github.com/example/site",
@@ -46,7 +48,35 @@ The default file is `release.config.json`, relative to `--cwd` (default: the cur
 
 Both command arrays contain 1–32 entries. Each entry accepts only `command`, optional `args` (up to 128 arguments), and optional `timeoutMs`. Times are positive safe integers: commands and deployment waits are capped at one hour, requests at five minutes, and `pollMs` cannot exceed `deploymentMs`. Command-specific timeouts are capped by `commandMs`. Output is bounded per stream to `maxOutputBytes` (at most 1 MiB); configured job output may be truncated, while truncated Git/API protocol output fails closed. Add `.tmp/` to the consuming repository's ignore rules.
 
-Acceptance commands receive `FORGE_RELEASE_SHA`, `FORGE_RELEASE_URL`, and `FORGE_RELEASE_DEPLOYMENT_ID`. They own application-specific assertions. The public build marker must be deployed from source and contain the same full SHA as the Git deployment; do not fabricate it during verification.
+Prepare/check/acceptance commands receive protected `FORGE_RELEASE_COMMAND=check|publish|verify` and `FORGE_RELEASE_SHA`; acceptance also receives `FORGE_RELEASE_URL` and `FORGE_RELEASE_DEPLOYMENT_ID`. Inherited values cannot override this metadata. It describes intent, not business authorization. Consumers own business assertions and any idempotent remote preparation. The build marker must be deployed from source and contain the full SHA; do not fabricate it during verification.
+
+## Managed commit mode
+
+Schema 2 requires an explicit source; schema 1 is rejected without conversion. The example above executes directly in the existing clean workspace. To use one reusable checkout, replace `source` with:
+
+```json
+{
+  "mode": "managed-commit",
+  "slotPath": ".tmp/release-slot",
+  "maxBytes": 2147483648,
+  "minFreeBytes": 5368709120,
+  "sampleIntervalMs": 1000,
+  "install": { "packageManager": "pnpm" },
+  "prepare": []
+}
+```
+
+Commit ignore rules for the slot and `.tmp/forge-vercel-release/` first. `slotPath` uses relative ASCII components without `.`, `..`, `.git` or overlap with management metadata. Byte limits are positive safe integers; the example allows 2 GiB logical bytes and requires 5 GiB free. Sampling intervals are 250–5000 ms. `prepare` permits 0–32 foreground commands with the same command schema as checks. The public package does not bind a drive, project, or business permission.
+
+Managed inputs come from one full SHA on the development branch: committed config, scripts, lockfile and exact `packageManager: "pnpm@<version>"`. Tracked files/index/config must be clean; unrelated untracked files remain untouched. Config objects cannot override managed inputs. A real independent clone fetches unpushed candidate objects from the frozen source, runs `pnpm install --frozen-lockfile`, prepare and checks, and only then permits pushes. The installed pnpm version must match; the tool does not download another pnpm version. It never copies source `.git/config`, creates worktrees, switches the source branch, resets/stashes/cleans, forces installation or relocates the shared store.
+
+One owned slot reuses dependencies and same-SHA output; later commits require a clean fast-forward. Dirty/diverged checkouts fail without a second slot. Source symlinks, gitlinks, LFS pointers, unsupported encodings/filenames, external Git object dependencies and replaced/junction roots are rejected. Git tree listings are streamed with bounded records, rather than accepted after capture truncation. Inherited Git directory/index/object-database/namespace overrides are rejected; trusted authentication/routing still applies. An existing anchor cannot silently rebind to a different slot/config, or switch execution to workspace mode.
+
+Logical-byte accounting includes every slot entry plus the source anchor; hardlinks count separately, internal links are not traversed, and external/unknown links fail. Each observation visits at most 500000 entries. Metadata writes reserve their temporary peak. Admission, command monitoring and stage observations cancel on limit violations or incomplete observations. Reports expose observed maxima, free-space minima and observation gaps. **Finite sampling is not an OS quota:** writes may briefly exceed a limit between observations. The tool does not modify host quotas or clean shared stores.
+
+Commands must finish in the foreground. Managed execution requires Windows x64 Job Objects or Linux/glibc x64 subreaper/wait/pidfd support. A runner manual gate persists the real identity, scope ID and exact run/command binding, rechecks budget/ownership, then authorizes the job. Only matching OS-proven normal/empty closure permits another command or lock release. Cancellation, crash gaps, identity changes or surviving descendants remain unknown even if force cleanup proves emptiness. Historical schema-2 polling witnesses remain readable but cannot establish closure or release a lock. Old gate/result files are never executed or automatically removed.
+
+Koffi 3.3.3 is a pinned, lazy native dependency. This repository and tarball consumers disable its install script with `allowBuilds.koffi: false`; consumers should do the same. Missing prebuilds/capabilities fail before the job, with no runtime download, compilation or fallback. Owned scopes manage trusted commands, not a security sandbox: do not delegate work to WMI/system services or other external process owners. Workspace mode retains its existing behavior.
 
 ## Commands and side effects
 
@@ -57,10 +87,13 @@ Acceptance commands receive `FORGE_RELEASE_SHA`, `FORGE_RELEASE_URL`, and `FORGE
 | `status` | Read a deployment for `--sha`, otherwise the latest publish receipt's frozen SHA, otherwise local HEAD if no receipt exists. Returns deployment state; successful querying alone does not imply READY. No checks, acceptance, or pushes. |
 | `verify` | Independently query project and deployment, require READY and correct Git source, then verify production alias, anonymous build marker, and acceptance jobs. Uses the same SHA selection as `status`. No pushes. |
 | `login` | Explicitly delegate to the pinned official Vercel CLI and let the user authorize it. No release config is required. Bounded to ten minutes. The CLI prints login instructions to stderr. |
+| `recover` | Managed mode only: claim recovery, inspect owner/processes/real refs/deployment, reconcile proven facts and release the exact old lock only when closure is established. No install, checks, acceptance, pushes, deployment creation or rollback. |
 
-Options are `--cwd DIR`, `--config FILE`, and `--sha SHA` (only `status`/`verify`). `--help` prints JSON usage. Standard output is one structured JSON report. Exit codes: `0` successful command, `1` operational failure, `2` invalid CLI arguments. SIGINT/SIGTERM cancel active work and release owned locks. No command automatically commits, switches branches, force-pushes, creates/uploads deployments, rolls back, or rewrites history. The only Vercel API requests are GET requests through `vercel api --raw --non-interactive`, using the official CLI session. Missing authentication returns `AUTH_REQUIRED`; only `login` initiates login.
+Options are `--cwd DIR`, `--config FILE`, and `--sha SHA` (only `status`/`verify`). `--help` prints JSON usage. Standard output is one structured JSON report. Exit codes: `0` successful command, `1` operational failure, `2` invalid CLI arguments. SIGINT/SIGTERM cancel active work; managed locks are released only with proven closure/effects. No command automatically commits, switches branches, force-pushes, creates/uploads deployments, rolls back, or rewrites history. Vercel requests are GET through `vercel api --raw --non-interactive`, reusing the official CLI session. Only `login` initiates login.
 
-Same-SHA reruns issue ordinary exact-SHA pushes and let the Git server report up-to-date refs through porcelain output; they never skip a push based on an earlier local snapshot. They find existing deployments and never request another deployment or upload. If a Git push succeeds and a later step fails, that success is retained in `effects`; an ambiguous push is `unknown` and requires inspecting remote state. The next publish re-fetches state before continuing. After the release ref is pushed, `recovery.nextCommand` recommends independent verification of the exact SHA.
+Same-SHA reruns use ordinary exact-SHA pushes and the server's porcelain up-to-date result, locating existing deployments without requesting another upload. Success survives later failure in `effects`. An ambiguous managed push retains `unknown` and its lock: use `recover` before retrying. With proven closure, candidate refs reconcile to `already-current`, ancestor refs to `not-current` (observed state, not “never attempted”). Later/diverged/unavailable refs retain the lock. Original publish effects/errors remain in the receipt; recovery appends observations and status checks current refs before showing reconciled facts. A crash before closure was recorded remains unknown even after processes disappear. No force-confirmation or automatic stale-lock deletion exists. Follow the quoted `recovery.nextCommand`; unresolved identity gaps require maintainer investigation of that exact run.
+
+In managed mode, status/verify select the latest publish receipt even after later source/config/check changes; unknown requested SHAs fail. Verify locks and uses the original exact checkout/config/scripts. Missing/untrusted checkouts fail without installing or falling back to current source. Check never overwrites publish selection. The command table's direct-workspace SHA fallback applies only to workspace mode.
 
 Project binding checks compare the configured repository and production branch against `project.link`. Deployment details are requested with `withGitRepoInfo=true`; only authoritative `gitSource` provider, repository identifier, SHA and ref establish source identity. GitHub custom-host identity additionally binds the normalized host and port from both link and source; the same repository ID on a different host is rejected. Deployment `source` metrics and caller-supplied `meta` never establish provenance; list metadata only locates detail candidates. Supported Git links are GitHub (including limited/custom-host variants), GitLab and Bitbucket. Missing authoritative identity and unsupported providers fail closed.
 
@@ -78,9 +111,9 @@ const report = await runRelease({
 if (!report.ok) console.error(report.error);
 ```
 
-The root exports only contracts and `releaseErrorCodes`, and is browser-safe. `./node` is explicitly `browser: null` and exports `runRelease`, `validateReleaseConfig`, and `ReleaseError`. `runRelease` accepts `command`, `cwd`, optional `config` or `configPath`, `sha`, `signal`, `transport`, and `onLoginOutput`. Config objects take precedence over files and are cloned/validated. `transport` explicitly supplies `api(path, signal)` and anonymous `buildInfo(url, signal)` operations for controlled external boundaries; implementations must honor abort signals. `onLoginOutput` receives redacted official login output. The CLI supplies this callback; Node callers must supply it to display login instructions live.
+The root exports only contracts and `releaseErrorCodes`, and is browser-safe. `./node` is explicitly `browser: null` and exports `runRelease`, `validateReleaseConfig`, and `ReleaseError`. Options include `command`, `cwd`, `configPath`, workspace-only `config`, `sha`, `signal`, `transport`, and `onLoginOutput`. Config objects are cloned/validated; managed callers must use a committed file. `transport` supplies only explicit `api(path, signal)` and anonymous `buildInfo(url, signal)` boundaries and must honor abort signals. Node callers supply `onLoginOutput` to display redacted official login instructions.
 
-Reports include schema version, timestamps, candidate SHA, config SHA-256, bounded job steps, explicit development/release push effects, deployment identity/state, and structured errors. `.tmp/forge-vercel-release/latest-publish.json` atomically stores the latest acquired publish attempt with a fixed SHA, including partial failures. Status/verify reject a receipt with a different config digest; pass an explicit SHA to make a changed-target selection intentional. Reports are local recovery data, not signed authorization. A lock contains PID, unique ownership token and acquisition time; ownership is checked immediately before each push, before writing the receipt, and before release. An existing or stale lock is never stolen. After a crash, inspect its owner and remote/deployment state before removing that exact stale lock. Abrupt process termination cannot guarantee lock cleanup. Live login output buffers incomplete lines to redact credentials spanning process chunks, and forwarding has the same per-stream byte bound as capture; a final partial line is flushed on completion.
+Reports include schema 2, timestamps, SHA/config digest, source/execution roots, run/slot identity, stage, budget/process summaries, bounded job steps, separate push effects, deployment and errors. Managed metadata lives in the slot: ownership, run/recovery locks, state and separate latest-check/latest-publish receipts. The source `.tmp/forge-vercel-release/managed.json` anchors slot/config/publish identity. A state/receipt is at most 1 MiB, anchor at most 64 KiB, and each persisted step stdout/stderr at most 2048 UTF-8 bytes with `truncated`; effects/diagnostics are never clipped. Writes reserve peak bytes and verify paths/index/HEAD/lock ownership. Foreign slots, stale locks and atomic-write remnants are not automatically removed. Workspace mode retains `.tmp/forge-vercel-release/latest-publish.json` and its config-digest/explicit-SHA selection; recover is unsupported there. Receipts are local recovery evidence, not signed authorization. Abrupt termination may retain locks. Live login output buffers partial lines for cross-chunk redaction and uses the same finite per-stream budget.
 
 ## Error codes
 
@@ -96,6 +129,10 @@ Reports include schema version, timestamps, candidate SHA, config SHA-256, bound
 | `DEPLOYMENT_SOURCE`, `DEPLOYMENT_MISSING`, `DEPLOYMENT_FAILED`, `DEPLOYMENT_TIMEOUT` | Wrong project/team/SHA/branch/source/target, no exact matching deployment, terminal failure/not READY, or bounded wait exhausted. |
 | `ALIAS_MISMATCH`, `BUILD_INFO`, `BUILD_REVISION` | Wrong production alias/project/deployment, anonymous marker unavailable/oversized/invalid, or wrong revision. |
 | `IO_FAILED` | Local file/process/runtime failure outside a more specific contract. |
+| `SOURCE_CHANGED`, `SOURCE_UNSUPPORTED`, `RECEIPT_SHA_MISMATCH` | Changed/unsupported frozen source or unknown receipt SHA. |
+| `SLOT_PATH`, `SLOT_FOREIGN`, `SLOT_STATE`, `SLOT_NOT_FAST_FORWARD` | Unsafe/replaced path, unowned slot, invalid management evidence or non-fast-forward reuse. |
+| `BUDGET_EXCEEDED`, `BUDGET_UNKNOWN` | Admission/observed limit violation or incomplete observation. |
+| `PROCESS_STATE_UNKNOWN`, `RECOVERY_REQUIRED` | Unproven process closure/effects or retained run needing inspection. |
 
 Known credential-shaped output is redacted; configured commands remain trusted executable code and must not print secrets. The official CLI is pinned to `64.7.0`; its required transitive WASM peers are explicitly pinned to preserve strict peer installation. This package reuses public Forge command-runner/process-control and artifact-integrity capabilities. No third-party implementation types appear in its public contract.
 

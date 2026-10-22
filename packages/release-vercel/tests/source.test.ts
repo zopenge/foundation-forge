@@ -4,7 +4,7 @@ import { VercelVerification } from '../src/node/vercel.js';
 
 const sha = 'a'.repeat(40);
 const config: ReleaseConfig = {
-  schemaVersion: 1, git: { remote: 'origin', repository: 'github.com/fixture/repository', developmentBranch: 'dev', releaseBranch: 'main' },
+  schemaVersion: 2, source: { mode: 'workspace' }, git: { remote: 'origin', repository: 'github.com/fixture/repository', developmentBranch: 'dev', releaseBranch: 'main' },
   vercel: { teamId: 'team_fixture', projectId: 'prj_fixture', productionUrl: 'https://fixture.example.invalid' },
   checks: [{ command: 'node' }], acceptance: [{ command: 'node' }], buildInfo: { path: '/build-info.json', revisionField: 'revision' },
   limits: { commandMs: 1000, deploymentMs: 1000, requestMs: 1000, pollMs: 20, maxOutputBytes: 4096 },

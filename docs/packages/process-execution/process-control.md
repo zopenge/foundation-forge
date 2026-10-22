@@ -54,6 +54,10 @@ function readIdentity(
 
 ## 行为与限制
 
+`OwnedProcessScopeProvider` 是显式的命令归属契约。`start` 返回有界 helper 的 rootPid 与 completion；调用方获取真实身份并 `bind` 后，才可 `authorize` 放行实际 argv。`dispose` 不放行作业，重复调用幂等，活动 scope 先执行有界清理。首版 Provider 的 terminate 只支持 force，其他策略明确拒绝。
+
+`ProcessScopeClosure` 的 closed 分支要求 scopeId、binding、真实 rootIdentity、normal 原因与 empty=true；它不等于命令退出码为零。unknown 分支可以缺失尚未获取的身份，原因包括 terminated、descendants-remained、provider-failed、owner-lost；即使强制清理最后证明 empty=true，仍不能变为正常关闭。错误使用 PROCESS_SCOPE_INVALID_INPUT、PROCESS_SCOPE_UNSUPPORTED、PROCESS_SCOPE_BINDING、PROCESS_SCOPE_UNKNOWN。
+
 本包不执行任何操作系统 I/O，也不负责进程启动、服务归属、平台选择、恢复策略、日志或用户文案。
 
 ## 与其他 Foundation Forge 包的关系

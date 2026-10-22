@@ -41,4 +41,5 @@
 - Run `pnpm check` before delivery. Lint must report zero errors and zero warnings, and tests must have no unhandled errors or asynchronous leaks.
 - Verify that browser entries do not reference `node:*`, the `ws` server, or Node-only transports.
 - Package verification must use real tarballs, and temporary files may exist only under the repository's ignored `.tmp/` directory.
+- 测试必须自包含，能够从干净 checkout 通过仓库规定的构建、打包和测试命令复现。固定 fixture、helper 和资源生成逻辑随仓库维护；禁止引用 ignored 临时诊断脚本，或依赖手工预置、历史运行遗留的输入。动态仓库、文件和进程资源由测试在自有运行目录创建并清理。标准步骤可现场生成构建产物和 tarball，但现有 `.tmp/` 内容不能成为测试成功的前提；缓存缺失时必须能重新生成。
 - After changing Chinese text, scan for U+FFFD, consecutive half-width question marks, and common mojibake patterns, then confirm the text is readable.

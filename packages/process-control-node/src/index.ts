@@ -12,3 +12,4 @@ export {
   createWindowsProcessControl,
   createWindowsProcessIdentityReader,
 } from './provider.js';
+export { createWindowsOwnedProcessScopeProvider, createLinuxOwnedProcessScopeProvider } from './owned-process-scope.js';

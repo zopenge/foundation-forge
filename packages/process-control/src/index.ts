@@ -18,3 +18,4 @@ export {
 } from './contracts.js';
 export { ProcessControlError } from './errors.js';
 export { selectTcpListeners } from './listeners.js';
+export type { OwnedProcessLaunchRequest, ProcessScopeClosure, OwnedProcessCompletion, OwnedProcessOutput, OwnedProcessScope, OwnedProcessScopeProvider } from './owned-process-scope.js';

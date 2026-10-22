@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import type { ProcessIdentity } from '@openge/forge-process-control';
+import type { OwnedProcessScope, ProcessIdentity, ProcessScopeClosure } from '@openge/forge-process-control';
 import type { CommandDiagnostic, CommandErrorCode, CommandEvent, CommandObserver, CommandResult, CommandSpec, CommandTerminationReason, RunningCommand } from '../contracts.js';
 import { CommandRunnerError } from '../errors.js';
 import { normalizeCommandSpec } from '../normalize-spec.js';
@@ -8,6 +8,7 @@ import { createEnvironment } from './environment.js';
 import type { NodeCommandRunnerOptions } from './options.js';
 import { acquireProcessIdentity } from './process-identity.js';
 import { TimerScope } from './timers.js';
+import { startOwnedAdapter } from './owned-process-adapter.js';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -20,6 +21,7 @@ type RequestedReason = 'abort' | 'timeout' | 'output-overflow';
 
 export function startCommand(options: NodeCommandRunnerOptions, input: CommandSpec, observer?: CommandObserver): RunningCommand {
   const spec = normalizeCommandSpec(input);
+  if (spec.ownedScope && (!options.ownedScopeProvider || options.terminationPolicy.mode !== 'force')) throw new CommandRunnerError('COMMAND_SCOPE_UNSUPPORTED', { reason: !options.ownedScopeProvider ? 'PROVIDER_REQUIRED' : 'FORCE_REQUIRED' });
   const pidState = deferred<number>();
   const identityState = deferred<ProcessIdentity | null>();
   const resultState = deferred<CommandResult>();
@@ -32,6 +34,9 @@ export function startCommand(options: NodeCommandRunnerOptions, input: CommandSp
   const diagnostics: CommandDiagnostic[] = [];
   const now = options.now ?? Date.now;
   let child: ChildProcess | undefined;
+  let owned: OwnedProcessScope | undefined, ownedClosure: ProcessScopeClosure | undefined;
+  const ready = deferred<undefined>(); void ready.promise.catch(() => {});
+  let authorization: Promise<void> | undefined;
   let startedAt: number | undefined;
   let identity: ProcessIdentity | null = null;
   let exitCode: number | null = null;
@@ -47,20 +52,26 @@ export function startCommand(options: NodeCommandRunnerOptions, input: CommandSp
   const stderr = spec.output?.mode === 'capture' ? new CaptureBuffer(spec.output.maxBytesPerStream) : undefined;
 
   const diagnose = (code: CommandErrorCode, details: Readonly<Record<string, unknown>> = {}, cause?: unknown) => {
+    if (Object.isFrozen(diagnostics)) return;
     if (!diagnostics.some(value => value.code === code)) diagnostics.push(Object.freeze({ code, details, ...(cause === undefined ? {} : { cause }) }));
   };
   const emit = (event: CommandEvent) => {
-    try { observer?.(event); } catch (cause) { diagnose('COMMAND_OBSERVER_FAILED', { eventType: event.type }, cause); }
+    try { observer?.(event); } catch (cause) {
+      diagnose('COMMAND_OBSERVER_FAILED', { eventType: event.type }, cause);
+      if (owned && event.type !== 'exited') void requestTermination('abort');
+    }
   };
   const onAbort = () => { void requestTermination('abort'); };
   const finish = () => {
     if (finished) return;
+    if (owned && !ownedClosure) { reason = 'termination-failure'; diagnose('COMMAND_SCOPE_UNKNOWN', { stage: 'missing-completion' }); }
     finished = true;
     scope.clear();
     closingScope.clear();
     for (const operation of operationScopes) operation.clear();
     spec.signal?.removeEventListener('abort', onAbort);
     identityController.abort();
+    ready.reject(new CommandRunnerError('COMMAND_SCOPE_FAILED', { reason: 'FINISHED' }));
     exitState.resolve(undefined);
     identityState.resolve(identity);
     child?.stdout?.removeListener('data', onStdout);
@@ -80,12 +91,14 @@ export function startCommand(options: NodeCommandRunnerOptions, input: CommandSp
         stdout: stdout.bytes(), stderr: stderr.bytes(), stdoutTruncated: stdout.truncated, stderrTruncated: stderr.truncated,
       }),
       diagnostics,
+      ...(ownedClosure === undefined ? {} : { ownedScope: ownedClosure }),
     });
     emit({ type: 'exited', result });
     Object.freeze(diagnostics);
     resultState.resolve(result);
   };
   const directCleanup = () => {
+    if (owned) { void owned.terminate({ mode: 'force' }).catch(cause => diagnose('COMMAND_SCOPE_FAILED', { stage: 'cleanup' }, cause)); return; }
     if (child?.pid === undefined || exited || cleanupAttempted) return;
     cleanupAttempted = true;
     try {
@@ -99,7 +112,7 @@ export function startCommand(options: NodeCommandRunnerOptions, input: CommandSp
   };
   const requestTermination = (requested: RequestedReason): Promise<void> => {
     if (termination !== undefined) return termination;
-    if (finished || exited) return Promise.resolve();
+    if (finished || (exited && !owned)) return Promise.resolve();
     const completion = deferred<undefined>();
     termination = completion.promise;
     reason = requested;
@@ -111,6 +124,16 @@ export function startCommand(options: NodeCommandRunnerOptions, input: CommandSp
     const deadline = operationScope.delay(options.terminationTimeoutMs).then(() => ({ type: 'deadline' as const }));
     void (async () => {
       try {
+        if (owned) {
+          const operation = owned.terminate({ mode: 'force' }).then(() => ({ type: 'terminated' as const }), (cause: unknown) => ({ type: 'failed' as const, cause }));
+          const outcome = await Promise.race([operation, deadline]);
+          if (outcome.type !== 'terminated') { failTermination(outcome.type === 'deadline' ? 'scope-deadline' : 'scope-provider', outcome.type === 'failed' ? outcome.cause : undefined); finish(); }
+          else if (!closed && !finished) {
+            const stopped = await Promise.race([exitState.promise.then(() => ({ type: 'exited' as const })), deadline]);
+            if (stopped.type === 'deadline') { failTermination('scope-completion-deadline'); finish(); }
+          }
+          return;
+        }
         const observed = await Promise.race([identityState.promise.then(value => ({ type: 'identity' as const, value })), deadline]);
         if (observed.type === 'deadline') { controller.abort(); failTermination('identity-wait-deadline'); finish(); return; }
         if (observed.value === null || exited || finished) return;
@@ -187,34 +210,56 @@ export function startCommand(options: NodeCommandRunnerOptions, input: CommandSp
     directCleanup();
     finish();
   };
-  const onSpawn = () => {
-    const pid = child?.pid;
+  const authorizeStart = (): Promise<void> => {
+    if (finished || exited || reason !== undefined) return Promise.reject(new CommandRunnerError('COMMAND_SCOPE_FAILED', { reason: 'INACTIVE' }));
+    authorization ??= (async () => {
+      await ready.promise;
+      if (!owned || finished || exited || reason !== undefined || spec.signal?.aborted) throw new CommandRunnerError('COMMAND_SCOPE_FAILED', { reason: 'INACTIVE' });
+      try { await owned.authorize(identityController.signal); }
+      catch (cause) { diagnose('COMMAND_SCOPE_FAILED', { stage: 'authorize' }, cause); await requestTermination('abort'); throw new CommandRunnerError('COMMAND_SCOPE_FAILED', { stage: 'authorize' }, cause); }
+    })();
+    void authorization.catch(() => {}); return authorization;
+  };
+  const onSpawn = (ownedPid?: number) => {
+    if (finished) return;
+    const pid = ownedPid ?? child?.pid;
     if (pid === undefined) { onError(new CommandRunnerError('COMMAND_START_FAILED')); return; }
-    startedAt = now();
+    startedAt ??= now();
     pidState.resolve(pid);
     emit({ type: 'spawned', pid });
-    if (spec.timeoutMs !== undefined) scope.timeout(() => { void requestTermination('timeout'); }, spec.timeoutMs);
+    if (!spec.ownedScope && spec.timeoutMs !== undefined) scope.timeout(() => { void requestTermination('timeout'); }, spec.timeoutMs);
     if (spec.heartbeatMs !== undefined) scope.interval(() => {
       if (!exited && !finished) emit({ type: 'heartbeat', elapsedMs: Math.max(0, now() - (startedAt ?? now())) });
     }, spec.heartbeatMs);
-    void acquireProcessIdentity(pid, identityController.signal, options).then(observed => {
+    void acquireProcessIdentity(pid, identityController.signal, options).then(async observed => {
       if (finished || exited || observed.type === 'exited') { identityState.resolve(null); return; }
       if (observed.type === 'identified') {
+        if (owned) {
+          try { await owned.bind(observed.identity, identityController.signal); }
+          catch (cause) { diagnose('COMMAND_SCOPE_FAILED', { stage: 'bind' }, cause); identityState.resolve(null); ready.reject(cause); await requestTermination('abort'); return; }
+          if (finished || reason !== undefined) { identityState.resolve(null); return; }
+        }
         identity = observed.identity;
         identityState.resolve(identity);
         emit({ type: 'identified', identity });
+        if (owned && spec.ownedScope) {
+          ready.resolve(undefined);
+          emit({ type: 'scope-ready', identity, scopeId: owned.scopeId, binding: spec.ownedScope.binding });
+          if (spec.ownedScope.start === 'automatic' && reason === undefined && !finished) void authorizeStart().catch(() => {});
+        }
       } else {
         reason = 'start-failure';
         diagnose('COMMAND_IDENTITY_UNAVAILABLE', { pid }, observed.cause);
         identityState.resolve(null);
-        directCleanup();
-        if (!finished) scope.timeout(finish, options.terminationTimeoutMs);
+        if (owned) { ready.reject(new CommandRunnerError('COMMAND_IDENTITY_UNAVAILABLE')); await requestTermination('abort'); }
+        else { directCleanup(); if (!finished) scope.timeout(finish, options.terminationTimeoutMs); }
       }
-    });
+    }).catch(cause => { diagnose('COMMAND_SCOPE_FAILED', { stage: 'identity' }, cause); void requestTermination('abort'); });
   };
   const running: RunningCommand = {
     pid: pidState.promise, identity: identityState.promise, result: resultState.promise,
     terminate: (requested = 'abort') => requestTermination(requested),
+    ...(spec.ownedScope?.start === 'manual' ? { authorizeStart } : {}),
   };
   if (spec.signal?.aborted === true) {
     reason = 'abort';
@@ -225,6 +270,30 @@ export function startCommand(options: NodeCommandRunnerOptions, input: CommandSp
   }
   spec.signal?.addEventListener('abort', onAbort, { once: true });
   try {
+    if (spec.ownedScope) {
+      startedAt = now();
+      if (spec.timeoutMs !== undefined) scope.timeout(() => { void requestTermination('timeout'); }, spec.timeoutMs);
+      owned = startOwnedAdapter(options, spec, {
+        output, spawned: onSpawn,
+        failed: cause => {
+          if (finished) return;
+          pidState.reject(new CommandRunnerError('COMMAND_SCOPE_FAILED', {}, cause));
+          identityState.resolve(null); ready.reject(cause); diagnose('COMMAND_SCOPE_FAILED', { stage: 'provider' }, cause);
+          reason = 'termination-failure';
+          if (owned) void requestTermination('abort');
+        },
+        completed: result => {
+          if (finished) return;
+          ownedClosure = result.closure;
+          if (result.closure.status !== 'closed' || result.closure.scopeId !== owned?.scopeId || result.closure.binding !== spec.ownedScope?.binding
+            || result.closure.rootIdentity.pid !== identity?.pid || result.closure.rootIdentity.startToken !== identity.startToken) {
+            reason = 'termination-failure'; diagnose('COMMAND_SCOPE_UNKNOWN');
+          }
+          onClose(result.exitCode, result.signal);
+        },
+      });
+      return running;
+    }
     child = spawn(spec.command, [...(spec.args ?? [])], {
       ...(spec.cwd === undefined ? {} : { cwd: spec.cwd }),
       env: createEnvironment(spec.environment ?? { mode: 'inherit' }, options.platform),

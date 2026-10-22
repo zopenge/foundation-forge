@@ -3,6 +3,7 @@ packages:
 
 allowBuilds:
   node-datachannel: true
+  koffi: false
 
 packageExtensions:
   "react-native-webrtc@*":

@@ -38,7 +38,7 @@ const fixture = async () => {
   git(cwd, 'add', '.'); git(cwd, 'commit', '-m', 'candidate');
   const sha = git(cwd, 'rev-parse', 'HEAD');
   const config: ReleaseConfig = {
-    schemaVersion: 1,
+    schemaVersion: 2, source: { mode: 'workspace' },
     git: { remote: 'origin', repository: 'github.com/fixture/repository', developmentBranch: 'dev', releaseBranch: 'main' },
     vercel: { teamId: 'team_fixture', projectId: 'prj_fixture', productionUrl: 'https://fixture.example.invalid' },
     checks: [{ command: 'node', args: ['-e', 'process.stdout.write("checked")'], timeoutMs: 10_000 }],
@@ -64,6 +64,13 @@ const fixture = async () => {
 };
 
 describe('strict configuration', () => {
+  it('rejects recovery in workspace mode before any Git or platform mutation', async () => {
+    const f = await fixture();
+    const report = await runRelease({ command: 'recover', cwd: f.cwd, config: f.config, transport: f.transport });
+    expect(report).toMatchObject({ schemaVersion: 2, ok: false, error: { code: 'SOURCE_UNSUPPORTED' } });
+    expect(report.steps).toHaveLength(0); expect(f.queries()).toBe(0);
+    expect(f.ref('dev')).toBe(f.initial); expect(f.ref('main')).toBe(f.initial);
+  });
   it('accepts only the explicit schema and finite limits', async () => {
     const f = await fixture();
     expect(validateReleaseConfig(f.config)).toEqual(f.config);

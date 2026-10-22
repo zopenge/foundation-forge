@@ -1,4 +1,4 @@
-import type { ProcessIdentity } from '@openge/forge-process-control';
+import type { ProcessIdentity, ProcessScopeClosure } from '@openge/forge-process-control';
 
 export type CommandEnvironment =
   | { readonly mode: 'inherit'; readonly values?: Readonly<Record<string, string | undefined>> }
@@ -16,6 +16,7 @@ export interface CommandSpec {
   readonly timeoutMs?: number;
   readonly heartbeatMs?: number;
   readonly signal?: AbortSignal;
+  readonly ownedScope?: { readonly start: 'automatic' | 'manual'; readonly binding: string };
 }
 export type CommandTerminationReason = 'exit' | 'signal' | 'abort' | 'timeout' | 'output-overflow' | 'start-failure' | 'termination-failure';
 export const commandErrorCodes = {
@@ -29,6 +30,9 @@ export const commandErrorCodes = {
   outputOverflow: 'COMMAND_OUTPUT_OVERFLOW',
   observerFailed: 'COMMAND_OBSERVER_FAILED',
   terminationFailed: 'COMMAND_TERMINATION_FAILED',
+  scopeUnsupported: 'COMMAND_SCOPE_UNSUPPORTED',
+  scopeFailed: 'COMMAND_SCOPE_FAILED',
+  scopeUnknown: 'COMMAND_SCOPE_UNKNOWN',
 } as const;
 export type CommandErrorCode = typeof commandErrorCodes[keyof typeof commandErrorCodes];
 export interface CommandDiagnostic {
@@ -47,10 +51,12 @@ export interface CommandResult {
   readonly stdoutTruncated?: boolean;
   readonly stderrTruncated?: boolean;
   readonly diagnostics: readonly CommandDiagnostic[];
+  readonly ownedScope?: ProcessScopeClosure;
 }
 export type CommandEvent =
   | { readonly type: 'spawned'; readonly pid: number }
   | { readonly type: 'identified'; readonly identity: ProcessIdentity }
+  | { readonly type: 'scope-ready'; readonly scopeId: string; readonly binding: string; readonly identity: ProcessIdentity }
   | { readonly type: 'stdout'; readonly chunk: Uint8Array }
   | { readonly type: 'stderr'; readonly chunk: Uint8Array }
   | { readonly type: 'heartbeat'; readonly elapsedMs: number }
@@ -60,6 +66,7 @@ export interface RunningCommand {
   readonly pid: Promise<number>;
   readonly identity: Promise<ProcessIdentity | null>;
   readonly result: Promise<CommandResult>;
+  readonly authorizeStart?: () => Promise<void>;
   terminate(reason?: 'abort' | 'timeout'): Promise<void>;
 }
 export type CommandObserver = (event: CommandEvent) => void;

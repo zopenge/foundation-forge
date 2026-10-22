@@ -35,7 +35,7 @@ export async function assertCandidate(execution: Execution, config: ReleaseConfi
   if (await execution.git(['branch', '--show-current']) !== config.git.developmentBranch) throw new ReleaseError('GIT_BRANCH');
   const head = await execution.git(['rev-parse', 'HEAD']);
   const dirty = await execution.git(['status', '--porcelain=v1', '--untracked-files=all']);
-  if (sha !== undefined && (head !== sha || dirty !== '')) throw new ReleaseError('CANDIDATE_CHANGED');
+  if (sha !== undefined && (head !== sha || dirty !== '')) throw new ReleaseError('CANDIDATE_CHANGED', { reason: head !== sha ? 'HEAD_CHANGED' : 'WORKTREE_CHANGED', head, dirty });
   if (dirty !== '') throw new ReleaseError('GIT_DIRTY');
   return head;
 }

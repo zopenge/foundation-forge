@@ -1,4 +1,4 @@
-import type { ReleaseCheck, ReleaseConfig } from '../contracts.js';
+import type { ReleaseCheck, ReleaseConfig, ReleaseSource } from '../contracts.js';
 import { record, ReleaseError } from './errors.js';
 
 function invalid(field: string): never { throw new ReleaseError('CONFIG_INVALID', { field }); }
@@ -17,8 +17,8 @@ function integer(value: unknown, maximum: number, field: string): number {
   if (!Number.isSafeInteger(value) || typeof value !== 'number' || value <= 0 || value > maximum) invalid(field);
   return value;
 }
-function commands(value: unknown, field: string): readonly ReleaseCheck[] {
-  if (!Array.isArray(value) || value.length === 0 || value.length > 32) invalid(field);
+function commands(value: unknown, field: string, empty = false): readonly ReleaseCheck[] {
+  if (!Array.isArray(value) || (!empty && value.length === 0) || value.length > 32) invalid(field);
   return value.map((item: unknown) => {
     const itemRecord = record(item);
     if (Object.keys(itemRecord).some(key => !['command', 'args', 'timeoutMs'].includes(key))) invalid(field);
@@ -30,9 +30,26 @@ function commands(value: unknown, field: string): readonly ReleaseCheck[] {
       ...(itemRecord.timeoutMs === undefined ? {} : { timeoutMs: integer(itemRecord.timeoutMs, 3_600_000, `${field}.timeoutMs`) }) };
   });
 }
+function source(value: unknown): ReleaseSource {
+  if (record(value).mode === 'workspace') {
+    object(value, ['mode'], 'source'); return { mode: 'workspace' };
+  }
+  const entry = object(value, ['mode', 'slotPath', 'maxBytes', 'minFreeBytes', 'sampleIntervalMs', 'install', 'prepare'], 'source');
+  if (entry.mode !== 'managed-commit') invalid('source.mode');
+  const slotPath = text(entry.slotPath, 'source.slotPath', /^[a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)*$/u);
+  if (slotPath.split('/').some(part => ['.', '..', '.git'].includes(part.toLowerCase()))) invalid('source.slotPath');
+  const install = object(entry.install, ['packageManager'], 'source.install');
+  if (install.packageManager !== 'pnpm') invalid('source.install.packageManager');
+  const sampleIntervalMs = integer(entry.sampleIntervalMs, 5000, 'source.sampleIntervalMs');
+  if (sampleIntervalMs < 250) invalid('source.sampleIntervalMs');
+  return { mode: 'managed-commit', slotPath,
+    maxBytes: integer(entry.maxBytes, Number.MAX_SAFE_INTEGER, 'source.maxBytes'),
+    minFreeBytes: integer(entry.minFreeBytes, Number.MAX_SAFE_INTEGER, 'source.minFreeBytes'),
+    sampleIntervalMs, install: { packageManager: 'pnpm' }, prepare: commands(entry.prepare, 'source.prepare', true) };
+}
 export function validateReleaseConfig(value: unknown): ReleaseConfig {
-  const root = object(value, ['schemaVersion', 'git', 'vercel', 'checks', 'acceptance', 'buildInfo', 'limits'], 'config');
-  if (root.schemaVersion !== 1) invalid('schemaVersion');
+  const root = object(value, ['schemaVersion', 'source', 'git', 'vercel', 'checks', 'acceptance', 'buildInfo', 'limits'], 'config');
+  if (root.schemaVersion !== 2) invalid('schemaVersion');
   const git = object(root.git, ['remote', 'repository', 'developmentBranch', 'releaseBranch'], 'git');
   const branch = (value: unknown, field: string) => {
     const result = text(value, field, /^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/u);
@@ -53,7 +70,7 @@ export function validateReleaseConfig(value: unknown): ReleaseConfig {
   if (path.startsWith('//') || path.split('/').includes('..')) invalid('buildInfo.path');
   const limits = object(root.limits, ['commandMs', 'deploymentMs', 'pollMs', 'requestMs', 'maxOutputBytes'], 'limits');
   const deploymentMs = integer(limits.deploymentMs, 3_600_000, 'limits.deploymentMs');
-  return { schemaVersion: 1,
+  return { schemaVersion: 2, source: source(root.source),
     git: { remote: text(git.remote, 'git.remote', /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/u),
       repository: text(git.repository, 'git.repository'), developmentBranch, releaseBranch },
     vercel: { teamId: text(vercel.teamId, 'vercel.teamId', /^team_[a-zA-Z0-9]+$/u),

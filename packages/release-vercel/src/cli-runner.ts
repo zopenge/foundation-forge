@@ -4,7 +4,7 @@ import { runRelease } from './node/release.js';
 
 export async function runCli(args: readonly string[]): Promise<void> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0] ?? '')) {
-    process.stdout.write(`${JSON.stringify({ usage: 'forge-vercel-release <check|publish|status|verify|login> [--cwd DIR] [--config FILE] [--sha SHA]', config: 'release.config.json', sha: 'status/verify only; full 40-character SHA' })}\n`);
+    process.stdout.write(`${JSON.stringify({ usage: 'forge-vercel-release <check|publish|status|verify|recover|login> [--cwd DIR] [--config FILE] [--sha SHA]', config: 'release.config.json', sha: 'status/verify only; full 40-character SHA' })}\n`);
     return;
   }
   const controller = new AbortController();
@@ -16,7 +16,7 @@ export async function runCli(args: readonly string[]): Promise<void> {
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
     process.exitCode = report.ok ? 0 : report.error?.code === 'ARGUMENT_INVALID' ? 2 : 1;
   } catch (error) {
-    process.stdout.write(`${JSON.stringify({ schemaVersion: 1, ok: false, error: { code: error instanceof ReleaseError ? error.code : 'IO_FAILED', details: {} } })}\n`);
+    process.stdout.write(`${JSON.stringify({ schemaVersion: 2, ok: false, error: { code: error instanceof ReleaseError ? error.code : 'IO_FAILED', details: {} } })}\n`);
     process.exitCode = error instanceof ReleaseError && error.code === 'ARGUMENT_INVALID' ? 2 : 1;
   } finally { process.removeListener('SIGINT', cancel); process.removeListener('SIGTERM', cancel); }
 }

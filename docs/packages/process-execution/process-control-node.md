@@ -55,6 +55,18 @@ Windows 身份 reader 使用 .NET `Process.GetProcessById` 读取目标 PID 的�
 
 ## 行为与限制
 
+### 显式 owned scope
+
+`createWindowsOwnedProcessScopeProvider()` 面向 Windows x64：建立未命名 Job Object，开启 kill-on-close、禁止 breakaway，以真实进程句柄校验 helper 身份并加入 Job。正常关闭读取内核 active process accounting；直接作业 close 后确认仍有存活后代就立即终止自己的 Job，并返回 unknown。退出时 accounting、成员表和进程对象触发时机可能不同；只有完整成员表，或已验证属于该 Job 的稳定句柄及原生终止状态证明成员已终止，才允许有界等待统计同步。句柄未触发时使用 GetExitCodeProcess 区分已退出与 STILL_ACTIVE；仍活动的成员没有等待宽限。成员已删除时必须重新取得完整 root-only Job 表；不以 PID 查询缺失或进程名称作为关闭证明，权限、归属、句柄和不完整查询错误仍返回 unknown。
+
+`createLinuxOwnedProcessScopeProvider()` 面向 Linux/glibc x64，要求 glibc 的 prctl、waitpid、pidfd_open、pidfd_send_signal 和支持它们的内核。独立 helper 先设置并读回 subreaper，直接 child 先由 libuv 回收，再 wait/reap 额外后代；只有 ECHILD 证明空树。异常清理仅使用自己的孩子、复核 PPid 和稳定 pidfd。协调进程不设置 subreaper；helper 消失不能补造关闭证明。
+
+两个工厂均不接受任意 helper/native 路径，缺少能力或 Job 绑定失败在真实 argv 前拒绝，无普通 spawn/轮询回退。首版 owned terminate 只接受 force；完整旧 Provider 的终止策略保持原契约。scopeId/binding/nonce/序号绑定私有 IPC，launch 最多 1 MiB、control 最多 64 KiB；stdout/stderr 单独交付。helper 不执行 NODE_OPTIONS/NODE_PATH/动态加载器预加载，真实作业在授权后接收声明环境。
+
+Koffi 精确固定 3.3.3，只从已安装依赖懒加载预编译制品。本仓和真实 tarball 消费安装配置 `allowBuilds.koffi: false`；其他 pnpm 消费方也应配置此项以禁止其安装脚本编译回退。运行时缺 prebuild 明确失败，不下载、不编译、不提权。支持范围不是 Koffi 的完整平台列表。
+
+Job/subreaper 是受信任命令的归属边界，不是安全沙箱。命令不得通过 WMI、系统服务等外部进程所有者代办作业。操作系统强杀 helper、IPC 失效或观测不完整都可能留下 unknown，调用方须保留恢复证据；“清理后空树”不等于“正常关闭”。
+
 Provider 不自动检测平台、不在 backend 失败后隐式切换方案。Windows 进程树终止使用 `taskkill /T`；Posix 树终止针对 PID 对应的 process group，因此调用方必须确保自己拥有并正确启动该进程组。
 
 系统命令不存在或执行失败会按 Core 错误 contract 返回，不由本包转换成产品恢复流程。

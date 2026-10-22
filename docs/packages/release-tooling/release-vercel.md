@@ -4,7 +4,7 @@
 
 ## 配置与调用
 
-默认读取工作目录中的 `release.config.json`，完整可执行配置示例和每项边界见[包 README](../../../packages/release-vercel/README.md#configuration)。配置必须声明 `schemaVersion: 1`、Git remote/期望仓库/开发与发布分支、Vercel team/project/HTTPS 生产源、检查与线上验收命令、构建标记路径/字段以及有限的命令、请求、部署和输出预算。未知字段、无效分支、重复开发/发布分支、凭据型域名和无限时限都会失败。命令数组均须有 1–32 项，不通过 shell 执行。Windows 上 `pnpm` 和 `npm` 解析到 JavaScript CLI；不直接启动 `.cmd`。
+默认读取工作目录中的 `release.config.json`，完整示例见[包 README](../../../packages/release-vercel/README.md#configuration)。配置必须声明 `schemaVersion: 2`、显式 source、Git remote/期望仓库/开发与发布分支、Vercel team/project/HTTPS 生产源、检查与线上验收命令、构建标记以及有限的执行预算。schema 1 不转换、不回退。未知字段、无效分支、凭据型域名和无限时限都会失败。checks/acceptance 均须有 1–32 项，不通过 shell 执行。Windows 上 pnpm/npm 解析到 JavaScript CLI，不直接启动 `.cmd`。
 
 ```sh
 pnpm exec forge-vercel-release check
@@ -12,13 +12,40 @@ pnpm exec forge-vercel-release login
 pnpm exec forge-vercel-release publish
 pnpm exec forge-vercel-release status
 pnpm exec forge-vercel-release verify --sha <完整40位SHA>
+pnpm exec forge-vercel-release recover
 ```
 
-参数支持 `--cwd DIR`、`--config FILE`；`--sha SHA` 仅适用于 `status` 和 `verify`。stdout 是一个 JSON 报告，成功退出 0、运行失败退出 1、参数错误退出 2。消费仓库应忽略 `.tmp/`。线上验收命令接收 `FORGE_RELEASE_SHA`、`FORGE_RELEASE_URL`、`FORGE_RELEASE_DEPLOYMENT_ID`，产品自己的浏览器或接口断言由这些命令承担。
+参数支持 `--cwd DIR`、`--config FILE`；`--sha SHA` 仅适用于 status/verify。stdout 是 JSON，成功退出 0、运行失败退出 1、参数错误退出 2。项目可映射为 release:check、release、release:status、release:verify。prepare/check/acceptance 接收受保护的 `FORGE_RELEASE_COMMAND=check|publish|verify` 与 `FORGE_RELEASE_SHA`；验收另接收 URL、deployment ID。宿主同名值不能覆盖。这些值只说明操作意图，不授予业务权限；业务断言、幂等远端准备和业务恢复由消费方承担。
+
+## 受管提交模式
+
+source 使用以下配置，其他字段沿用完整示例：
+
+```json
+{
+  "mode": "managed-commit",
+  "slotPath": ".tmp/release-slot",
+  "maxBytes": 2147483648,
+  "minFreeBytes": 5368709120,
+  "sampleIntervalMs": 1000,
+  "install": { "packageManager": "pnpm" },
+  "prepare": []
+}
+```
+
+先提交受管槽及 `.tmp/forge-vercel-release/` 的 ignore 规则。slotPath 是仓库内 ASCII 相对路径，不能跳出、含 `.git` 或重叠管理锚点。示例单槽 2 GiB、卷至少 5 GiB 余量；公共包通过配置接收，不绑定盘符。采样间隔 250–5000 毫秒，prepare 允许 0–32 项。
+
+managed-commit 冻结开发分支完整 SHA、已提交配置、精确 `pnpm@<版本>`、锁文件和脚本。源 tracked/index/配置必须干净，无关 untracked 原样保留。真实独立 clone 从远端建立，再从冻结源 fetch 尚未推送的候选对象；安装、prepare、检查与验收均在同一 checkout 执行。安装核对本机 pnpm 版本，使用 frozen-lockfile，不自动下载其他版本。禁止配置对象覆盖，不复制源私有 Git 配置、不创建 worktree、不切源分支、不使用 reset/stash/clean、不迁移共享 store。
+
+同一槽复用依赖，同 SHA 重跑不重建环境；下一 SHA 必须可从干净槽快进。脏槽、分叉、外来目录、junction 根、外部 Git 对象依赖、源码链接、gitlink、LFS 指针或不支持的路径失败，不增加旁路槽。拒绝继承 Git 目录、索引、对象库及 namespace 覆盖；认证、路由、hooks 仍属调用方受信任配置。
+
+status/verify 选择最近 publish 收据，后来源 HEAD、配置或 check 不覆盖选择；指定没有匹配收据的 SHA 拒绝。verify 在受管锁/预算内使用原始 checkout、配置和验收脚本，缺失或不可信时失败，不安装、不回退到当前源脚本。
+
+原工作区模式使用 `"source": {"mode":"workspace"}`，保留包含 untracked 的严格 clean 规则。已有 managed 锚点不能静默改槽、改配置绑定，或切回 workspace 执行检查/发布；先按实际收据、锁及引用完成显式维护，无自动迁移或清场。
 
 ## 各命令的边界
 
-`check` 校验根目录、remote 和干净开发分支，运行配置的检查，再核对源码、HEAD 与配置未变化。它不推远程，也不查询 Vercel。
+check 校验冻结输入并运行检查，不推远程、不查询 Vercel；受管模式包含固定槽准备和冻结安装。下文原根锁路径及 HEAD 回退描述适用于 workspace；managed 使用上节的槽、冻结输入和收据选择。
 
 `publish` 在项目 `.tmp/forge-vercel-release/` 内取得独占锁，冻结候选 SHA。它 fetch 并确认远程开发/发布分支都能快进到该 SHA，查询官方 API 核对项目、仓库绑定、生产分支与认证，再运行检查。检查通过后重新核验来源和候选，每次远程 push 前再核验项目绑定与锁归属，先精确推开发分支，再推固定 SHA 到发布分支。两个 push 都不使用 force，也不切分支、不自动 commit。它等待现有 Git integration 创建的相同 SHA、项目、production 与发布分支部署 READY，然后核对生产 alias 对应的项目和部署，匿名获取构建标记并比对 revision，最后运行消费方验收。
 
@@ -42,9 +69,23 @@ const report = await runRelease({
 });
 ```
 
-`runRelease` 支持 `command`、`cwd`、可选 `config`/`configPath`、`sha`、`signal`、`transport`、`onLoginOutput`。显式配置对象优先于文件，并进行严格校验和复制。`transport` 仅替换明确的外部传输边界，提供 `api(path, signal)` 与匿名 `buildInfo(url, signal)`；实现必须响应取消。Node 调用方可用 `onLoginOutput` 显示认证指引。报告保留时间、候选 SHA、配置 SHA-256、有界命令输出、两次 push 各自结果、部署身份与结构化错误。
+runRelease 支持 command、cwd、configPath、workspace 专用 config 对象、sha、signal、transport、onLoginOutput。managed 必须用已提交文件。transport 仅替换 API/buildInfo 外部边界，必须响应取消；onLoginOutput 显示脱敏认证指引。公开签名不携带第三方实现类型。
 
 ## 恢复与资源所有权
+
+受管锁覆盖准备、安装、检查、推送、等待和验收。显式装配 Windows x64 Job Object 或 Linux/glibc x64 subreaper/wait/pidfd Provider。runner 的 manual 门先取得 scope-ready，再持久保存真实身份、scopeId 和 run/command/nonce 绑定，复核预算、路径和锁后放行。只有匹配的 OS scope closed/normal/empty 证明允许下一命令或释放锁；取消、身份变化、崩溃缺口、遗留后代及强制清理即使最后 empty=true 也仍 unknown。
+
+旧 schema 2 轮询 closure 可读，但属于弱证据，不能自动升级、复用为成功或依据 PID 消失删锁。旧 command-gate/result 文件不执行、不自动清理；新运行不再创建它们。持久 OS 证据绑定已结束实例，可复用而不重新探测后来复用的 PID。每条记录的 nonce 仅存在受控 journal，不输出到 CLI 报告。
+
+原生依赖 Koffi 精确固定 3.3.3。本仓与 tarball 消费安装禁用其构建脚本，其他 pnpm 消费者也应设置 `allowBuilds.koffi: false`。缺少预编译制品、原生能力或 Job 绑定失败在业务 argv 前拒绝，不下载、不编译、不提权、不回退。归属层不是安全沙箱，受信任命令不得通过 WMI、系统服务等外部所有者代办；workspace 不启用新 scope。
+
+预算统计包含槽内全部条目及原根锚点，hardlink 各条目重复计数，内部链接不遍历，外部或未知链接失败。一次最多观察 500000 项，原子元数据写入检查临时峰值。准入、运行监测和阶段观察遇到超限、余量不足或观测不完整即取消。报告记录观测峰值、最小余量和采样间隔。有限采样不等于 OS 配额，间隔内可能短暂超限；不调整宿主卷或配额、不整理共享 store。
+
+槽内 latest-check/latest-publish 分开，状态与单份收据不超过 1 MiB；原根 managed.json 锚点不超过 64 KiB，绑定槽/配置/发布身份。单步 stdout/stderr 各最多 2048 UTF-8 字节并标明截断，effects/关键错误不能截断。写入和释放前核对路径、源 index/HEAD 和锁归属，外来槽、陈旧锁和半写入残留不自动清理。
+
+受管 push 不明时保留 pending/unknown 与运行锁。recover 独占取得恢复声明，核对 owner、进程、真实 refs 与部署身份，不安装、不检查、不验收、不推送、不部署、不回滚。仅在关闭可证明且引用可恢复时落观察并精确释放旧锁：等于候选记 already-current，候选祖先记 not-current（只表示观察时未指向候选，不能声称从未尝试）；已向后推进、分叉或无法核验时保留锁。原发布失败和 unknown 保留，另附时间戳观察；status 结合证据和当前 refs 展示已核实事实。崩溃缺闭环见证时，即使进程后来消失也仍 unknown，无强制确认或自动删锁入口。按 recovery.nextCommand 继续，未消除的身份缺口须维护者调查精确运行。workspace 不支持 recover。
+
+以下原根报告与人工恢复说明仅适用于 workspace 模式：
 
 任何前置失败都会阻止后续副作用；失败后不自动回滚或改历史。push 成功后发生线上失败，报告仍保留已推状态；结果不明的 push 标记 `unknown`，先核对真实 remote。同 SHA 重跑仍执行精确 SHA 的普通 push，由服务器的 porcelain 结果报告 up-to-date；不根据旧 refs 快照跳过目标。它读取既有部署，工具从不调用部署创建/上传 API。
 
@@ -57,3 +98,5 @@ const report = await runRelease({
 完整代码列表从根入口 `releaseErrorCodes` 导出；逐项含义见[错误码表](../../../packages/release-vercel/README.md#error-codes)。配置与参数使用 `ARGUMENT_INVALID`、`CONFIG_INVALID`、`CONFIG_READ`；Git 门禁使用 `GIT_*`、`CANDIDATE_CHANGED`；检查与验收使用 `CHECK_FAILED`、`ACCEPTANCE_FAILED`；生命周期使用 `COMMAND_TIMEOUT`、`COMMAND_FAILED`、`CANCELLED`、`LOCKED`、`LOCK_OWNERSHIP`；Vercel 与域名复核使用 `AUTH_REQUIRED`、`VERCEL_API`、`DEPLOYMENT_*`、`ALIAS_MISMATCH`、`BUILD_INFO`、`BUILD_REVISION`；其他本地错误使用 `IO_FAILED`。
 
 官方 CLI 固定为 64.7.0，只通过 `vercel api` 发 GET 查询并复用官方 session，不私读认证文件。其严格安装需要的 WASM peer 同样固定版本。真实 Git bare/工作仓测试、进程输出/超时/取消测试及 tarball 消费测试共同验证公开行为；受控 Vercel 替身不等于真实生产部署验收。
+
+schema 2 新增来源/收据错误 SOURCE_CHANGED、SOURCE_UNSUPPORTED、RECEIPT_SHA_MISMATCH，槽错误 SLOT_PATH、SLOT_FOREIGN、SLOT_STATE、SLOT_NOT_FAST_FORWARD，额度错误 BUDGET_EXCEEDED、BUDGET_UNKNOWN，以及 PROCESS_STATE_UNKNOWN、RECOVERY_REQUIRED。业务生产复用需由各消费方独立验收，不以合成 fixture 替代。

@@ -1,14 +1,22 @@
 {
   "name": "@openge/forge-process-control-node",
-  "version": "0.2.0",
+  "version": "0.3.0-rc.0",
   "description": "Explicit Windows and Posix Node.js Providers for process control",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
-  "files": ["dist", "README.md", "LICENSE", "NOTICE"],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "lint": "eslint . --max-warnings 0",
@@ -17,17 +25,24 @@
     "test:coverage": "vitest run --coverage"
   },
   "sideEffects": false,
-  "engines": { "node": ">=22.14.0" },
+  "engines": {
+    "node": ">=22.14.0"
+  },
   "license": "Apache-2.0",
-  "publishConfig": { "access": "public" },
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/zopenge/foundation-forge.git",
     "directory": "packages/process-control-node"
   },
   "homepage": "https://github.com/zopenge/foundation-forge#readme",
-  "bugs": { "url": "https://github.com/zopenge/foundation-forge/issues" },
+  "bugs": {
+    "url": "https://github.com/zopenge/foundation-forge/issues"
+  },
   "dependencies": {
-    "@openge/forge-process-control": "workspace:^"
+    "@openge/forge-process-control": "workspace:^",
+    "koffi": "3.3.3"
   }
 }

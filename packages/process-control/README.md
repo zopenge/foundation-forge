@@ -7,6 +7,12 @@ termination capabilities. `readIdentity({ pid, signal })` returns either
 `{ status: 'FOUND', identity: { pid, startToken } }` or `{ status: 'ABSENT' }`.
 Unconfirmed identities and query failures reject with `ProcessControlError`.
 
+`OwnedProcessScopeProvider` explicitly owns a command and its descendants. Call
+`start`, acquire and `bind` the supervisor identity, then `authorize` once. Its
+completion carries `ProcessScopeClosure`: only normal, OS-proven empty scopes
+are `closed`; cancellation, surviving descendants and lost ownership are `unknown`.
+No Node or native implementation types appear in this contract.
+
 Complete usage, examples, contract semantics, and ownership boundaries are maintained in the [中文使用文档](https://github.com/zopenge/foundation-forge/blob/main/docs/packages/process-execution/process-control.md).
 
 For repository-wide capability discovery, see the [Foundation Forge documentation](https://github.com/zopenge/foundation-forge/blob/main/docs/README.md).

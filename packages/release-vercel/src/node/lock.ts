@@ -7,9 +7,9 @@ export interface OwnedLock {
   assertOwned(): Promise<void>;
   release(): Promise<void>;
 }
-export async function acquireLock(path: string): Promise<OwnedLock> {
+export async function acquireLock(path: string, metadata?: { readonly runId: string; readonly identity: { readonly pid: number; readonly startToken: string } }): Promise<OwnedLock> {
   await mkdir(dirname(path), { recursive: true });
-  const owner = JSON.stringify({ pid: process.pid, token: randomUUID(), startedAt: new Date().toISOString() });
+  const owner = JSON.stringify({ pid: process.pid, token: randomUUID(), startedAt: new Date().toISOString(), ...metadata });
   let handle;
   try { handle = await open(path, 'wx'); }
   catch (error) {

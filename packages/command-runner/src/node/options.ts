@@ -1,7 +1,8 @@
-import type { ProcessControlProvider, ProcessTerminationPolicy } from '@openge/forge-process-control';
+import type { OwnedProcessScopeProvider, ProcessControlProvider, ProcessTerminationPolicy } from '@openge/forge-process-control';
 export interface NodeCommandRunnerOptions {
   readonly platform: 'win32' | 'posix';
   readonly processControl: ProcessControlProvider;
+  readonly ownedScopeProvider?: OwnedProcessScopeProvider;
   readonly terminationPolicy: ProcessTerminationPolicy;
   readonly terminationTimeoutMs: number;
   readonly identityAcquisition: { readonly timeoutMs: number; readonly pollIntervalMs: number };

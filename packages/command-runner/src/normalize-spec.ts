@@ -19,6 +19,8 @@ export function normalizeCommandSpec(spec: CommandSpec): CommandSpec {
   if (spec.cwd !== undefined) validText(spec.cwd, 'cwd');
   if (spec.timeoutMs !== undefined) positiveInteger(spec.timeoutMs, 'COMMAND_INVALID_TIMEOUT', 'timeoutMs');
   if (spec.heartbeatMs !== undefined) positiveInteger(spec.heartbeatMs, 'COMMAND_INVALID_HEARTBEAT', 'heartbeatMs');
+  if (spec.ownedScope !== undefined && (!['automatic', 'manual'].includes(spec.ownedScope.start) || !/^[\x21-\x7e]{1,256}$/u.test(spec.ownedScope.binding)
+    || (spec.ownedScope.start === 'manual' && spec.timeoutMs === undefined))) throw new CommandRunnerError('COMMAND_INVALID_SPEC', { field: 'ownedScope' });
   const output = spec.output ?? { mode: 'events' };
   if (!['events', 'capture', 'ignore'].includes(output.mode)) throw new CommandRunnerError('COMMAND_INVALID_SPEC', { field: 'output.mode' });
   if (output.mode === 'capture') {
@@ -42,5 +44,6 @@ export function normalizeCommandSpec(spec: CommandSpec): CommandSpec {
     args: Object.freeze([...(spec.args ?? [])]),
     environment: frozenEnvironment,
     output: Object.freeze({ ...output }),
+    ...(spec.ownedScope === undefined ? {} : { ownedScope: Object.freeze({ ...spec.ownedScope }) }),
   });
 }

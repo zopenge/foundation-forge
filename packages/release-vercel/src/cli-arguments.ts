@@ -4,7 +4,7 @@ import { ReleaseError } from './node/errors.js';
 
 export function parseArguments(args: readonly string[]): { command: ReleaseCommand; cwd: string; configPath?: string; sha?: string } {
   const command = args[0];
-  if (!['check', 'publish', 'status', 'verify', 'login'].includes(command ?? '')) throw new ReleaseError('ARGUMENT_INVALID');
+  if (!['check', 'publish', 'status', 'verify', 'recover', 'login'].includes(command ?? '')) throw new ReleaseError('ARGUMENT_INVALID');
   const values = new Map<string, string>();
   for (let index = 1; index < args.length; index += 2) {
     const flag = args[index], value = args[index + 1];

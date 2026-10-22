@@ -19,6 +19,9 @@ export function createNodeCommandRunner(options: NodeCommandRunnerOptions): Comm
   const configuration = Object.freeze({ ...options, identityAcquisition: Object.freeze({ ...options.identityAcquisition }), terminationPolicy: Object.freeze({ ...options.terminationPolicy }) });
   return {
     start: (spec, observer) => startCommand(configuration, spec, observer),
-    run: (spec, observer) => startCommand(configuration, spec, observer).result,
+    run: (spec, observer) => {
+      if (spec.ownedScope?.start === 'manual') throw new CommandRunnerError('COMMAND_INVALID_SPEC', { field: 'ownedScope.start', reason: 'START_REQUIRED' });
+      return startCommand(configuration, spec, observer).result;
+    },
   };
 }

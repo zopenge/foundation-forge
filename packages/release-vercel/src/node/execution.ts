@@ -2,10 +2,12 @@ import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { delimiter, dirname, resolve, win32 } from 'node:path';
 import { createNodeCommandRunner } from '@openge/forge-command-runner/node';
-import { createPosixProcessControl, createWindowsProcessControl } from '@openge/forge-process-control-node';
+import { createPosixProcessControl, createPosixProcessIdentityReader, createWindowsProcessControl, createWindowsProcessIdentityReader } from '@openge/forge-process-control-node';
 import type { ReleaseCheck, ReleaseConfig, ReleaseErrorCode, ReleaseStep } from '../contracts.js';
 import { assertActive, redact, ReleaseError } from './errors.js';
 import { LiveOutput } from './live-output.js';
+import type { ExecutionLifecycle } from './release-context.js';
+import { managedOwnedScopeProvider } from './owned-command-runner.js';
 
 export function resolveInvocation(command: string, args: readonly string[]): { command: string; args: readonly string[] } {
   if (command === 'node') return { command: process.execPath, args };
@@ -32,21 +34,31 @@ export function vercelInvocation(args: readonly string[]): { command: string; ar
   return { command: process.execPath, args: [resolve(dirname(require.resolve('vercel/package.json')), 'dist/vc.js'), ...args] };
 }
 export class Execution {
-  private readonly runner = createNodeCommandRunner({
-    platform: process.platform === 'win32' ? 'win32' : 'posix',
-    processControl: process.platform === 'win32' ? createWindowsProcessControl({ listenerBackend: 'netstat' })
-      : createPosixProcessControl({ listenerBackend: 'lsof' }),
-    terminationPolicy: { mode: 'force' }, terminationTimeoutMs: 5000,
-    identityAcquisition: { timeoutMs: 2000, pollIntervalMs: 20 },
-  });
+  private readonly runner: ReturnType<typeof createNodeCommandRunner>;
   constructor(readonly cwd: string, readonly config: Pick<ReleaseConfig, 'limits'>, readonly signal: AbortSignal | undefined,
-    readonly steps: ReleaseStep[]) {}
+    readonly steps: ReleaseStep[], private readonly lifecycle?: ExecutionLifecycle) {
+    const control = process.platform === 'win32' ? createWindowsProcessControl({ listenerBackend: 'netstat' }) : createPosixProcessControl({ listenerBackend: 'lsof' });
+    const reader = process.platform === 'win32' ? createWindowsProcessIdentityReader() : createPosixProcessIdentityReader();
+    this.runner = createNodeCommandRunner({ platform: process.platform === 'win32' ? 'win32' : 'posix',
+      ...(lifecycle ? { ownedScopeProvider: managedOwnedScopeProvider() } : {}),
+      processControl: { ...control, listProcesses: async request => {
+        const pid = request?.pids?.length === 1 ? request.pids[0] : undefined;
+        if (pid !== undefined) {
+          const observed = await reader.readIdentity({ pid, ...(request?.signal ? { signal: request.signal } : {}) });
+          return observed.status === 'FOUND' ? [observed.identity] : [];
+        }
+        return control.listProcesses(request);
+      } },
+      terminationPolicy: { mode: 'force' }, terminationTimeoutMs: 5000,
+      identityAcquisition: { timeoutMs: lifecycle ? Math.min(10_000, config.limits.commandMs) : 2000, pollIntervalMs: 20 } });
+  }
   async run(name: string, check: ReleaseCheck, errorCode: ReleaseErrorCode, values?: Readonly<Record<string, string>>,
     signal = this.signal, captureStep = true, onOutput?: (text: string) => void): Promise<string> {
     assertActive(signal);
     const invocation = resolveInvocation(check.command, check.args ?? []);
     const live = onOutput === undefined ? undefined : new LiveOutput(this.config.limits.maxOutputBytes, onOutput);
-    const result = await this.runner.run({ ...invocation, cwd: this.cwd,
+    const execute = this.lifecycle ? this.lifecycle.execute.bind(this.lifecycle, this.runner, name) : this.runner.run.bind(this.runner);
+    const result = await execute({ ...invocation, cwd: this.cwd,
       environment: { mode: 'inherit', values: { GIT_TERMINAL_PROMPT: '0', VERCEL_TELEMETRY_DISABLED: '1', ...values } },
       output: { mode: 'capture', maxBytesPerStream: this.config.limits.maxOutputBytes, overflow: 'truncate' },
       timeoutMs: Math.min(check.timeoutMs ?? this.config.limits.commandMs, this.config.limits.commandMs),
@@ -74,5 +86,24 @@ export class Execution {
   }
   git(args: readonly string[]): Promise<string> {
     return this.run('git', { command: 'git', args }, 'GIT_FAILED', undefined, this.signal, false);
+  }
+  async streamGit(args: readonly string[], onChunk: (chunk: Uint8Array) => void, allowedExitCodes: readonly number[] = [0]): Promise<void> {
+    assertActive(this.signal);
+    const controller = new AbortController();
+    const signal = this.signal ? AbortSignal.any([this.signal, controller.signal]) : controller.signal;
+    let failure: unknown;
+    const execute = this.lifecycle ? this.lifecycle.execute.bind(this.lifecycle, this.runner, 'git-stream') : this.runner.run.bind(this.runner);
+    const result = await execute({ command: 'git', args, cwd: this.cwd,
+      environment: { mode: 'inherit', values: { GIT_TERMINAL_PROMPT: '0' } }, output: { mode: 'events' },
+      timeoutMs: this.config.limits.commandMs, signal }, event => {
+      if (event.type === 'stdout' && failure === undefined) {
+        try { onChunk(event.chunk); } catch (error) { failure = error; controller.abort(); }
+      }
+    });
+    if (failure !== undefined) throw failure;
+    assertActive(this.signal);
+    if (result.exitCode === null || !allowedExitCodes.includes(result.exitCode) || result.terminationReason !== 'exit') {
+      throw new ReleaseError('GIT_FAILED', { reason: 'STREAM_FAILED', exitCode: result.exitCode, termination: result.terminationReason });
+    }
   }
 }
