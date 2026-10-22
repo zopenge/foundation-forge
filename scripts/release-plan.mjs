@@ -78,15 +78,17 @@ export const createNpmPublishArguments = (
 
 export const executeReleasePlan = async (
   releases,
-  { ensureTag, pack, publish, tag, verifyTag },
+  { ensureTag, pack, publish, tag, verifyTag, onPublishState = async () => {} },
 ) => {
+  for (const release of releases.filter(({ needsPublish }) => !needsPublish)) await verifyTag(release);
   for (const release of releases) {
     if (release.needsPublish) {
       const tarball = await pack(release);
-      await publish(tarball, tag);
+      await onPublishState(release, 'started');
+      try { await publish(tarball, tag); }
+      catch (error) { await onPublishState(release, 'unknown'); throw error; }
+      await onPublishState(release, 'succeeded');
       await ensureTag(release);
-    } else {
-      await verifyTag(release);
     }
   }
 };

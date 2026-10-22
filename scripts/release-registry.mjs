@@ -1,12 +1,14 @@
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { rm, mkdir } from 'node:fs/promises';
-import { resolve } from 'node:path';
-import { setTimeout as delay } from 'node:timers/promises';
+import { rm, mkdir, writeFile, realpath } from 'node:fs/promises';
+import { isAbsolute, relative, resolve } from 'node:path';
 
 import { runCleanPackageConsumer } from './package-consumer-runner.mjs';
 import { loadPackageVerification } from './package-verification.mjs';
+import { createPropagationBudget, fetchRegistryResponse, releaseError } from './release-propagation.mjs';
+import { createPublicConsumerEnvironment } from './release-environment.mjs';
+import { installRegistryConsumer } from './release-install.mjs';
 
 const packageUrl = (registry, name) => `${registry}/${encodeURIComponent(name)}`;
 
@@ -14,12 +16,15 @@ export const readPackageRegistryMetadata = async ({
   fetch: fetchImplementation = globalThis.fetch,
   name,
   registry,
+  budget,
 }) => {
+  if (budget && budget.remaining() <= 0) throw budget.timeout();
   const response = await fetchImplementation(packageUrl(registry, name), {
     headers: { accept: 'application/json' },
+    signal: globalThis.AbortSignal.timeout(Math.min(30_000, budget?.remaining() ?? 30_000)),
   });
   if (response.status === 404) return undefined;
-  if (!response.ok) throw new Error(`npm registry returned ${String(response.status)} for ${name}`);
+  if (!response.ok) throw releaseError('REGISTRY_HTTP_ERROR', `npm registry returned ${String(response.status)} for ${name}`, { status: response.status });
   const metadata = await response.json();
   if (metadata == null || typeof metadata !== 'object' || typeof metadata.versions !== 'object') {
     throw new Error(`npm registry returned invalid metadata for ${name}`);
@@ -63,38 +68,40 @@ export const waitForPackageVersion = async ({
   registry,
   timeoutMilliseconds,
   version,
+  budget = createPropagationBudget({ timeoutMilliseconds, intervalMilliseconds }),
 }) => {
-  const deadline = Date.now() + timeoutMilliseconds;
-  let lastError;
-  while (Date.now() <= deadline) {
-    try {
-      const response = await fetchImplementation(packageUrl(registry, name), {
-        headers: { accept: 'application/json' },
-      });
-      if (response.ok) {
-        const metadata = await response.json();
-        const versionMetadata = assertReleaseVersionMetadata({ metadata, mode, name, version });
-        const tarballResponse = await fetchImplementation(versionMetadata.dist.tarball);
-        if (tarballResponse.ok) {
-          const bytes = Buffer.from(await tarballResponse.arrayBuffer());
-          if (hasExpectedIntegrity(bytes, versionMetadata.dist.integrity)) {
-            return { metadata, tarballBytes: bytes, versionMetadata };
-          }
-          lastError = new Error(`${name}@${version} tarball integrity does not match registry metadata`);
-        } else {
-          lastError = new Error(`${name}@${version} tarball returned ${String(tarballResponse.status)}`);
-        }
-      } else {
-        lastError = new Error(`${name}@${version} metadata returned ${String(response.status)}`);
+  return budget.retry(async () => {
+    const read = async (url, accept) => {
+      const response = await fetchRegistryResponse({ fetch: fetchImplementation, url, accept, budget });
+      const metadata = await response.json();
+      if (!metadata || !metadata.versions || typeof metadata.versions !== 'object') {
+        throw releaseError('REGISTRY_METADATA_INVALID', `${name} 的 registry 元数据无效`);
       }
-    } catch (error) {
-      lastError = error;
+      if (!metadata.versions[version]) {
+        throw releaseError('REGISTRY_PENDING', `${name}@${version} 的元数据尚未就绪`);
+      }
+      if (mode !== undefined && metadata['dist-tags']?.[mode === 'stable' ? 'latest' : 'next'] !== version) {
+        throw releaseError('REGISTRY_PENDING', `${name}@${version} 的 dist-tag 尚未就绪`);
+      }
+      const versionMetadata = metadata.versions[version];
+      if (typeof versionMetadata.dist?.tarball !== 'string' || typeof versionMetadata.dist.integrity !== 'string') {
+        throw releaseError('REGISTRY_METADATA_INVALID', `${name}@${version} 缺少 tarball 或 integrity`);
+      }
+      return { metadata, versionMetadata };
+    };
+    const full = await read(packageUrl(registry, name), 'application/json');
+    const abbreviated = await read(`${registry}/${name.replace('/', '%2F')}`,
+      'application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*');
+    if (abbreviated.versionMetadata.dist.integrity !== full.versionMetadata.dist.integrity) {
+      throw releaseError('REGISTRY_INTEGRITY_ERROR', `${name}@${version} 的两种元数据完整性不一致`);
     }
-    if (Date.now() > deadline) break;
-    await delay(intervalMilliseconds);
-  }
-  throw new Error(`${name}@${version} did not finish propagating before the registry timeout`, {
-    cause: lastError,
+    const response = await fetchRegistryResponse({ fetch: fetchImplementation,
+      url: full.versionMetadata.dist.tarball, budget });
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (!hasExpectedIntegrity(bytes, full.versionMetadata.dist.integrity)) {
+      throw releaseError('REGISTRY_INTEGRITY_ERROR', `${name}@${version} 的 tarball 完整性不符`);
+    }
+    return { ...full, tarballBytes: bytes };
   });
 };
 
@@ -151,7 +158,7 @@ const captureGit = (args, repositoryRoot) => {
   return result.stdout.trim();
 };
 
-const resolveTagCommit = ({ mode, packageValue, repositoryRoot }) => {
+export const readReleaseTagCommit = ({ mode, packageValue, repositoryRoot }) => {
   const tag = `${packageValue.name}@${packageValue.version}`;
   if (mode === 'bootstrap') {
     const commit = captureGit(['rev-list', '-n', '1', tag], repositoryRoot);
@@ -180,6 +187,21 @@ const releaseCandidates = (packages, mode, selectedNames) => {
     : !prerelease.test(version));
 };
 
+export const selectReleasePackages = (packages, mode, selectedNames = []) => {
+  const targets = releaseCandidates(packages, mode, [...new Set(selectedNames)]);
+  const byName = new Map(packages.map((value) => [value.name, value]));
+  const names = new Set();
+  const visit = (name) => {
+    if (names.has(name)) return;
+    const value = byName.get(name);
+    if (!value) throw new Error(`unknown workspace dependency: ${name}`);
+    names.add(name);
+    for (const dependency of value.workspaceDependencies) visit(dependency);
+  };
+  for (const { name } of targets) visit(name);
+  return { targets, packages: packages.filter(({ name }) => names.has(name)) };
+};
+
 export const verifyRegistryPackages = async ({
   expectedCommit,
   fetch: fetchImplementation = globalThis.fetch,
@@ -188,26 +210,37 @@ export const verifyRegistryPackages = async ({
   packageNames = [],
   policy,
   verificationRoot,
+  onEvent = async () => {},
+  resolveCommit = readReleaseTagCommit,
+  budget = createPropagationBudget({ timeoutMilliseconds: policy.pollTimeoutMilliseconds }),
 }) => {
-  const targets = releaseCandidates(model.packages, mode, packageNames);
+  const { targets, packages } = selectReleasePackages(model.packages, mode, packageNames);
   if (targets.length === 0) throw new Error(`no ${mode} package versions were selected for verification`);
+  const inside = relative(resolve(model.repositoryRoot, '.tmp'), verificationRoot);
+  if (!inside || inside.startsWith('..') || isAbsolute(inside)) throw new Error('unsafe registry verification directory');
+  await mkdir(verificationRoot, { recursive: true });
+  const actual = relative(await realpath(resolve(model.repositoryRoot, '.tmp')), await realpath(verificationRoot));
+  if (!actual || actual.startsWith('..') || isAbsolute(actual)) throw new Error('unsafe registry verification symlink');
   await rm(verificationRoot, { force: true, recursive: true });
   await mkdir(verificationRoot, { recursive: true });
   try {
-    for (const packageValue of model.packages) {
+    await onEvent({ stage: 'registry', state: 'started' });
+    for (const packageValue of packages) {
       packageValue.verification = await loadPackageVerification(packageValue);
     }
-    for (const packageValue of targets) {
+    for (const packageValue of packages) {
+      const isTarget = targets.some(({ name }) => name === packageValue.name);
       const result = await waitForPackageVersion({
         fetch: fetchImplementation,
-        intervalMilliseconds: policy.pollIntervalMilliseconds,
-        mode,
+        budget,
+        mode: isTarget ? mode : undefined,
         name: packageValue.name,
         registry: policy.registry,
         timeoutMilliseconds: policy.pollTimeoutMilliseconds,
         version: packageValue.version,
       });
-      const tagCommit = resolveTagCommit({ mode, packageValue, repositoryRoot: model.repositoryRoot });
+      if (!isTarget) continue;
+      const tagCommit = await resolveCommit({ mode, packageValue, repositoryRoot: model.repositoryRoot });
       if (expectedCommit !== undefined && tagCommit !== expectedCommit) {
         throw new Error(`${packageValue.name}@${packageValue.version} Git tag points to a different commit`);
       }
@@ -216,12 +249,8 @@ export const verifyRegistryPackages = async ({
         if (typeof attestationUrl !== 'string') {
           throw new Error(`${packageValue.name}@${packageValue.version} has no provenance URL`);
         }
-        const response = await fetchImplementation(attestationUrl, {
-          headers: { accept: 'application/json' },
-        });
-        if (!response.ok) {
-          throw new Error(`${packageValue.name}@${packageValue.version} provenance returned ${String(response.status)}`);
-        }
+        const response = await budget.retry(() => fetchRegistryResponse({ fetch: fetchImplementation,
+          url: attestationUrl, accept: 'application/json', budget }));
         verifyProvenanceAttestation({
           attestations: await response.json(),
           commit: tagCommit,
@@ -231,11 +260,25 @@ export const verifyRegistryPackages = async ({
           version: packageValue.version,
         });
       }
-      process.stdout.write(`Verified registry release ${packageValue.name}@${packageValue.version}.\n`);
+      await onEvent({ stage: 'registry', state: 'verified', name: packageValue.name });
+      process.stdout.write(`Registry 元数据、tarball 和来源检查通过：${packageValue.name}@${packageValue.version}。\n`);
     }
-    const references = new Map(model.packages.map(({ name, version }) => [name, version]));
+    await onEvent({ stage: 'registry', state: 'succeeded' });
+    const references = new Map(packages.map(({ name, version }) => [name, version]));
     const consumerRoot = resolve(verificationRoot, 'consumer');
-    process.stdout.write(`${await runCleanPackageConsumer({ consumerRoot, model, references })}\n`);
+    const emptyConfig = resolve(verificationRoot, 'empty.npmrc');
+    await writeFile(emptyConfig, '', 'utf8');
+    const env = createPublicConsumerEnvironment(process.env, emptyConfig);
+    await onEvent({ stage: 'consumer', state: 'started' });
+    process.stdout.write(`${await runCleanPackageConsumer({ consumerRoot,
+      model: { ...model, packages }, references, env,
+      install: ({ cwd }) => installRegistryConsumer({ cwd, env, budget,
+        confirmedNames: new Set(packages.map(({ name }) => name)),
+        onRetry: ({ attempt, waitMilliseconds, error }) => process.stdout.write(
+          `消费者安装等待传播：${error.code}，第 ${String(attempt)} 次重试将在 ${String(waitMilliseconds / 1_000)} 秒后执行。\n`),
+      }),
+    })}\n`);
+    await onEvent({ stage: 'consumer', state: 'succeeded' });
     return targets;
   } finally {
     await rm(verificationRoot, { force: true, recursive: true });

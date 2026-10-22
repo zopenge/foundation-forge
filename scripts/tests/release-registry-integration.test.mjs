@@ -1,0 +1,134 @@
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { createServer } from 'node:http';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import test from 'node:test';
+
+import { runCaptured, runCleanPackageConsumer } from '../package-consumer-runner.mjs';
+import { createPackageManagerInvocation } from '../package-manager-command.mjs';
+import { createPublicConsumerEnvironment } from '../release-environment.mjs';
+import { installRegistryConsumer, runInstallCommand } from '../release-install.mjs';
+import { createPropagationBudget } from '../release-propagation.mjs';
+import { verifyRegistryPackages } from '../release-registry.mjs';
+import { captureReleaseOutput } from './helpers/release-output.mjs';
+
+const fixture = async (context) => {
+  captureReleaseOutput(context);
+  await mkdir(resolve('.tmp', 'release-tests'), { recursive: true });
+  const root = await mkdtemp(resolve('.tmp', 'release-tests', 'real-'));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  return root;
+};
+
+const servePackage = async (context, root, initialFailure = '404') => {
+  const name = `@release-fixture/${root.split(/[\\/]/u).at(-1).toLowerCase()}`;
+  const source = resolve(root, 'source');
+  await mkdir(source);
+  await writeFile(resolve(source, 'package.json'), JSON.stringify({ name, version: '1.0.0-rc.0', type: 'module',
+    exports: './index.js', files: ['index.js'],
+  }));
+  await writeFile(resolve(source, 'index.js'), 'export const value = 42;\n');
+  await writeFile(resolve(source, 'pnpm-workspace.yaml'), 'packages: []\n');
+  const pack = createPackageManagerInvocation('pnpm', ['pack', '--pack-destination', root]);
+  await runCaptured(pack.command, pack.args, { cwd: source });
+  const filename = `${name.slice(1).replace('/', '-')}-1.0.0-rc.0.tgz`;
+  const bytes = await readFile(resolve(root, filename));
+  const integrity = `sha512-${createHash('sha512').update(bytes).digest('base64')}`;
+  const requests = [];
+  let installRequests = 0;
+  const server = createServer((request, response) => {
+    const install = request.headers['user-agent']?.startsWith('pnpm/');
+    requests.push({ url: request.url, accept: request.headers.accept, authorization: request.headers.authorization, install });
+    if (request.url === '/package.tgz') { response.end(bytes); return; }
+    if (decodeURIComponent(request.url) !== `/${name}`) { response.writeHead(404); response.end('{}'); return; }
+    if (install && ++installRequests === 1) {
+      if (initialFailure === 'reset') { request.socket.destroy(); return; }
+      response.writeHead(404); response.end('{}'); return;
+    }
+    const metadata = { name, 'dist-tags': { next: '1.0.0-rc.0', latest: '1.0.0-rc.0' },
+      versions: { '1.0.0-rc.0': { name, version: '1.0.0-rc.0', type: 'module',
+        dist: { tarball: `${registry}/package.tgz`, integrity },
+      } },
+    };
+    response.setHeader('content-type', request.headers.accept?.includes('application/vnd.npm.install-v1+json')
+      ? 'application/vnd.npm.install-v1+json' : 'application/json');
+    response.end(JSON.stringify(metadata));
+  });
+  await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+  context.after(async () => { server.closeAllConnections(); await new Promise((done) => server.close(done)); });
+  const registry = `http://127.0.0.1:${String(server.address().port)}`;
+  await writeFile(resolve(root, '.npmrc'), `registry=${registry}/\n`);
+  await writeFile(resolve(root, 'pnpm-workspace.yaml'), 'packages: []\nautoInstallPeers: false\n');
+  await writeFile(resolve(source, 'package.verify.json'), '{"browserExports": []}\n');
+  await mkdir(resolve(source, 'package-consumer'));
+  await writeFile(resolve(source, 'package-consumer', 'verify.mjs'),
+    `import { value } from '${name}';\nif (value !== 42) throw new Error('wrong tarball');\n`);
+  return { name, registry, requests, packageValue: { name, version: '1.0.0-rc.0',
+    packageRoot: source, exports: [{ specifier: name, subpath: '.', importTarget: './index.js' }], bins: [], workspaceDependencies: [],
+  } };
+};
+
+test('真实 pnpm 在元数据已通过后遇到首次 404，重试安装 tarball 并通过导入和 smoke', { timeout: 45_000 }, async (context) => {
+  const root = await fixture(context);
+  const { name, registry, requests, packageValue } = await servePackage(context, root);
+  const stages = [];
+  const verificationRoot = resolve(root, '.tmp', 'consumer-verification');
+  const result = await verifyRegistryPackages({
+    model: { repositoryRoot: root, packages: [packageValue,
+      { name: 'unrelated-not-published', version: '9.0.0', workspaceDependencies: [] }] },
+    mode: 'bootstrap', packageNames: [name], policy: { registry, pollTimeoutMilliseconds: 30_000 },
+    verificationRoot, resolveCommit: async () => 'a'.repeat(40),
+    budget: createPropagationBudget({ timeoutMilliseconds: 30_000, intervalMilliseconds: 1 }),
+    onEvent: async (event) => stages.push(event),
+  });
+  assert.equal(result.length, 1);
+  assert.ok(requests.filter(({ install, url }) => install && !url.endsWith('.tgz')).length >= 2);
+  assert.ok(requests.some(({ accept }) => accept?.includes('application/vnd.npm.install-v1+json')));
+  assert.ok(requests.every(({ authorization }) => authorization === undefined));
+  assert.deepEqual(stages.at(-1), { stage: 'consumer', state: 'succeeded' });
+  await assert.rejects(readFile(resolve(verificationRoot, 'consumer', 'package.json')), { code: 'ENOENT' });
+});
+
+test('真实 pnpm 包装的首次元数据断连会重试并成功安装', { timeout: 45_000 }, async (context) => {
+  const root = await fixture(context);
+  const { name, registry, requests, packageValue } = await servePackage(context, root, 'reset');
+  await verifyRegistryPackages({ model: { repositoryRoot: root, packages: [packageValue] },
+    mode: 'bootstrap', packageNames: [name], policy: { registry, pollTimeoutMilliseconds: 30_000 },
+    verificationRoot: resolve(root, '.tmp', 'verification'), resolveCommit: async () => 'a'.repeat(40),
+    budget: createPropagationBudget({ timeoutMilliseconds: 30_000, intervalMilliseconds: 1 }),
+  });
+  assert.ok(requests.filter(({ install, url }) => install && !url.endsWith('.tgz')).length >= 2);
+});
+
+test('安装阶段超时会回收实际子进程，耗尽预算后不再重试', { timeout: 10_000 }, async (context) => {
+  const root = await fixture(context);
+  const pidPath = resolve(root, 'pid');
+  await assert.rejects(runInstallCommand({ cwd: root, env: process.env, timeoutMilliseconds: 500,
+    invocation: { command: process.execPath, args: ['--input-type=module', '-e',
+      `import {writeFileSync} from 'node:fs';writeFileSync(${JSON.stringify(pidPath)},String(process.pid));setInterval(()=>{},1000);`] },
+  }), { code: 'CONSUMER_INSTALL_TIMEOUT' });
+  const pid = Number(await readFile(pidPath, 'utf8'));
+  assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+});
+
+test('真实安装成功后的失败 smoke 不触发安装重试', { timeout: 45_000 }, async (context) => {
+  const root = await fixture(context);
+  const { registry, packageValue, name } = await servePackage(context, root);
+  await writeFile(resolve(root, 'source', 'package-consumer', 'verify.mjs'), "throw new Error('smoke regression');\n");
+  const emptyConfig = resolve(root, 'empty.npmrc');
+  await writeFile(emptyConfig, '');
+  const env = createPublicConsumerEnvironment(process.env, emptyConfig);
+  const budget = createPropagationBudget({ timeoutMilliseconds: 30_000, intervalMilliseconds: 1 });
+  let attempts = 0;
+  await assert.rejects(runCleanPackageConsumer({ consumerRoot: resolve(root, 'consumer'),
+    model: { repositoryRoot: root, packages: [{ ...packageValue,
+      verification: { consumerScript: resolve(root, 'source', 'package-consumer', 'verify.mjs') } }] },
+    references: new Map([[name, packageValue.version]]), env,
+    install: ({ cwd }) => installRegistryConsumer({ cwd, env, budget, confirmedNames: new Set([name]),
+      run: async (options) => { attempts += 1; return runInstallCommand(options); },
+    }),
+  }), /smoke regression/u);
+  assert.equal(attempts, 2);
+  assert.ok(registry.startsWith('http://127.0.0.1:'));
+});

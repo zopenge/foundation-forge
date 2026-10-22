@@ -276,7 +276,7 @@ test('waits for both registry metadata and the tarball to become available', asy
   });
 
   assert.equal(result.versionMetadata.dist.tarball, 'https://registry.npmjs.org/package.tgz');
-  assert.equal(metadataAttempts, 3);
+  assert.equal(metadataAttempts, 5);
   assert.equal(tarballAttempts, 2);
 });
 

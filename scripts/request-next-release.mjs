@@ -1,4 +1,3 @@
-import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -13,8 +12,9 @@ import { assertNextReleasePlan, assertTrustedPublishingReady, createReleasePlan,
 import { loadReleasePolicy } from './release-policy.mjs';
 import {
   readPackageRegistryMetadata,
-  verifyRegistryPackages,
 } from './release-registry.mjs';
+import { runReportedVerification } from './release-recovery.mjs';
+import { withReleaseLock } from './release-report.mjs';
 import { discoverWorkspacePackageModel } from './workspace-packages.mjs';
 
 const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
@@ -50,11 +50,10 @@ if (targets.length > 0) {
 } else {
   process.stdout.write('All local prerelease package versions are already published; skipping dispatch.\n');
 }
-await verifyRegistryPackages({
+await withReleaseLock(repositoryRoot, () => runReportedVerification({
   expectedCommit: targets.length === 0 ? undefined : state.headSha,
   mode: 'next',
   model,
   packageNames: targets,
   policy,
-  verificationRoot: resolve(repositoryRoot, '.tmp', 'registry-package-verification'),
-});
+}));

@@ -73,6 +73,9 @@ trust CLI 版本和轮询时限等不可推导策略保留在 release policy 中
   steps；追加 `--logs` 时通过 Git Credential Manager 读取并脱敏筛选失败日志。
 - `pnpm release:verify --mode next|stable|bootstrap`：独立执行 registry
   验证；可重复传入 `--package <name>` 缩小范围。
+- `pnpm release:resume --report <报告路径>`：核对原源码、精确版本与环境后续验，
+  仅补齐 bootstrap 的 Trusted Publisher 和 registry/consumer 验证，不会再次
+  publish、派发 workflow 或创建、移动 Git tag。
 - `pnpm release:configure-trusted-publishers`：幂等检查所有公开 package，
   仅配置缺失项；也可重复传入 `--package <name>`。OTP 掩码读取且不会写入
   参数、Git、文件或日志。
@@ -84,6 +87,55 @@ pnpm 脚本参数直接写在命令后，不添加额外的 `--`。例如
 `release:next` 和 `release` 是 workflow 内部的实际 publish 命令。维护者从
 本地请求 RC 时应使用 `release:request-next`，不要用关闭 provenance 的方式
 直接运行内部命令。
+
+## 发布后的等待、报告与续验
+
+Bootstrap 将 npm publish、Trusted Publisher、registry 和 consumer 分阶段记录。
+只有全部必需阶段通过才输出“发布验证完成”；消费者失败时仍返回非零，但会明确
+保留已经发布成功的包版本和完成阶段，不再统一称为 publisher 失败。
+
+发布后同时检查完整元数据、pnpm 安装用精简元数据和 tarball integrity，包括
+scoped package 的实际 URL 编码。元数据等待与安装共享默认十分钟传播预算，
+退避间隔依次为 2、4、8、15 秒，此后保持 15 秒；单次 HTTP 请求最多三十秒且
+不超过剩余预算，安装子进程也受剩余预算约束。
+
+仅对已确认发布包的暂时缺包、限流、服务端临时错误和可恢复网络错误重试。
+认证失败、完整性错误、安装配置错误、生命周期脚本失败、导入和 smoke 失败立即
+结束；已经开始生命周期脚本的安装不会自动重试。安装成功后再执行 public exports、
+CLI 和 smoke 检查。registry consumer 不使用 prefer-offline，也不会清理共享 store
+或强制重装；它使用无发布凭据的独立配置，真实安装公开 registry 的精确版本。
+
+指定 `--package` 后，元数据、安装与 smoke 都只包含目标包和 workspace 依赖图
+的传递闭包。目标包仍须通过 dist-tag、Git tag 与适用的 provenance 检查；依赖包
+验证精确版本和 tarball，不要求其当前 dist-tag 与本次发布模式相同。完整
+`pnpm check` 的全仓验收范围不变。
+
+每次 bootstrap 或独立 registry 验证会在忽略的 `.tmp/release/` 下保存 JSON 报告。
+报告绑定源码 commit、验证输入指纹、包名、版本与依赖闭包；原子更新阶段状态，
+保存脱敏首错和最近一次错误。独立 `release:verify` 保持 registry/consumer 验证
+语义，将 Trusted Publisher 标为 `not-required`；bootstrap 报告则要求回读并补齐
+该阶段。报告不是跳过外部检查的授权，续验仍会回读 registry、dist-tag 和 Git tag。
+
+失败时直接复制输出中的命令，例如：
+
+```sh
+pnpm release:resume --report .tmp/release/<报告文件名>.json
+```
+
+续验不要求重新执行已通过的源码检查，但必须匹配报告的源码、依赖和运行环境。
+源码或包版本变化、dist-tag 已切换、报告损坏、publish 结果未知时会明确阻断，
+不会改用当前 manifest、重发版本或猜测 tag。进程突然退出后，报告中 `started`
+的 publish 视为未确认，必须先核实实际外部状态；没有报告的历史失败仍按下文的
+分步恢复方法处理。
+
+发布与续验通过 `.tmp/release/active.lock` 防止并发操作相同临时资源。遗留锁不会
+被自动抢占：先核实其中的 PID、启动时间、原日志和报告，确认原操作不在运行后
+再按工作区资源规则精确处理。消费者临时目录在正常完成或捕获失败后回收，小型
+报告保留；进程被强制终止后的临时目录在确认无运行任务后可回收。
+
+OTP 仍只在掩码终端输入，只有缺少 Trusted Publisher 配置时才再次读取。
+pnpm 专属设置保存在 `pnpm-workspace.yaml`，npm 子进程过滤已识别的 pnpm
+环境注入项，同时保留认证、代理、TLS 和 OIDC 配置，不通过隐藏 warning 治理日志。
 
 ## 显式发布额外 release candidate
 
@@ -155,7 +207,7 @@ workflow 内部命令，不得通过全局关闭 provenance 绕过。
 | 完整检查结束后仍无法输入 OTP | 标准输入连接到了 pipe，而不是真实控制台 | 打开独立交互窗口并继承 stdin；实际看到掩码提示后才算启动成功 |
 | pnpm 脚本报 `unknown argument: --` | 额外的 `--` 被原样转交给严格参数解析器 | 直接使用 `pnpm release:verify --mode bootstrap` 等命令，再追加所需参数 |
 | 包已发布，但 bootstrap 报旧版本缺 Git tag | 发布阶段按顺序校验既有版本，历史 tag 不完整 | 保留已发布包，查明旧 tag 的来源；按明确包列表完成 Trusted Publisher 和 bootstrap 验证 |
-| publish 成功且 tarball 可下载，但 metadata 暂时 404 | canonical registry 的元数据传播延迟 | 等待原版本传播并重跑验证；不同 URL 编码短期返回不同结果也不能直接认定为脚本故障 |
+| publish 成功且 tarball 可下载，但安装暂时 404 | 完整元数据与安装精简元数据可能尚未同时传播 | 工具在预算内等待并重试安装；超时后使用原报告续验，不重复 publish |
 
 启动器退出码只证明启动命令执行完成。认证成功必须由 Trusted Publisher 回读确认，
 发布成功必须由下文的 registry、provenance、tag 和真实 consumer 验证共同确认。

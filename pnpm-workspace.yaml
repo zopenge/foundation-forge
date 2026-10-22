@@ -1,6 +1,10 @@
 packages:
   - "packages/*"
 
+strictPeerDependencies: true
+autoInstallPeers: false
+preferWorkspacePackages: true
+
 allowBuilds:
   node-datachannel: true
   koffi: false

@@ -1,9 +1,10 @@
-import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { parseReleaseArguments } from './release-arguments.mjs';
 import { loadReleasePolicy } from './release-policy.mjs';
-import { verifyRegistryPackages } from './release-registry.mjs';
+import { runReportedVerification } from './release-recovery.mjs';
+import { withReleaseLock } from './release-report.mjs';
+import { redactKnownTokens } from './release-redaction.mjs';
 import { discoverWorkspacePackageModel } from './workspace-packages.mjs';
 
 const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
@@ -16,11 +17,15 @@ const [policy, model] = await Promise.all([
   loadReleasePolicy(repositoryRoot),
   discoverWorkspacePackageModel({ repositoryRoot }),
 ]);
-await verifyRegistryPackages({
-  expectedCommit: argumentsValue.sha,
-  mode: argumentsValue.mode,
-  model,
-  packageNames: argumentsValue.packages,
-  policy,
-  verificationRoot: resolve(repositoryRoot, '.tmp', 'registry-package-verification'),
-});
+try {
+  await withReleaseLock(repositoryRoot, () => runReportedVerification({
+    expectedCommit: argumentsValue.sha,
+    mode: argumentsValue.mode,
+    model,
+    packageNames: argumentsValue.packages,
+    policy,
+  }));
+} catch (error) {
+  process.stderr.write(`${redactKnownTokens(error?.message ?? String(error))}\n`);
+  process.exitCode = 1;
+}

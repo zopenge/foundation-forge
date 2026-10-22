@@ -40,6 +40,7 @@
     "release:request-next": "pnpm run check && node ./scripts/request-next-release.mjs",
     "release:status": "node ./scripts/release-status.mjs",
     "release:verify": "node ./scripts/verify-release.mjs",
+    "release:resume": "node ./scripts/resume-release.mjs",
     "release": "pnpm run check && node ./scripts/publish-if-needed.mjs"
   },
   "devDependencies": {

@@ -295,6 +295,9 @@ export const runCleanPackageConsumer = async ({
   model,
   references,
   smokePackageNames,
+  install = async ({ cwd, env }) => runPnpm(['install', '--prefer-offline', '--frozen-lockfile=false'], { cwd, env }),
+  env = process.env,
+  onPhase = () => {},
 }) => {
   const started = performance.now();
   const { dependencies, overrides } = createConsumerConfiguration({
@@ -322,7 +325,8 @@ export const runCleanPackageConsumer = async ({
     'utf8',
   );
   await writeFile(resolve(consumerRoot, 'verify.mjs'), createConsumerImportScript(model.packages), 'utf8');
-  runPnpm(['install', '--prefer-offline', '--frozen-lockfile=false'], { cwd: consumerRoot });
+  await onPhase('install');
+  await install({ cwd: consumerRoot, env });
   process.stdout.write(`pack:check consumer install: ${((performance.now() - started) / 1_000).toFixed(2)}s\n`);
   const binaries = Object.fromEntries(model.packages.flatMap((packageValue) => packageValue.bins.map(
     ({ name, target }) => [name, resolve(packageInstallationPath(consumerRoot, packageValue.name), target)],
@@ -330,10 +334,11 @@ export const runCleanPackageConsumer = async ({
   const smokes = model.packages.filter((packageValue) =>
     packageValue.verification.consumerScript !== undefined
       && (smokePackageNames === undefined || smokePackageNames.has(packageValue.name)));
+  await onPhase('checks');
   const importOutput = await runConsumerChecks({
     importCheck: async () => {
       const start = performance.now();
-      const output = await runCaptured(process.execPath, ['verify.mjs'], { cwd: consumerRoot });
+      const output = await runCaptured(process.execPath, ['verify.mjs'], { cwd: consumerRoot, env });
       process.stdout.write(`pack:check consumer imports: ${((performance.now() - start) / 1_000).toFixed(2)}s\n`);
       return output;
     },
@@ -345,7 +350,7 @@ export const runCleanPackageConsumer = async ({
         await runCaptured(process.execPath, ['verify.mjs'], {
           cwd: targetRoot,
           env: {
-            ...process.env,
+            ...env,
             PACKAGE_CONSUMER_BINARIES: JSON.stringify(binaries),
             PACKAGE_CONSUMER_ROOT: consumerRoot,
           },

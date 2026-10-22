@@ -122,6 +122,18 @@ test('publishes only missing versions and verifies tags for published versions',
   ]);
 });
 
+test('发布前校验全部既有 tag，历史 tag 缺失时不发生任何 publish', async () => {
+  let published = false;
+  await assert.rejects(executeReleasePlan([
+    { name: 'new-package', version: '1.0.0-rc.0', needsPublish: true },
+    { name: 'old-package', version: '1.0.0', needsPublish: false },
+  ], {
+    pack: async () => 'package.tgz', publish: async () => { published = true; },
+    ensureTag: async () => {}, verifyTag: async () => { throw new Error('missing old tag'); },
+  }), /missing old tag/u);
+  assert.equal(published, false);
+});
+
 test('fails instead of guessing a tag commit for a published version', async () => {
   const plan = createReleasePlan([
     { name: '@openge/core', version: '0.1.0', versions: new Set(['0.1.0']) },
