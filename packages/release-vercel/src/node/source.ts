@@ -31,7 +31,8 @@ async function assertTrackedClean(execution: Execution): Promise<void> {
   for (const args of [['diff', '--quiet', '--'], ['diff', '--cached', '--quiet', '--']]) {
     try { await execution.git(args); }
     catch (error) {
-      if (error instanceof ReleaseError && error.code === 'GIT_FAILED' && error.details.exitCode === 1) throw new ReleaseError('GIT_DIRTY');
+      if (error instanceof ReleaseError && error.code === 'GIT_FAILED' && error.details.exitCode === 1
+        && error.details.termination === 'exit') throw new ReleaseError('GIT_DIRTY');
       throw error;
     }
   }
@@ -64,7 +65,8 @@ export async function assertSourceFrozen(source: FrozenSource, execution: Execut
     if (await realpath(resolve(source.root, source.configPath)) !== resolve(source.root, source.configPath)
       || !(await readFile(resolve(source.root, source.configPath))).equals(await gitBlob(execution, source.configBlobOid))) throw new ReleaseError('SOURCE_CHANGED');
   } catch (error) {
-    if (error instanceof ReleaseError && error.code === 'CANCELLED') throw error;
+    // 观察失败不证明源码发生变化；保留命令层已经分类的首错。
+    if (error instanceof ReleaseError && ['CANCELLED', 'GIT_FAILED', 'COMMAND_TIMEOUT', 'PROCESS_STATE_UNKNOWN'].includes(error.code)) throw error;
     throw new ReleaseError('SOURCE_CHANGED');
   }
 }

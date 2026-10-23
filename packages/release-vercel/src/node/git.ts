@@ -21,7 +21,11 @@ export async function assertRepository(execution: Execution, config: ReleaseConf
   const root = await execution.git(['rev-parse', '--show-toplevel']);
   if (resolve(root) !== resolve(execution.cwd)) throw new ReleaseError('GIT_REPOSITORY', { reason: 'ROOT_MISMATCH' });
   const remote = config.git.remote.replaceAll('.', '\\.');
-  const urls = await execution.git(['config', '--get-regexp', `^remote\\.${remote}\\.(url|pushurl)$`]);
+  const urls = await execution.git(['config', '--get-regexp', `^remote\\.${remote}\\.(url|pushurl)$`]).catch((error: unknown) => {
+    if (error instanceof ReleaseError && error.code === 'GIT_FAILED' && error.details.exitCode === 1
+      && error.details.termination === 'exit') throw new ReleaseError('GIT_REPOSITORY', { reason: 'REMOTE_MISSING' });
+    throw error;
+  });
   const entries = urls.split(/\r?\n/u).map(line => /^(\S+)\s+(.+)$/u.exec(line));
   const fetch = entries.filter(entry => entry?.[1]?.endsWith('.url')).map(entry => entry?.[2] ?? '');
   const explicitPush = entries.filter(entry => entry?.[1]?.endsWith('.pushurl')).map(entry => entry?.[2] ?? '');

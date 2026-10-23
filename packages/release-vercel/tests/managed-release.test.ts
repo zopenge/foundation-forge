@@ -5,6 +5,7 @@ import { runRelease } from '../src/node.js';
 import type { ReleaseConfig, ReleaseReport, ReleaseTransport, RunReleaseOptions } from '../src/contracts.js';
 import { git, managedFixture } from './helpers/managed-fixture.js';
 import { gitRoutingParameters } from './helpers/git-routing.js';
+import { observeWindowsJobMembers } from '../../process-control-node/tests/helpers/windows-job-observer.js';
 
 const lifecycleFailures = vi.hoisted((): { phase: string; name: string; code?: string; reason?: string }[] => []);
 function recordLifecycleFailure(phase: string, error: unknown): void {
@@ -38,7 +39,11 @@ vi.mock('../src/node/managed-state.js', async importOriginal => {
     } };
   } };
 });
-beforeEach(() => { lifecycleFailures.length = 0; });
+let scopeObservation: Awaited<ReturnType<typeof observeWindowsJobMembers>> | undefined;
+beforeEach(async () => {
+  lifecycleFailures.length = 0;
+  if (process.platform === 'win32' && process.arch === 'x64') scopeObservation = await observeWindowsJobMembers();
+});
 
 const fixtures: Awaited<ReturnType<typeof managedFixture>>[] = [];
 const pending = new Set<Promise<ReleaseReport>>(), controllers = new Set<AbortController>();
@@ -48,9 +53,11 @@ async function run(options: RunReleaseOptions): Promise<ReleaseReport> {
   try { return await task; } finally { pending.delete(task); controllers.delete(controller); }
 }
 afterEach(async () => {
-  for (const controller of controllers) controller.abort();
-  await Promise.allSettled([...pending]);
-  vi.unstubAllEnvs(); for (const f of fixtures.splice(0)) await f.dispose();
+  try {
+    for (const controller of controllers) controller.abort();
+    await Promise.allSettled([...pending]);
+    vi.unstubAllEnvs(); for (const f of fixtures.splice(0)) await f.dispose();
+  } finally { scopeObservation?.restore(); scopeObservation = undefined; }
 });
 const fixture = async () => { const f = await managedFixture(); fixtures.push(f); return f; };
 async function configure(f: Awaited<ReturnType<typeof fixture>>, changes: Partial<ReleaseConfig>): Promise<string> {
@@ -61,7 +68,7 @@ it('checks an unpublished committed input in a real independent checkout, preser
   const sha = await configure(f, { checks: [{ command: 'node', args: ['-e', 'process.stdout.write(JSON.stringify({cwd:process.cwd(),sha:require("node:child_process").execFileSync("git",["rev-parse","HEAD"],{encoding:"utf8"}).trim(),intent:process.env.FORGE_RELEASE_COMMAND,frozen:process.env.FORGE_RELEASE_SHA}))'] }] });
   const transport: ReleaseTransport = { api: async () => { throw new Error('check must not query Vercel'); }, buildInfo: async () => { throw new Error('check must not fetch online'); } };
   const report = await run({ cwd: f.cwd, command: 'check', transport });
-  expect(report, JSON.stringify(report.error)).toMatchObject({ ok: true, schemaVersion: 2, candidateSha: sha, stage: 'complete', processes: { status: 'closed' } });
+  expect(report, JSON.stringify({ error: report.error, members: scopeObservation?.members })).toMatchObject({ ok: true, schemaVersion: 2, candidateSha: sha, stage: 'complete', processes: { status: 'closed' } });
   expect(report.executionRoot).toBe(resolve(f.cwd, '.tmp/release-slot/checkout'));
   const checked = report.steps.find(step => step.name === 'check:0');
   expect(JSON.parse(checked?.stdout ?? '')).toEqual({ cwd: report.executionRoot, sha, intent: 'check', frozen: sha });
