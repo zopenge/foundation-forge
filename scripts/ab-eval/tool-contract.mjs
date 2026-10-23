@@ -96,6 +96,9 @@ export const probeMcpTools=async({server,config,invocation,timeoutMs=30000})=>{
   const cwd=config.cwd?resolve(invocation.cwd,config.cwd):invocation.cwd;
   const child=spawn(executable,args,{cwd,shell:false,windowsHide:true,
     env:{...invocation.env,...config.environment},stdio:['pipe','pipe','pipe']});
+  const closed=new Promise(resolveClosed=>child.once('close',resolveClosed));
+  let stopped=false;
+  const stop=()=>{if(!stopped){stopped=true;stopOwned(child);}};
   let buffer='';let pending=null;let failed=null;let outputBytes=0;
   const reject=error=>{
     failed=error;
@@ -103,7 +106,7 @@ export const probeMcpTools=async({server,config,invocation,timeoutMs=30000})=>{
   };
   child.stdout.on('data',chunk=>{
     outputBytes+=chunk.length;
-    if(outputBytes>1024*1024){reject(fail('MCP_TOOL_PROBE_OUTPUT_LIMIT'));stopOwned(child);return;}
+    if(outputBytes>1024*1024){reject(fail('MCP_TOOL_PROBE_OUTPUT_LIMIT'));stop();return;}
     buffer+=chunk.toString('utf8');
     for(let end=buffer.indexOf('\n');end>=0;end=buffer.indexOf('\n')){
       const line=buffer.slice(0,end).trim();buffer=buffer.slice(end+1);
@@ -120,8 +123,9 @@ export const probeMcpTools=async({server,config,invocation,timeoutMs=30000})=>{
   });
   child.stderr.on('data',chunk=>{
     outputBytes+=chunk.length;
-    if(outputBytes>1024*1024){reject(fail('MCP_TOOL_PROBE_OUTPUT_LIMIT'));stopOwned(child);}
+    if(outputBytes>1024*1024){reject(fail('MCP_TOOL_PROBE_OUTPUT_LIMIT'));stop();}
   });
+  child.stdin.on('error',()=>reject(fail('MCP_TOOL_PROBE_PROCESS_FAILED')));
   child.on('error',()=>reject(fail('MCP_TOOL_PROBE_PROCESS_FAILED')));
   child.on('close',()=>reject(fail('MCP_TOOL_PROBE_PROCESS_EXITED')));
   let id=0;
@@ -129,13 +133,14 @@ export const probeMcpTools=async({server,config,invocation,timeoutMs=30000})=>{
     if(failed){rejectResult(failed);return;}
     const next=++id;
     const timer=setTimeout(()=>{
-      reject(fail('MCP_TOOL_PROBE_TIMEOUT'));stopOwned(child);
+      reject(fail('MCP_TOOL_PROBE_TIMEOUT'));stop();
     },timeoutMs);
     pending={id:next,resolve:value=>{clearTimeout(timer);resolveResult(value);},
       reject:error=>{clearTimeout(timer);rejectResult(error);}};
     child.stdin.write(`${JSON.stringify({jsonrpc:'2.0',id:next,method,
       ...(params===undefined?{}:{params})})}\n`);
   });
+  let primaryFailure;let resultValue;
   try{
     const initialized=await request('initialize',{protocolVersion:'2025-03-26',
       capabilities:{},clientInfo:{name:'foundation-forge-ab-eval',version:'1'}});
@@ -149,14 +154,26 @@ export const probeMcpTools=async({server,config,invocation,timeoutMs=30000})=>{
       if(!Array.isArray(result.tools))throw fail('MCP_TOOL_PROBE_PROTOCOL_INVALID');
       tools.push(...result.tools);
       if(tools.length>1000)throw fail('MCP_TOOL_PROBE_TOOL_LIMIT');
-      if(result.nextCursor===undefined)return {server,tools,pages:page+1};
+      if(result.nextCursor===undefined){resultValue={server,tools,pages:page+1};break;}
       if(typeof result.nextCursor!=='string'||!result.nextCursor
         ||cursors.has(result.nextCursor))throw fail('MCP_TOOL_PROBE_CURSOR_INVALID');
       cursors.add(result.nextCursor);cursor=result.nextCursor;
     }
-    throw fail('MCP_TOOL_PROBE_PAGE_LIMIT');
-  }finally{
-    child.stdin.end();
-    stopOwned(child);
+    if(resultValue===undefined)throw fail('MCP_TOOL_PROBE_PAGE_LIMIT');
+  }catch(error){primaryFailure=error;}
+  let timer;let closeFailure;
+  try{
+    child.stdin.end();stop();
+    // 终止请求不等于子进程和管道已关闭；调用方必须等关闭后才能回收工作目录。
+    await Promise.race([closed,new Promise((_,rejectClose)=>{
+      timer=setTimeout(()=>rejectClose(fail('MCP_TOOL_PROBE_CLOSE_TIMEOUT')),5000);
+    })]);
+  }catch(error){closeFailure=error;}
+  finally{clearTimeout(timer);}
+  if(primaryFailure!==undefined){
+    if(primaryFailure instanceof Error)primaryFailure.cause??=closeFailure;
+    throw primaryFailure;
   }
+  if(closeFailure!==undefined)throw closeFailure;
+  return resultValue;
 };
