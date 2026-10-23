@@ -92,7 +92,10 @@ it('creates and fetches a managed checkout beyond the Windows legacy path limit'
   const f = await managedFixture();
   try {
     if (f.config.source.mode !== 'managed-commit') throw new Error('managed fixture required');
-    const config = { ...f.config, source: { ...f.config.source, slotPath: `.tmp/${'long-directory-'.repeat(6)}/release-slot` } };
+    // 按 fixture 实际根补齐路径，跨过 pack 的 260 字符限制，同时避开 Git 自身 GIT_DIR 的字节限制。
+    const paddingBytes = 214 - Buffer.byteLength(resolve(f.cwd, '.tmp/release-slot/checkout/.git')) - 1;
+    expect(paddingBytes).toBeGreaterThan(0);
+    const config = { ...f.config, source: { ...f.config.source, slotPath: `.tmp/${'p'.repeat(paddingBytes)}/release-slot` } };
     await writeFile(resolve(f.cwd, 'release.config.json'), JSON.stringify(config));
     f.commit();
     const sourceConfig = git(f.cwd, 'config', '--local', '--list');

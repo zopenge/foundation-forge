@@ -13,6 +13,8 @@ jobs:
   verify:
     name: ${{ matrix.os }} / Node.js ${{ matrix.node-version }}
     runs-on: ${{ matrix.os }}
+    env:
+      VITEST_MAX_WORKERS: ${{ matrix.os == 'windows-2025' && '2' || '' }}
     strategy:
       fail-fast: false
       matrix:
