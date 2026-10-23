@@ -1,10 +1,44 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { runRelease } from '../src/node.js';
 import type { ReleaseConfig, ReleaseReport, ReleaseTransport, RunReleaseOptions } from '../src/contracts.js';
 import { git, managedFixture } from './helpers/managed-fixture.js';
 import { gitRoutingParameters } from './helpers/git-routing.js';
+
+const lifecycleFailures = vi.hoisted((): { phase: string; name: string; code?: string; reason?: string }[] => []);
+function recordLifecycleFailure(phase: string, error: unknown): void {
+  if (!error || typeof error !== 'object') { lifecycleFailures.push({ phase, name: typeof error }); return; }
+  const code: unknown = Reflect.get(error, 'code'), details: unknown = Reflect.get(error, 'details');
+  const reason: unknown = details && typeof details === 'object' ? Reflect.get(details, 'reason') : undefined;
+  const safeCode = (value: unknown): value is string => typeof value === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/u.test(value);
+  lifecycleFailures.push({ phase, name: error instanceof Error ? error.name : 'object',
+    ...(safeCode(code) ? { code } : {}), ...(safeCode(reason) ? { reason } : {}) });
+}
+// 透传真实 runner 与状态写入，只为失败断言保留错误分类，不记录环境或原始 cause。
+vi.mock('@openge/forge-command-runner/node', async importOriginal => {
+  const actual = await importOriginal<typeof import('@openge/forge-command-runner/node')>();
+  return { ...actual, createNodeCommandRunner: (...args: Parameters<typeof actual.createNodeCommandRunner>) => {
+    const runner = actual.createNodeCommandRunner(...args);
+    return { ...runner, start: (...parameters: Parameters<typeof runner.start>) => {
+      try {
+        const running = runner.start(...parameters);
+        return { ...running, result: running.result.catch((error: unknown) => { recordLifecycleFailure('command-result', error); throw error; }) };
+      } catch (error) { recordLifecycleFailure('command-start', error); throw error; }
+    } };
+  } };
+});
+vi.mock('../src/node/managed-state.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('../src/node/managed-state.js')>();
+  return { ...actual, createManagedStateStore: (...args: Parameters<typeof actual.createManagedStateStore>) => {
+    const store = actual.createManagedStateStore(...args);
+    return { ...store, writeState: async (...parameters: Parameters<typeof store.writeState>) => {
+      try { return await store.writeState(...parameters); }
+      catch (error) { recordLifecycleFailure('journal-write', error); throw error; }
+    } };
+  } };
+});
+beforeEach(() => { lifecycleFailures.length = 0; });
 
 const fixtures: Awaited<ReturnType<typeof managedFixture>>[] = [];
 const pending = new Set<Promise<ReleaseReport>>(), controllers = new Set<AbortController>();
@@ -84,7 +118,7 @@ it('publishes the exact managed SHA to two real refs and runs frozen acceptance'
     throw new Error('unexpected fixture API path');
   }, buildInfo: async () => ({ revision: sha }) };
   const report = await run({ cwd: f.cwd, command: 'publish', transport });
-  expect(report, JSON.stringify(report.error)).toMatchObject({ ok: true, candidateSha: sha, stage: 'complete', effects: { developmentPush: 'pushed', releasePush: 'pushed' }, processes: { status: 'closed' }, budget: { observationsComplete: true } });
+  expect(report, JSON.stringify({ error: report.error, lifecycleFailures })).toMatchObject({ ok: true, candidateSha: sha, stage: 'complete', effects: { developmentPush: 'pushed', releasePush: 'pushed' }, processes: { status: 'closed' }, budget: { observationsComplete: true } });
   expect(f.ref('dev')).toBe(sha); expect(f.ref('main')).toBe(sha); expect(git(f.cwd, 'branch', '--show-current')).toBe('dev');
   expect(await readFile(resolve(f.cwd, 'user-note'), 'utf8')).toBe('unrelated');
   expect(JSON.parse(report.steps.find(step => step.name === 'acceptance:0')?.stdout ?? '')).toEqual(['publish', sha, f.config.vercel.productionUrl, deployment.id]);

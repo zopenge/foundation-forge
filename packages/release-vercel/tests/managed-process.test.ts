@@ -110,7 +110,8 @@ it('fails closed when a recorded running identity changes', async () => {
   const command = f.session.state.processes[0];
   if (!command?.identity) throw new Error('fixture did not acquire identity');
   command.identity = { ...command.identity, startToken: 'changed-recorded-identity' };
-  expect(await result).toMatchObject({ error: { code: 'PROCESS_STATE_UNKNOWN' } });
+  const observed = await result;
+  expect(observed, JSON.stringify(observed)).toMatchObject({ error: { code: 'PROCESS_STATE_UNKNOWN' } });
 });
 it('reuses a completed command closure witness while still observing the current owner', async () => {
   const f = await fixture();

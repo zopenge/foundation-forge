@@ -11,8 +11,10 @@
 | 校验归档 entry 路径、类型、数量和展开大小 | [`@openge/forge-archive-safety`](archive-safety.md) |
 | 内存中的确定性 ZIP32 编解码与安全检查 | [`@openge/forge-archive-zip`](archive-zip.md) |
 | 声明生成物计划、比较快照并安全发布文件 | [`@openge/forge-generated-artifacts`](generated-artifacts.md) |
+| 发布不可变对象、回读验证并最后切换指针 | [`@openge/forge-artifact-publish`](artifact-publish.md) |
+| 在明确配置的腾讯 COS 上提供不可变对象存储 | [`@openge/forge-artifact-publish-cos`](artifact-publish-cos.md) |
 | 创建带 manifest 的确定性配置 ZIP，并在 Node 中预检或导入 | [`@openge/forge-config-bundle`](config-bundle.md) |
 
 ## 组合关系
 
-底层原语只负责单一安全或确定性问题；上层 package 显式组合它们。`config-bundle` 是该域中组合度最高的能力，但仍不负责产品文件选择、Secret 规则或业务配置语义。
+底层原语只负责单一安全或确定性问题；上层 package 显式组合它们。`config-bundle` 负责配置包组合，`artifact-publish` 负责中立对象发布编排，COS Provider 单向依赖发布 Core；这些能力都不负责产品文件选择、Secret 规则或业务配置语义。
