@@ -2,6 +2,8 @@
 
 这个包把“检查固定提交、依次推送 Git 分支、复核生产部署”作为明确的 Node 工具提供。它依赖 Node.js >=22.14.0、Git 和已配置好的 Vercel Git integration。根入口只导出契约和错误码，浏览器可安全加载；所有 I/O 都从 `./node` 进入，该入口声明 `browser: null`。
 
+内部 Git 命令用单次调用配置让自动维护和垃圾回收保持在前台，仍受命令时限和受管进程归属检查约束，不改写仓库或宿主 Git 设置。命令退出后若仍有其他后代，继续保留未知关闭状态，不能因随后强制清理为空就升级为正常完成。
+
 ## 配置与调用
 
 默认读取工作目录中的 `release.config.json`，完整示例见[包 README](../../../packages/release-vercel/README.md#configuration)。配置必须声明 `schemaVersion: 2`、显式 source、Git remote/期望仓库/开发与发布分支、Vercel team/project/HTTPS 生产源、检查与线上验收命令、构建标记以及有限的执行预算。schema 1 不转换、不回退。未知字段、无效分支、凭据型域名和无限时限都会失败。checks/acceptance 均须有 1–32 项，不通过 shell 执行。Windows 上 pnpm/npm 解析到 JavaScript CLI，不直接启动 `.cmd`。

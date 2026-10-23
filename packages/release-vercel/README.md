@@ -2,6 +2,8 @@
 
 Explicit Git integration releases with bounded checks, fixed commit selection, and independent Vercel production verification. Node.js >=22.14.0 and Git are required. Configure the existing Vercel Git integration to deploy the release branch to production before using this package.
 
+Internal Git commands keep automatic maintenance and garbage collection in the foreground through invocation-local settings. That work remains inside the command deadline and managed process scope; repository and global Git settings are not rewritten.
+
 ```sh
 pnpm add -D @openge/forge-release-vercel
 pnpm exec forge-vercel-release check
