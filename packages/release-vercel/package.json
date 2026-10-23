@@ -1,6 +1,6 @@
 {
   "name": "@openge/forge-release-vercel",
-  "version": "0.1.0-rc.2",
+  "version": "0.1.0",
   "description": "Explicit Git integration releases with Vercel production verification",
   "type": "module",
   "main": "./dist/index.js",

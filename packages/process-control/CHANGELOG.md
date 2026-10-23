@@ -1,5 +1,11 @@
 # @openge/forge-process-control
 
+## 0.3.0
+
+### Minor Changes
+
+- 47b1bd4: Add explicit OS-owned command scopes, bounded Windows Job and Linux subreaper Providers, and a runner manual authorization gate with durable closure evidence.
+
 ## 0.2.0
 
 ### Minor Changes
