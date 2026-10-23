@@ -58,7 +58,9 @@ async function assertCommittedIgnore(source: FrozenSource, execution: Execution,
   if (!origin || !pattern || pattern.startsWith('!') || !within(source.root, resolve(source.root, origin)) || origin.startsWith('.git/')) throw new ReleaseError('SLOT_PATH', { reason: 'NOT_COMMITTED_IGNORED' });
   try {
     const oid = await execution.git(['rev-parse', '--verify', `${source.sha}:${origin.replaceAll('\\', '/')}`]);
-    if (!(await readFile(resolve(source.root, origin))).equals(await gitBlob(execution, oid))) throw new ReleaseError('SLOT_PATH');
+    // latin1 保留每个原始字节；只消除 CRLF/LF 差异，不执行 clean filter 或忽略规则变更。
+    const lines = (bytes: Buffer) => bytes.toString('latin1').replaceAll('\r\n', '\n');
+    if (lines(await readFile(resolve(source.root, origin))) !== lines(await gitBlob(execution, oid))) throw new ReleaseError('SLOT_PATH');
   } catch { throw new ReleaseError('SLOT_PATH', { reason: 'IGNORE_NOT_COMMITTED' }); }
 }
 export async function resolveManagedPaths(source: FrozenSource, execution: Execution): Promise<ManagedPaths> {

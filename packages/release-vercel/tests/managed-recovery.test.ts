@@ -1,5 +1,7 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
 import { resolve } from 'node:path';
+import { promisify } from 'node:util';
 import { afterEach, expect, it } from 'vitest';
 import { classifyRemoteRef, inspectManagedRecovery, runManagedReceiptCommand, selectManagedPublication } from '../src/node/managed-recovery.js';
 import { freezeManagedSource } from '../src/node/source.js';
@@ -113,14 +115,44 @@ it('refuses verification when the frozen checkout is missing', async () => {
   expect(report).toMatchObject({ ok: false, candidateSha: f.source.sha, error: { code: 'RECOVERY_REQUIRED', details: { reason: 'CHECKOUT_MISSING' } } });
   await expect(readFile(resolve(f.slot.paths.checkoutRoot, 'package.json'))).rejects.toMatchObject({ code: 'ENOENT' });
 });
-it('recovers an already closed run without any installation or Git push', async () => {
+it.each([false, true])('recovers an already closed run without installation or Git push, pending internal link: %s', async pendingLink => {
   const f = await fixture();
+  if (pendingLink) {
+    const modules = resolve(f.slot.paths.checkoutRoot, 'node_modules');
+    await mkdir(modules, { recursive: true });
+    await symlink(resolve(modules, '.pnpm/pending/node_modules/dependency'), resolve(modules, 'dependency'), 'junction');
+  }
   const transport: ReleaseTransport = { api: async path => path.startsWith('/v9/projects') ? { id: 'prj_fixture', accountId: 'team_fixture', link: { type: 'github', org: 'fixture', repo: 'repository', repoId: 101, productionBranch: 'main', gitCredentialId: 'fixture', deployHooks: [] } } : { deployments: [] },
     buildInfo: async () => { throw new Error('recover must not run acceptance'); } };
   const report = await runRelease({ cwd: f.cwd, command: 'recover', transport });
   expect(report, JSON.stringify(report.error)).toMatchObject({ ok: true, command: 'recover', candidateSha: f.source.sha, processes: { status: 'closed' } });
   expect(f.ref('dev')).toBe(f.initial); expect(f.ref('main')).toBe(f.initial);
   expect(report.steps.some(step => step.name === 'install' || step.name.startsWith('check:'))).toBe(false);
+  const reused = await openManagedSlot(f.source, f.execution);
+  expect(reused.slotId).toBe(f.slot.slotId); await reused.lock.release();
+});
+it('recovers a retained old lock with real closed-process evidence and a pending install junction', async () => {
+  const f = await fixture();
+  const worker = resolve(import.meta.dirname, 'helpers/closed-managed-worker.mjs');
+  const result = await promisify(execFile)(process.execPath, [worker, f.cwd], { cwd: f.root, windowsHide: true, timeout: 120_000, encoding: 'utf8' });
+  expect(result.stdout).toBe('closed journal saved');
+  const before = JSON.parse(await readFile(f.slot.paths.statePath, 'utf8')) as ManagedState;
+  expect(before.status).toBe('running'); expect(before.coordinator.pid).not.toBe(process.pid);
+  expect(before.processes).toHaveLength(1);
+  expect(before.processes[0]?.closure?.ownedScope).toMatchObject({ status: 'closed', reason: 'normal', empty: true });
+  expect(await readFile(f.slot.paths.lockPath, 'utf8')).toContain(before.runId);
+  const modules = resolve(f.slot.paths.checkoutRoot, 'node_modules'); await mkdir(modules, { recursive: true });
+  await symlink(resolve(modules, '.pnpm/pending/node_modules/dependency'), resolve(modules, 'dependency'), 'junction');
+  const transport: ReleaseTransport = { api: async path => path.startsWith('/v9/projects') ? { id: 'prj_fixture', accountId: 'team_fixture', link: { type: 'github', org: 'fixture', repo: 'repository', repoId: 101, productionBranch: 'main', gitCredentialId: 'fixture', deployHooks: [] } } : { deployments: [] },
+    buildInfo: async () => { throw new Error('recover must not run acceptance'); } };
+  const report = await runRelease({ cwd: f.cwd, command: 'recover', transport });
+  expect(report, JSON.stringify(report.error)).toMatchObject({ ok: true, processes: { status: 'closed', knownCount: 1 } });
+  await expect(readFile(f.slot.paths.lockPath)).rejects.toMatchObject({ code: 'ENOENT' });
+  const after = JSON.parse(await readFile(f.slot.paths.statePath, 'utf8')) as ManagedState;
+  expect(after.status).toBe('closed'); expect(after.processes).toEqual(before.processes);
+  expect(f.ref('dev')).toBe(f.initial); expect(f.ref('main')).toBe(f.initial);
+  const reused = await openManagedSlot(f.source, f.execution);
+  expect(reused.slotId).toBe(f.slot.slotId); await reused.lock.release();
 });
 it('routes public status through the frozen receipt even when current config no longer validates', async () => {
   const f = await fixture(); await writeFile(resolve(f.cwd, 'release.config.json'), '{"later":true}'); f.commit();

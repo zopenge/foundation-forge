@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { link, readFile, symlink, writeFile } from 'node:fs/promises';
+import { link, lstat, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { freezeManagedSource } from '../src/node/source.js';
@@ -52,6 +52,41 @@ it('cancels a real growing writer and completes its final observation', async ()
 it('rejects an external junction instead of ignoring its bytes', async () => {
   const f = await fixture(); await symlink(f.root, resolve(f.slot.paths.slotRoot, 'outside'), 'junction');
   await expect(observeBudget(f.slot.paths, f.limits)).rejects.toMatchObject({ code: 'BUDGET_UNKNOWN' });
+});
+it('observes a dangling internal install junction and later counts its materialized target', async () => {
+  const f = await fixture(), root = f.slot.paths.slotRoot;
+  const parent = resolve(root, 'checkout/node_modules'), target = resolve(parent, '.pnpm/fixture/node_modules/dependency');
+  await mkdir(parent, { recursive: true });
+  const before = await observeBudget(f.slot.paths, f.limits);
+  const path = resolve(parent, 'dependency'); await symlink(target, path, 'junction');
+  const pending = await observeBudget(f.slot.paths, f.limits);
+  expect(pending.bytes).toBe(before.bytes + (await lstat(path)).size);
+  await f.slot.store.writeAnchor({ schemaVersion: 2, slotId: f.slot.slotId, slotPath: root, sourceRoot: f.slot.source.root, configPath: f.slot.source.configPath });
+  const beforeTarget = await observeBudget(f.slot.paths, f.limits);
+  await mkdir(target, { recursive: true }); await writeFile(resolve(target, 'data'), Buffer.alloc(1234));
+  expect((await observeBudget(f.slot.paths, f.limits)).bytes - beforeTarget.bytes).toBe(1234);
+  await f.slot.lock.release();
+});
+it.each(['direct', 'ancestor', 'cycle'])('rejects a dangling link with unsafe %s resolution', async mode => {
+  const f = await fixture(), root = f.slot.paths.slotRoot;
+  if (mode === 'ancestor') await symlink(f.root, resolve(root, 'ancestor'), 'junction');
+  const target = mode === 'direct' ? resolve(f.root, 'missing') : mode === 'ancestor' ? resolve(root, 'ancestor/missing') : resolve(root, 'pending');
+  await symlink(target, resolve(root, 'pending'), 'junction');
+  await expect(observeBudget(f.slot.paths, f.limits)).rejects.toMatchObject({ code: 'BUDGET_UNKNOWN' });
+});
+it('does not collapse a parent component before resolving an existing symlink ancestor', async () => {
+  const f = await fixture(), root = f.slot.paths.slotRoot;
+  await mkdir(resolve(root, 'deep'));
+  await symlink(root, resolve(root, 'deep/alias'), 'junction');
+  await symlink('deep/alias/../missing', resolve(root, 'pending'), 'dir');
+  await expect(observeBudget(f.slot.paths, f.limits)).rejects.toMatchObject({ code: 'BUDGET_UNKNOWN' });
+});
+it('allows ordinary pnpm parent components before a missing internal dependency', async () => {
+  const f = await fixture(), parent = resolve(f.slot.paths.slotRoot, 'checkout/node_modules/.pnpm/source/node_modules');
+  await mkdir(parent, { recursive: true });
+  await symlink('../../dependency/node_modules/pkg', resolve(parent, 'pkg'), 'dir');
+  await expect(observeBudget(f.slot.paths, f.limits)).resolves.toMatchObject({ bytes: expect.any(Number) });
+  await f.slot.lock.release();
 });
 it('fails closed on an observation error and does not overlap samples', async () => {
   const f = await fixture(); let active = 0, peak = 0, calls = 0;

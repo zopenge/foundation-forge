@@ -79,6 +79,36 @@ it.each(['journal-failure', 'lock-replaced'])('never authorizes the real job aft
   await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' });
   expect(f.session.state.processes[0]?.status).toBe('unknown');
 });
+it.each(['EBUSY', 'SECRETCODE'])('preserves only known lifecycle failure codes without exposing messages: %s', async code => {
+  const f = await fixture(), write = f.slot.store.writeState.bind(f.slot.store);
+  vi.spyOn(f.slot.store, 'writeState').mockImplementation(async state => {
+    if (state.processes.some(command => command.status === 'closed')) throw Object.assign(new Error('token=fixture-private'), { code });
+    await write(state);
+  });
+  const observed = await f.session.execution.run('journal-code', { command: 'node', args: ['-e', 'process.stdout.write("done")'] }, 'CHECK_FAILED')
+    .then(value => ({ value }), (error: unknown) => ({ error }));
+  expect(observed).toMatchObject({ error: { code: 'PROCESS_STATE_UNKNOWN', details: { reason: 'PROCESS_LIFECYCLE_FAILED', ...(code === 'EBUSY' ? { causeCode: code } : {}) } } });
+  expect(JSON.stringify(observed)).not.toContain('fixture-private');
+  if (code !== 'EBUSY') expect(JSON.stringify(observed)).not.toContain(code);
+  expect(f.session.state.processes[0]?.status).toBe('unknown');
+});
+it('keeps the queued first failure when a retained atomic file blocks later journal writes', async () => {
+  const f = await fixture(), write = f.slot.store.writeState.bind(f.slot.store);
+  let failed = false;
+  vi.spyOn(f.slot.store, 'writeState').mockImplementation(async state => {
+    if (!failed && state.processes.some(command => command.status === 'identified')) {
+      failed = true;
+      await writeFile(resolve(f.slot.paths.slotRoot, '.state.json.next'), 'retained first failure');
+      throw Object.assign(new Error('private first failure'), { code: 'EBUSY' });
+    }
+    await write(state);
+  });
+  const marker = resolve(f.slot.paths.slotRoot, 'must-not-run');
+  await expect(f.session.execution.run('first-failure', { command: 'node', args: ['-e', 'require("node:fs").writeFileSync(process.argv[1],"bad")', marker] }, 'CHECK_FAILED'))
+    .rejects.toMatchObject({ code: 'PROCESS_STATE_UNKNOWN', details: { reason: 'JOURNAL_FAILED', causeCode: 'EBUSY' } });
+  await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' });
+  expect(await readFile(resolve(f.slot.paths.slotRoot, '.state.json.next'), 'utf8')).toBe('retained first failure');
+});
 it('does not treat an exited parent as proof that its writer child closed', async () => {
   const f = await fixture(), path = resolve(f.slot.paths.slotRoot, 'child-writes');
   const writer = 'setInterval(()=>require("node:fs").appendFileSync(process.argv[1],"x"),100)';

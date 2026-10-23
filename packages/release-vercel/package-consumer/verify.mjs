@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import process from 'node:process';
 import { releaseErrorCodes } from '@openge/forge-release-vercel';
@@ -33,7 +33,9 @@ for (const name of ['alpha', 'beta']) {
   git('config', 'user.name', 'Consumer'); git('config', 'user.email', 'consumer@example.invalid'); git('remote', 'add', 'origin', remote);
   const config = validateReleaseConfig({ schemaVersion: 2,
     source: { mode: 'managed-commit', slotPath: '.tmp/release-slot', maxBytes: 2147483648, minFreeBytes: 5368709120,
-      sampleIntervalMs: 1000, install: { packageManager: 'pnpm' }, prepare: [] },
+      sampleIntervalMs: 1000, install: { packageManager: 'pnpm' }, prepare: name === 'beta' ? [{ command: 'node', args: ['-e',
+        'const f=require("node:fs"),p=require("node:path");const link=p.resolve("node_modules/pending"),target=p.resolve("node_modules/.pnpm/pending/node_modules/dependency");f.mkdirSync(p.dirname(link),{recursive:true});try{f.lstatSync(link)}catch(e){if(e.code!=="ENOENT")throw e;f.symlinkSync(target,link,"junction")}'
+      ] }] : [] },
     git: { remote: 'origin', repository: remote, developmentBranch: 'dev', releaseBranch: 'main' },
     vercel: { teamId: 'team_fixture', projectId: 'prj_fixture', productionUrl: 'https://fixture.example.invalid' },
     checks: [{ command: 'node', args: ['-e', 'process.stdout.write(JSON.stringify([process.env.FORGE_RELEASE_COMMAND,process.env.FORGE_RELEASE_SHA,process.cwd()]))'] }],
@@ -47,6 +49,15 @@ for (const name of ['alpha', 'beta']) {
   await writeFile(resolve(cwd, 'source.txt'), 'initial\n'); git('add', '.'); git('commit', '-m', 'initial'); git('push', 'origin', 'HEAD:dev', 'HEAD:main');
   const initial = git('rev-parse', 'HEAD'); await writeFile(resolve(cwd, 'source.txt'), 'candidate\n'); git('add', '-u'); git('commit', '-m', 'candidate');
   const sha = git('rev-parse', 'HEAD'); await writeFile(resolve(cwd, 'user-note'), 'preserve');
+  if (name === 'alpha') {
+    git('config', 'core.autocrlf', 'true');
+    await writeFile(resolve(cwd, '.git/info/attributes'), '.gitignore !text !eol\n');
+    await unlink(resolve(cwd, '.gitignore')); git('checkout-index', '--force', '--', '.gitignore');
+    // checkout-index 的旧 stat 缓存可报告无内容差异的 M；刷新匹配同一 blob 的索引后再冻结基线。
+    git('add', '--', '.gitignore');
+    if (git('diff', '--cached', '--', '.gitignore') !== '' || git('status', '--porcelain=v1', '--untracked-files=no') !== '') throw new Error('CRLF fixture baseline is not clean');
+    if (!(await readFile(resolve(cwd, '.gitignore'), 'utf8')).includes('\r\n') || git('diff', 'HEAD', '--', '.gitignore') !== '') throw new Error('CRLF checkout fixture was not materialized');
+  }
   const first = await runRelease({ command: 'check', cwd });
   if (!first.ok || first.candidateSha !== sha) throw new Error(`tarball managed check failed: ${JSON.stringify(first.error)}`);
   const expected = ['check', sha, first.executionRoot];
@@ -55,6 +66,7 @@ for (const name of ['alpha', 'beta']) {
   const second = JSON.parse(execute(cwd, process.execPath, [binaries['forge-vercel-release'], 'check', '--cwd', cwd]));
   if (!second.ok || second.slotId !== first.slotId || second.executionRoot !== first.executionRoot) throw new Error(`tarball CLI reuse failed: ${JSON.stringify(second.error)}`);
   if (!(await readFile(resolve(first.executionRoot, 'pnpm-lock.yaml'))).equals(lock)) throw new Error('frozen lock changed');
-  if (git('branch', '--show-current') !== 'dev' || git('status', '--porcelain=v1', '--untracked-files=no') !== '' || await readFile(resolve(cwd, 'user-note'), 'utf8') !== 'preserve') throw new Error('source changed');
+  const sourceState = { branch: git('branch', '--show-current'), tracked: git('status', '--porcelain=v1', '--untracked-files=no'), note: await readFile(resolve(cwd, 'user-note'), 'utf8') };
+  if (sourceState.branch !== 'dev' || sourceState.tracked !== '' || sourceState.note !== 'preserve') throw new Error(`source changed: ${JSON.stringify(sourceState)}`);
   for (const branch of ['dev', 'main']) if (execute(root, 'git', ['--git-dir', remote, 'rev-parse', branch]) !== initial) throw new Error('check changed remote refs');
 }
