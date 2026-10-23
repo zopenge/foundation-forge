@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
+import childProcess from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { once } from 'node:events';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { resolve } from 'node:path';
+import process from 'node:process';
 import test from 'node:test';
 
 import { freezePack } from '../ab-eval/manifest.mjs';
+import { probeMcpTools } from '../ab-eval/tool-contract.mjs';
 import { executeEvaluation, prepareEvaluation,
   verifyEvaluationConnections } from '../ab-eval/workflow.mjs';
 import { makeTarballFixture } from './ab-eval-tarball-fixture.mjs';
@@ -87,6 +92,70 @@ for await(const line of createInterface({input:process.stdin})){
 };
 
 const fullPages={first:{tools:[tool('investigate'),tool('read'),tool('continue')]}};
+
+const withObservedChildren=async({holdClose=false},fn)=>{
+  const originalSpawn=childProcess.spawn;const observed=[];
+  childProcess.spawn=(...args)=>{
+    const child=originalSpawn(...args);
+    const state={child,closed:false,emit:child.emit,closeArgs:null};
+    child.once('close',()=>{state.closed=true;});
+    if(holdClose)child.emit=function(event,...values){
+      if(event==='close'){state.closeArgs=values;return true;}
+      return state.emit.call(this,event,...values);
+    };
+    observed.push(state);return child;
+  };
+  syncBuiltinESMExports();
+  try{return await fn(observed);}
+  finally{
+    childProcess.spawn=originalSpawn;syncBuiltinESMExports();
+    for(const state of observed){
+      state.child.emit=state.emit;
+      if(state.closeArgs)state.child.emit('close',...state.closeArgs);
+    }
+    await Promise.all(observed.filter(state=>!state.closed).map(state=>
+      once(state.child,'close',{signal:globalThis.AbortSignal.timeout(5000)})));
+  }
+};
+
+test('MCP tool probe waits for the real child close before returning',
+  {timeout:15000},()=>withPack({pages:fullPages},({root,runDir})=>
+    withObservedChildren({},async observed=>{
+      const result=await probeMcpTools({server:'fixture',
+        config:{type:'local',command:[process.execPath,resolve(root,'pack/mcp.mjs')]},
+        invocation:{cwd:resolve(runDir,'arms/pair-1-C/work'),env:process.env}});
+      assert.equal(result.tools.length,3);
+      assert.equal(observed.length,1);
+      assert.equal(observed[0].closed,true,'probe returned before its child closed');
+    })));
+
+for(const protocolFailure of [false,true])test(
+  `MCP tool probe bounds a missing close event with protocolFailure=${protocolFailure}`,
+  {timeout:15000},()=>withPack({pages:protocolFailure
+    ?{first:{tools:null}}:fullPages},({root,runDir})=>
+    withObservedChildren({holdClose:true},async observed=>{
+      await assert.rejects(()=>probeMcpTools({server:'fixture',
+        config:{type:'local',command:[process.execPath,resolve(root,'pack/mcp.mjs')]},
+        invocation:{cwd:resolve(runDir,'arms/pair-1-C/work'),env:process.env}}),error=>{
+        assert.equal(error.code,protocolFailure?'MCP_TOOL_PROBE_PROTOCOL_INVALID'
+          :'MCP_TOOL_PROBE_CLOSE_TIMEOUT');
+        if(protocolFailure)assert.equal(error.cause?.code,'MCP_TOOL_PROBE_CLOSE_TIMEOUT');
+        return true;
+      });
+      assert.equal(observed.length,1);
+    })));
+
+test('MCP tool probe closes the real child after a request deadline',
+  {timeout:15000},()=>withPack({pages:fullPages},({runDir})=>
+    withObservedChildren({},async observed=>{
+      await assert.rejects(()=>probeMcpTools({server:'fixture',timeoutMs:50,
+        config:{type:'local',command:[process.execPath,'-e',
+          'process.stdin.resume();setInterval(()=>{},1000)']},
+        invocation:{cwd:resolve(runDir,'arms/pair-1-C/work'),env:process.env}}),
+      {code:'MCP_TOOL_PROBE_TIMEOUT'});
+      assert.equal(observed.length,1);
+      assert.equal(observed[0].closed,true,'deadline returned before its child closed');
+    })));
 
 test('doctor accepts a separately declared three-tool C navigation contract',()=>withPack(
   {pages:fullPages},async({runDir,processRunner,calls})=>{
