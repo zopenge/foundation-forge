@@ -47,11 +47,14 @@ Requirements:
 
 - Node.js 22.14.0 or newer
 - pnpm 10.33.2
+- Git
 
 ```sh
-pnpm install
+pnpm install --frozen-lockfile
 pnpm check
 ```
+
+Run these commands in a normal terminal after cloning the repository. Development and release commands do not require Codex or files from a previous checkout. Build outputs, test fixtures, and validation caches are created by the repository commands when needed.
 
 `pnpm check` stores successful validation evidence and verified tarballs in the ignored `.tmp/check-cache/` directory. Exact repeats reuse that evidence; documentation, evaluation tools, script tests, and affected package groups select the relevant checks while verifying unchanged inputs and outputs. See [validation modes](docs/maintenance/validation.md) for the scope of each check. Use `pnpm check:full` to run every check from a clean package build regardless of the cache.
 

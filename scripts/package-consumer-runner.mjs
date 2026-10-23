@@ -226,7 +226,6 @@ const verifyTarball = (packageValue, tarballPath, repositoryRoot) => {
   return entries;
 };
 
-const packageSlug = (name) => name.replace(/^@/u, '').replaceAll('/', '-');
 
 export const packPackages = async (model, verificationRoot, { reusedTarballs } = {}) => {
   const packDirectory = resolve(verificationRoot, 'packs');
@@ -344,8 +343,9 @@ export const runCleanPackageConsumer = async ({
     },
     smokeChecks: async () => {
       const start = performance.now();
-      await runBounded(smokes, packageConcurrency, async (packageValue) => {
-        const targetRoot = resolve(consumerRoot, 'package-consumers', packageSlug(packageValue.name));
+      await runBounded(smokes, packageConcurrency, async (packageValue, index) => {
+        // 为 consumer 内的 Git fixture 留出路径空间，包名不进入临时目录。
+        const targetRoot = resolve(consumerRoot, 'smoke', index.toString(36));
         await cp(resolve(packageValue.packageRoot, 'package-consumer'), targetRoot, { recursive: true });
         await runCaptured(process.execPath, ['verify.mjs'], {
           cwd: targetRoot,
