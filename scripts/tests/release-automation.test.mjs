@@ -14,6 +14,7 @@ import {
 } from '../github-release.mjs';
 import { parseReleaseArguments } from '../release-arguments.mjs';
 import { loadReleasePolicy } from '../release-policy.mjs';
+import { createPropagationBudget } from '../release-propagation.mjs';
 import {
   assertReleaseVersionMetadata,
   selectBootstrapCandidates,
@@ -243,6 +244,11 @@ test('selects only brand-new rc.0 packages for bootstrap follow-up', () => {
 test('waits for both registry metadata and the tarball to become available', async () => {
   let metadataAttempts = 0;
   let tarballAttempts = 0;
+  let time = 0;
+  const waits = [];
+  const budget = createPropagationBudget({ timeoutMilliseconds: 100, intervalMilliseconds: 10,
+    now: () => time, sleep: async (milliseconds) => { waits.push(milliseconds); time += milliseconds; },
+  });
   const metadata = {
     'dist-tags': { next: '1.0.0-rc.1' },
     versions: {
@@ -255,6 +261,7 @@ test('waits for both registry metadata and the tarball to become available', asy
     },
   };
   const result = await waitForPackageVersion({
+    budget,
     fetch: async (url) => {
       if (url.endsWith('package.tgz')) {
         tarballAttempts += 1;
@@ -267,17 +274,17 @@ test('waits for both registry metadata and the tarball to become available', asy
         ? createResponse({ status: 404 })
         : createResponse({ json: metadata });
     },
-    intervalMilliseconds: 0,
     mode: 'next',
     name: '@example/pkg',
     registry: 'https://registry.npmjs.org',
-    timeoutMilliseconds: 100,
     version: '1.0.0-rc.1',
   });
 
   assert.equal(result.versionMetadata.dist.tarball, 'https://registry.npmjs.org/package.tgz');
   assert.equal(metadataAttempts, 5);
   assert.equal(tarballAttempts, 2);
+  assert.deepEqual(waits, [10, 10]);
+  assert.equal(budget.remaining(), 80);
 });
 
 test('validates provenance package, digest, repository, workflow, ref, and commit', () => {
