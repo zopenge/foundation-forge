@@ -60,6 +60,34 @@ npm publish 继续只使用 `npm` environment 约束的 OIDC Trusted Publishing�
 manifest 与 Git 元数据推导。只有 workflow、environment、发布分支、npm
 trust CLI 版本和轮询时限等不可推导策略保留在 release policy 中。
 
+## 新机器检出与独立使用
+
+开发与发布使用版本控制中的脚本，不需要 Codex、编辑器插件或历史会话的临时启动器。
+新机器先安装 Git、满足根 `engines.node` 的正常 Node.js 和 `packageManager`
+指定版本的 pnpm，在克隆的仓库根执行：
+
+```sh
+pnpm install --frozen-lockfile
+pnpm check
+```
+
+首次检查会从源码生成 dist、真实 tarball、测试 fixture 和验证缓存，不需要复制
+另一台机器的 `node_modules`、dist 或 `.tmp/`。正常安装需要访问依赖源；包管理器的
+持久 store 可复用，缺失依赖仍由锁文件安装。Git 历史及发布 tag 应完整获取，
+不能把只含源码的压缩包当作可发布的 Git checkout。
+
+新机器发布还需要维护者自己的 GitHub 访问权限；首次 bootstrap 需要 npm 登录和
+可输入掩码 OTP 的交互终端。常规稳定版继续由合并 Changesets 版本 PR 后的 workflow
+发布，依赖仓库 App、npm environment 和 Trusted Publisher 配置。上述权限与审批
+不会由本地命令跳过，也不需要 AI 工具代为执行。
+
+`.tmp/` 是运行时生成的缓存、锁和报告目录，不是首次开发或发布所需的预置输入。
+`release:resume` 是例外：续验一个中断操作必须保留该操作的报告并匹配其源码及
+验证环境。新 checkout 没有旧报告时，不应伪造报告或再次 publish；先用
+`release:verify --mode <模式>` 回读已发布状态，需要补齐 Trusted Publisher 时使用
+`release:configure-trusted-publishers --package <包名>`。这类重新验证不等同于恢复
+原操作报告，也不能推断未知的 publish 副作用已经成功。
+
 ## 控制台命令
 
 日常操作使用以下根 package 命令，不需要修改 `PATH` 或设置临时 Node 路径：
@@ -242,82 +270,30 @@ registry 本身当作镜像故障证据；只有实际 HTTP 错误或版本查�
 `close` 事件写入退出码和完成状态。读取日志与状态文件后再继续依赖它的测试；
 PID 已生成或日志没有新行都不能代替退出状态。
 
-### Windows 自动化启动交互式 OTP 终端
+### Windows 交互式 OTP 终端
 
 Bootstrap 与 Trusted Publisher 配置必须连接真实控制台的标准输入。普通工具进程的
 stdin pipe 不能用于掩码读取；不要为绕过这个要求伪造 isTTY，也不要把验证码写进
 聊天、命令参数、脚本、环境配置文件或日志。
 
-已验证的启动顺序如下：
+在 Windows Terminal、PowerShell 或 cmd 的正常交互窗口中进入仓库根，确认当前
+发布 commit 位于干净、已推送的 main，再直接执行：
 
-1. 从 Git 元数据取得仓库根，确认当前发布 commit 已经通过检查，且位于干净、已推送的 main。
-2. 在仓库忽略的 .tmp/release/ 下准备批处理入口。入口先用
-   cd /d "%~dp0..\.." 回到仓库根，再执行 call pnpm release:bootstrap。
-   遇到已有部分发布时，按下面的恢复步骤选择后续命令，不重复发布。
-3. 通过 Windows command processor 的 start 命令打开独立交互控制台；若使用
-   Node 启动，必须先对 ComSpec 调用 node:path 的 win32.normalize，保证
-   cmd.exe 的绝对路径使用反斜杠。直接传入 C:/Windows/System32/cmd.exe 会在本环境
-   报“文件名、目录名或卷标语法不正确”，甚至 /c ver 也失败；使用反斜杠路径后正常。
-4. 将包含 start 命令的启动行放进临时 .cmd 文件，再以参数数组调用
-   cmd.exe /d /c <启动文件>，避免在工具调用中反复嵌套引号。start 的第一个带引号
-   参数是窗口标题，工作目录通过 /D 明确指定。
-5. 若需要转存输出，包装器的子进程使用 stdio: ['inherit', 'pipe', 'pipe']，保留
-   stdin 的真实 TTY；只转存 stdout/stderr，绝不读取、复制或记录输入。
-6. 只有日志实际出现 npm one-time password:，且控制台输入显示星号，才确认
-   OTP 入口已成功启动。进程启动成功或通过完整检查都不能代替这一确认。
-
-采用已安装、满足 engines.node 的正常 Node；自动化进程缺少 Node 的 PATH 时，
-只能补入该正常安装目录，不能换成临时下载的运行时或关闭 CET。还应在同一环境确认
-node --version 与 pnpm exec node --version 一致。Windows PowerShell 工具自身因
-CET 无法启动时，使用上述原生 cmd 控制台入口，不反复重试同一个失败的工具启动链。
-
-可复用的两个临时入口如下；路径固定在仓库自己的 .tmp/release/，内容不含凭据。
-
-launch-bootstrap.cmd：
-
-```bat
-@echo off
-start "Foundation Forge npm bootstrap" /D "%~dp0..\.." "%ComSpec%" /d /k ".tmp\release\bootstrap-session.cmd"
+```powershell
+node --version
+pnpm --version
+pnpm exec node --version
+pnpm release:bootstrap
 ```
 
-bootstrap-session.cmd：
+Node 与 pnpm 版本应满足根 manifest；不需要生成 `.cmd`、`.cjs` 包装文件，
+不需要复制本机运行时路径。仓库的 `scripts/package-manager-command.mjs` 负责
+从正常安装解析包管理器入口。只有控制台实际显示掩码 OTP 提示，才确认交互输入
+可用；完整检查通过或进程已经启动不能代替这一确认。
 
-```bat
-@echo off
-cd /d "%~dp0..\.."
-call pnpm release:bootstrap
-```
-
-上面的 `call pnpm` 示例适用于已经在该终端核对过 Node 和 pnpm 版本的环境。
-本次实际成功的自动化会话使用正常安装的 Node 24.11.1 启动
-`.tmp/release/bootstrap-session.cjs`；包装器再以 `process.execPath` 和已确认版本为
-10.33.2 的 pnpm JavaScript CLI 绝对路径启动 `release:bootstrap`，使用参数数组、
-`shell: false` 和 `stdio: ['inherit', 'pipe', 'pipe']`。入口不依赖 PATH 中先命中的
-pnpm shim；CLI 路径应从本机已核实的安装解析，不能复制其它机器的安装目录。
-包装器只补入该正常 Node 与 pnpm 安装目录，并合并 Windows 的 PATH/Path 键，
-保留原 PATH；输出写入日志，`close` 后写入真实退出码。本仓
-`scripts/package-manager-command.mjs` 已提供 shim 解析与命令参数构造，临时包装器
-应复用该职责，不再维护另一套候选路径查找逻辑。
-
-自动化用真实 Node 脚本执行下面的启动片段。工具 REPL 若没有 process 全局，先把
-片段保存到忽略的 .tmp 文件，再用正常安装的 Node 执行，不在受限 REPL 内拼接 shell。
-
-```js
-import { execFileSync, spawn } from 'node:child_process';
-import { win32 } from 'node:path';
-
-const repositoryRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], {
-  encoding: 'utf8',
-}).trim();
-if (!process.env.ComSpec) throw new Error('COMSPEC_MISSING');
-spawn(win32.normalize(process.env.ComSpec), [
-  '/d', '/c', '.tmp\\release\\launch-bootstrap.cmd',
-], { cwd: repositoryRoot, windowsHide: true, stdio: 'ignore' });
-```
-
-此处隐藏的只是短暂的启动器；start 创建的独立窗口用于用户亲自输入 OTP。
-若需结构化完成状态，可由会话包装器在退出时写入 .tmp 下的状态文件，不能仅根据
-start 的退出码判断发布或认证成功。
+已有部分发布时，使用原报告的 `release:resume` 命令或下文分步恢复入口。
+进程最终退出码、阶段报告和 registry 回读共同决定结果；不要仅凭窗口打开或
+出现 OTP 提示认定发布完成。
 
 ### Bootstrap 已发布部分 package 后中断
 

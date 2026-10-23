@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { setImmediate } from 'node:timers';
 import test from 'node:test';
 
@@ -277,4 +277,40 @@ test('consumer imports and smokes start together and drain on failure', async ()
     smokeChecks: async () => { smokeStarted = true; },
   }), /synchronous import failure/u);
   assert.equal(smokeStarted, true);
+});
+
+test('consumer smoke directories leave bounded path space and remain distinct for long package names', async (context) => {
+  await mkdir(resolve('.tmp', 'tests'), { recursive: true });
+  const root = await mkdtemp(resolve('.tmp', 'tests', 'smoke-path-'));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(join(root, '.npmrc'), '');
+  await writeFile(join(root, 'pnpm-workspace.yaml'), 'packages: []\n');
+  const packages = [];
+  const receiptPaths = [];
+  for (let index = 0; index < 2; index += 1) {
+    const packageRoot = join(root, `source-${index}`);
+    const consumerScript = join(packageRoot, 'package-consumer', 'verify.mjs');
+    await mkdir(join(packageRoot, 'package-consumer'), { recursive: true });
+    const receiptPath = join(root, `receipt-${index}.json`);
+    receiptPaths.push(receiptPath);
+    await writeFile(consumerScript, [
+      "import assert from 'node:assert/strict';",
+      "import { writeFile } from 'node:fs/promises';",
+      "import { relative } from 'node:path';",
+      'const path = relative(process.env.PACKAGE_CONSUMER_ROOT, process.cwd());',
+      // 为 smoke 自行创建的 Git checkout 留出空间，不随 npm 包名增加路径深度。
+      "assert.ok(path.length <= 32, 'consumer smoke directory exhausted the path budget: ' + path);",
+      `await writeFile(${JSON.stringify(receiptPath)}, JSON.stringify({ path }));`,
+      '',
+    ].join('\n'));
+    packages.push({ name: `@example/${'long-package-name-'.repeat(8)}${index}`, version: '1.0.0',
+      packageRoot, bins: [], exports: [], workspaceDependencies: [], verification: { consumerScript } });
+  }
+  await packageRunner.runCleanPackageConsumer({ consumerRoot: join(root, 'consumer'),
+    model: { repositoryRoot: root, packages },
+    references: new Map(packages.map(({ name }) => [name, '1.0.0'])),
+    install: async () => {},
+  });
+  const receipts = await Promise.all(receiptPaths.map(async (path) => JSON.parse(await readFile(path, 'utf8'))));
+  assert.notEqual(receipts[0].path, receipts[1].path);
 });
