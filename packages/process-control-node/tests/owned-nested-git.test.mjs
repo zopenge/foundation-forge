@@ -2,45 +2,11 @@ import { Buffer } from 'node:buffer';
 import { basename } from 'node:path';
 import process from 'node:process';
 import { expect, test } from 'vitest';
-import { loadOwnedNative } from '../dist/owned-scope/native-loader.js';
 import { createWindowsOwnedProcessScopeProvider, createWindowsProcessIdentityReader } from '../dist/index.js';
-
-// 透传真实 Win32 调用；断言仅保留自有 Job 成员的状态和文件名，不记录参数、完整路径或环境。
-async function observeMembers() {
-  const native = await loadOwnedNative('win32'), original = native.load;
-  const kernel = original('kernel32.dll');
-  const image = kernel.func('__stdcall', 'QueryFullProcessImageNameW', 'int32_t', ['void *', 'uint32_t', 'void *', native.inout(native.pointer('uint32_t'))]);
-  const handles = new Map(), members = [];
-  native.load = (...args) => {
-    const lib = original(...args), func = lib.func.bind(lib);
-    return new Proxy(lib, { get(target, key) {
-      if (key !== 'func') return Reflect.get(target, key);
-      return (...declaration) => {
-        const fn = func(...declaration), named = name => declaration.some(value => typeof value === 'string' && value.includes(name));
-        return (...values) => {
-          const result = fn(...values);
-          if (named('OpenProcess') && result && values[0] === (0x1000 | 0x100000)) handles.set(result, { pid: values[2] });
-          const row = handles.get(values[0]);
-          if (row && named('IsProcessInJob')) row.belongs = result ? values[2][0] : null;
-          if (row && named('WaitForSingleObject')) row.wait = Number(result);
-          if (row && named('GetExitCodeProcess')) {
-            row.exitCode = result ? values[1][0] : null;
-            if (row.exitCode === 259) {
-              const buffer = Buffer.alloc(65536), size = [32768];
-              row.image = image(values[0], 0, buffer, size) ? basename(buffer.toString('utf16le', 0, size[0] * 2)) : null;
-            }
-          }
-          if (row && named('CloseHandle')) { members.push(row); handles.delete(values[0]); }
-          return result;
-        };
-      };
-    } });
-  };
-  return { members, restore: () => { native.load = original; } };
-}
+import { observeWindowsJobMembers } from './helpers/windows-job-observer.js';
 
 test.runIf(process.platform === 'win32' && process.arch === 'x64').each([true, false])('closes a Node command after synchronous nested Git (windowsHide=%s)', async windowsHide => {
-  const observation = await observeMembers();
+  const observation = await observeWindowsJobMembers();
   try {
     for (let attempt = 0; attempt < 12; attempt++) {
       observation.members.length = 0;
@@ -63,3 +29,18 @@ test.runIf(process.platform === 'win32' && process.arch === 'x64').each([true, f
     }
   } finally { observation.restore(); }
 }, 180_000);
+
+test.runIf(process.platform === 'win32' && process.arch === 'x64')('records the actual live member without hiding a failed foreground closure', async () => {
+  const observation = await observeWindowsJobMembers();
+  let scope;
+  try {
+    scope = createWindowsOwnedProcessScopeProvider().start({ command: process.execPath,
+      args: ['-e', 'const child=require("node:child_process").spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{detached:true,stdio:"ignore"});child.unref()'],
+      environment: process.env, binding: 'observed-descendant', startupTimeoutMs: 10_000, terminationTimeoutMs: 5000 });
+    const value = await createWindowsProcessIdentityReader().readIdentity({ pid: await scope.rootPid });
+    if (value.status !== 'FOUND') throw Error('fixture root absent');
+    await scope.bind(value.identity); await scope.authorize();
+    expect((await scope.completion).closure).toMatchObject({ status: 'unknown', reason: 'descendants-remained', empty: true });
+    expect(observation.members).toContainEqual(expect.objectContaining({ belongs: 1, wait: 258, exitCode: 259, image: basename(process.execPath) }));
+  } finally { try { await scope?.dispose(); } finally { observation.restore(); } }
+}, 30_000);
