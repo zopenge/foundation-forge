@@ -87,3 +87,23 @@ it('initializes a remote whose default branch is the configured development bran
     expect(git(slot.paths.checkoutRoot, 'status', '--porcelain=v1')).toBe(''); await slot.lock.release();
   } finally { await f.dispose(); }
 });
+
+it('creates and fetches a managed checkout beyond the Windows legacy path limit', async () => {
+  const f = await managedFixture();
+  try {
+    if (f.config.source.mode !== 'managed-commit') throw new Error('managed fixture required');
+    const config = { ...f.config, source: { ...f.config.source, slotPath: `.tmp/${'long-directory-'.repeat(6)}/release-slot` } };
+    await writeFile(resolve(f.cwd, 'release.config.json'), JSON.stringify(config));
+    f.commit();
+    const sourceConfig = git(f.cwd, 'config', '--local', '--list');
+    const execution = new Execution(f.cwd, config, undefined, []);
+    const source = await freezeManagedSource(f.cwd, 'release.config.json', execution), slot = await openManagedSlot(source, execution);
+    const session = await createManagedSession(slot, 'check');
+    expect(resolve(slot.paths.checkoutRoot, '.git/objects/pack', `pack-${'a'.repeat(40)}.keep`).length).toBeGreaterThan(260);
+    await prepareCheckout(session).catch((error: unknown) => { throw new Error(error instanceof ReleaseError ? `${error.code}: ${JSON.stringify(error.details)}` : String(error)); });
+    expect(await readFile(resolve(slot.paths.checkoutRoot, 'source.txt'), 'utf8')).toBe('candidate\n');
+    expect(git(slot.paths.checkoutRoot, 'rev-parse', 'HEAD')).toBe(source.sha);
+    expect(git(f.cwd, 'config', '--local', '--list')).toBe(sourceConfig);
+    await slot.lock.release();
+  } finally { await f.dispose(); }
+});

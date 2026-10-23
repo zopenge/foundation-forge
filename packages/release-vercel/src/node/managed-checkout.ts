@@ -23,7 +23,8 @@ export async function prepareCheckout(session: ManagedSession): Promise<void> {
   await assertSourceFrozen(source, original); await assertManagedPaths(paths);
   const exists = await pathExists(paths.checkoutRoot);
   if (!exists) {
-    await session.executionAt(paths.slotRoot).git(['clone', '--no-checkout', '--no-local', '--template=', '--config', 'core.autocrlf=false', '--config', 'core.eol=lf', '--origin', source.config.git.remote, '--', source.fetchUrl, paths.checkoutRoot]);
+    // 仅为本次 clone 和新建 checkout 启用长路径，不修改源仓库或宿主 Git 配置。
+    await session.executionAt(paths.slotRoot).git(['-c', 'core.longpaths=true', 'clone', '--no-checkout', '--no-local', '--template=', '--config', 'core.autocrlf=false', '--config', 'core.eol=lf', '--config', 'core.longpaths=true', '--origin', source.config.git.remote, '--', source.fetchUrl, paths.checkoutRoot]);
   } else { await assertRepository(execution, source.config); await assertCandidate(execution, source.config); }
   await assertManagedPaths(paths); await assertSourceFrozen(source, original);
   await assertRepository(execution, source.config);

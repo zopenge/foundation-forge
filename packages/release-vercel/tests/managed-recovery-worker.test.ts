@@ -40,6 +40,17 @@ async function waitForOwnerExit(worker: Worker): Promise<void> {
   }
   throw new Error('fixture coordinator not confirmed absent');
 }
+async function stopFixtureDescendant(identity: RecordedIdentity): Promise<void> {
+  const read = () => identityReader().readIdentity({ pid: identity.pid, signal: AbortSignal.timeout(10_000) });
+  const current = await read();
+  if (current.status === 'ABSENT' || current.identity.startToken !== identity.startToken) return;
+  try { await processControl().terminateProcess({ process: identity, policy: { mode: 'force' }, signal: AbortSignal.timeout(10_000) }); }
+  catch (error) {
+    // 监督进程也在清理这些 fixture 后代；只在原实例已消失时容忍竞争，不据此生成发布关闭证据。
+    const after = await read();
+    if (after.status === 'FOUND' && after.identity.startToken === identity.startToken) throw error;
+  }
+}
 it('reconciles a real rejected main push after its coordinator exits without replaying a push', { timeout: 720_000 }, async () => {
   const f = await fixture();
   await writeFile(resolve(f.remote, 'hooks/pre-receive'), '#!/bin/sh\nwhile read old new ref; do\n  if [ "$ref" = "refs/heads/main" ]; then exit 1; fi\ndone\n', { mode: 0o755 });
@@ -77,10 +88,7 @@ it('keeps an accepted remote push unknown after a real coordinator crash instead
     for (let changed = true; changed;) { changed = false; for (const item of all) if (item.parentPid && pids.has(item.parentPid) && !pids.has(item.pid)) { pids.add(item.pid); known.push(item); changed = true; } }
     await processControl().terminateProcess({ process: owner, policy: { mode: 'force' }, signal: AbortSignal.timeout(10_000) });
     await writeFile(barrier, 'release'); await worker.result; await waitForOwnerExit(worker);
-    for (const identity of known) {
-      const current = await identityReader().readIdentity({ pid: identity.pid, signal: AbortSignal.timeout(10_000) });
-      if (current.status === 'FOUND' && current.identity.startToken === identity.startToken) await processControl().terminateProcess({ process: identity, policy: { mode: 'force' }, signal: AbortSignal.timeout(10_000) });
-    }
+    for (const identity of known) await stopFixtureDescendant(identity);
     const before = await readFile(resolve(f.cwd, '.tmp/release-slot/run.lock'));
     const recovered = await runRelease({ cwd: f.cwd, command: 'recover', transport: emptyTransport });
     expect(recovered, JSON.stringify(recovered)).toMatchObject({ ok: false, error: { code: 'PROCESS_STATE_UNKNOWN' }, effects: { releasePush: 'unknown' },
@@ -89,9 +97,6 @@ it('keeps an accepted remote push unknown after a real coordinator crash instead
     expect(f.ref('main')).toBe(f.sha); expect(f.ref('dev')).toBe(f.sha);
   } finally {
     await writeFile(barrier, 'release');
-    for (const identity of known) {
-      const current = await identityReader().readIdentity({ pid: identity.pid, signal: AbortSignal.timeout(10_000) });
-      if (current.status === 'FOUND' && current.identity.startToken === identity.startToken) await processControl().terminateProcess({ process: identity, policy: { mode: 'force' }, signal: AbortSignal.timeout(10_000) });
-    }
+    for (const identity of known) await stopFixtureDescendant(identity);
   }
 });
