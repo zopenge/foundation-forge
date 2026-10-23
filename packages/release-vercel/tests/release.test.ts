@@ -1,10 +1,29 @@
 import { spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { runRelease, validateReleaseConfig } from '../src/node.js';
 import type { ReleaseConfig, ReleaseTransport } from '../src/index.js';
+
+const commandFailures = vi.hoisted((): { termination: string; identified: boolean; exitCode: number | null;
+  durationMs: number; diagnostics: { code: string; stage?: string }[] }[] => []);
+// 真实命令保持原样执行；只在失败断言中输出稳定分类，不记录 argv、环境或原始 cause。
+vi.mock('@openge/forge-command-runner/node', async importOriginal => {
+  const actual = await importOriginal<typeof import('@openge/forge-command-runner/node')>();
+  return { ...actual, createNodeCommandRunner: (...args: Parameters<typeof actual.createNodeCommandRunner>) => {
+    const runner = actual.createNodeCommandRunner(...args);
+    return { ...runner, run: async (...parameters: Parameters<typeof runner.run>) => {
+      const result = await runner.run(...parameters);
+      if (result.terminationReason !== 'exit') commandFailures.push({ termination: result.terminationReason,
+        identified: result.identity !== null, exitCode: result.exitCode, durationMs: result.durationMs,
+        diagnostics: result.diagnostics.map(({ code, details }) => ({ code,
+          ...(typeof details.stage === 'string' ? { stage: details.stage } : {}) })) });
+      return result;
+    } };
+  } };
+});
+beforeEach(() => { commandFailures.length = 0; });
 
 const roots: string[] = [];
 const repositoryRoot = resolve(import.meta.dirname, '../../..');
@@ -226,7 +245,9 @@ describe('real Git release gates', () => {
     const report = await f.run('check'); const serialized = JSON.stringify(report);
     expect(report.error?.code).toBe('CHECK_FAILED'); expect(serialized).not.toContain('SECRET'); expect(serialized.length).toBeLessThan(12_000);
     Object.assign(f.config, { checks: [{ command: 'node', args: ['-e', 'setInterval(()=>{},1000)'], timeoutMs: 50 }] });
-    expect((await f.run('check')).error?.code).toBe('COMMAND_TIMEOUT');
+    const timed = await f.run('check');
+    expect(timed.error?.code, JSON.stringify({ error: timed.error, steps: timed.steps, commands: commandFailures })).toBe('COMMAND_TIMEOUT');
+    expect(commandFailures).toContainEqual(expect.objectContaining({ termination: 'timeout', identified: true }));
     const abort = new AbortController(); abort.abort();
     expect((await f.run('check', { signal: abort.signal })).error?.code).toBe('CANCELLED');
   });

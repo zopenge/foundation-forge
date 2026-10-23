@@ -9,6 +9,9 @@ import { LiveOutput } from './live-output.js';
 import type { ExecutionLifecycle } from './release-context.js';
 import { managedOwnedScopeProvider } from './owned-command-runner.js';
 
+// 自动维护也属于本次 Git 命令；通过单次配置保持前台，不修改宿主或仓库设置。
+const foregroundGitArguments = ['-c', 'maintenance.autoDetach=false', '-c', 'gc.autoDetach=false'];
+
 export function resolveInvocation(command: string, args: readonly string[]): { command: string; args: readonly string[] } {
   if (command === 'node') return { command: process.execPath, args };
   if (process.platform !== 'win32' || !['pnpm', 'npm'].includes(command)) return { command, args };
@@ -85,7 +88,7 @@ export class Execution {
     return stdout.trim();
   }
   git(args: readonly string[]): Promise<string> {
-    return this.run('git', { command: 'git', args }, 'GIT_FAILED', undefined, this.signal, false);
+    return this.run('git', { command: 'git', args: [...foregroundGitArguments, ...args] }, 'GIT_FAILED', undefined, this.signal, false);
   }
   async streamGit(args: readonly string[], onChunk: (chunk: Uint8Array) => void, allowedExitCodes: readonly number[] = [0]): Promise<void> {
     assertActive(this.signal);
@@ -93,7 +96,7 @@ export class Execution {
     const signal = this.signal ? AbortSignal.any([this.signal, controller.signal]) : controller.signal;
     let failure: unknown;
     const execute = this.lifecycle ? this.lifecycle.execute.bind(this.lifecycle, this.runner, 'git-stream') : this.runner.run.bind(this.runner);
-    const result = await execute({ command: 'git', args, cwd: this.cwd,
+    const result = await execute({ command: 'git', args: [...foregroundGitArguments, ...args], cwd: this.cwd,
       environment: { mode: 'inherit', values: { GIT_TERMINAL_PROMPT: '0' } }, output: { mode: 'events' },
       timeoutMs: this.config.limits.commandMs, signal }, event => {
       if (event.type === 'stdout' && failure === undefined) {
