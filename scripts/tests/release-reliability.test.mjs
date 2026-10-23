@@ -20,14 +20,19 @@ const response = (status, json = metadata, bytes = 'package') => ({
   json: async () => json, arrayBuffer: async () => Buffer.from(bytes),
 });
 const options = {
-  intervalMilliseconds: 0, timeoutMilliseconds: 80,
   mode: 'bootstrap', name: '@example/package', registry: 'https://registry.example', version: '1.0.0-rc.0',
+};
+const registryOptions = () => {
+  let time = 0;
+  return { ...options, budget: createPropagationBudget({ timeoutMilliseconds: 80, intervalMilliseconds: 10,
+    now: () => time, sleep: async (milliseconds) => { time += milliseconds; },
+  }) };
 };
 
 test('完整元数据可用时仍等待 pnpm 精简视图及其 scoped 请求路径', async () => {
   const requests = [];
   let abbreviatedAttempts = 0;
-  const result = await waitForPackageVersion({ ...options, fetch: async (url, init) => {
+  const result = await waitForPackageVersion({ ...registryOptions(), fetch: async (url, init) => {
     requests.push({ url, accept: init?.headers?.accept });
     if (init?.headers?.accept?.includes('application/vnd.npm.install-v1+json')) {
       abbreviatedAttempts += 1;
@@ -43,7 +48,7 @@ test('完整元数据可用时仍等待 pnpm 精简视图及其 scoped 请求路
 
 test('registry 认证失败立即停止而非等待传播超时', async () => {
   let attempts = 0;
-  await assert.rejects(waitForPackageVersion({ ...options, fetch: async () => {
+  await assert.rejects(waitForPackageVersion({ ...registryOptions(), fetch: async () => {
     attempts += 1;
     return response(403);
   } }), (error) => error.code === 'REGISTRY_HTTP_ERROR' && error.status === 403);
@@ -51,9 +56,20 @@ test('registry 认证失败立即停止而非等待传播超时', async () => {
 });
 
 test('tarball 完整性失败不会被当作可恢复传播错误', async () => {
-  await assert.rejects(waitForPackageVersion({ ...options,
+  await assert.rejects(waitForPackageVersion({ ...registryOptions(),
     fetch: async () => response(200, metadata, 'corrupted'),
   }), (error) => error.code === 'REGISTRY_INTEGRITY_ERROR');
+});
+
+test('持续缺包时可控时钟仍严格耗尽传播预算', async () => {
+  const controlled = registryOptions();
+  let attempts = 0;
+  await assert.rejects(waitForPackageVersion({ ...controlled, fetch: async () => {
+    attempts += 1;
+    return response(404);
+  } }), (error) => error.code === 'REGISTRY_PROPAGATION_TIMEOUT' && error.cause.code === 'REGISTRY_PENDING');
+  assert.equal(attempts, 8);
+  assert.equal(controlled.budget.remaining(), 10);
 });
 
 test('指定包只选择传递依赖闭包且保留 workspace 拓扑顺序', () => {

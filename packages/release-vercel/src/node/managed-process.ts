@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
-import type { CommandObserver, CommandResult, CommandRunner, CommandSpec, RunningCommand } from '@openge/forge-command-runner';
+import { getSystemErrorMap } from 'node:util';
+import { commandErrorCodes, type CommandObserver, type CommandResult, type CommandRunner, type CommandSpec, type RunningCommand } from '@openge/forge-command-runner';
+import { processControlErrorCodes } from '@openge/forge-process-control';
 import type { ExecutionLifecycle, ManagedCommand, ManagedSession, ManagedSlot, ManagedState } from './release-context.js';
 import type { ReleaseStep } from '../contracts.js';
-import { ReleaseError } from './errors.js';
+import { record, ReleaseError } from './errors.js';
 import { within } from './managed-io.js';
 import { assertManagedPaths } from './managed-paths.js';
 import { BudgetMonitor } from './managed-budget.js';
@@ -11,6 +13,14 @@ import { Execution } from './execution.js';
 import { assertNoGitContext, isolatedGitEnvironment } from './git-context.js';
 import { hasVerifiedManagedClosure } from './managed-closure.js';
 
+const knownCauseCodes = new Set<string>([...getSystemErrorMap().values()].map(([code]) => code)
+  .concat(Object.values(commandErrorCodes), Object.values(processControlErrorCodes)));
+function lifecycleError(error: unknown, reason: string, step: string): ReleaseError {
+  if (error instanceof ReleaseError) return error;
+  const code = record(error).code;
+  return new ReleaseError('PROCESS_STATE_UNKNOWN', { reason, step,
+    ...(typeof code === 'string' && knownCauseCodes.has(code) ? { causeCode: code } : {}) });
+}
 class ManagedProcess implements ExecutionLifecycle {
   private tail = Promise.resolve();
   constructor(readonly slot: ManagedSlot, readonly state: ManagedState, readonly budget: BudgetMonitor) {}
@@ -52,8 +62,8 @@ class ManagedProcess implements ExecutionLifecycle {
           ...(result.ownedScope ? { ownedScope: result.ownedScope } : {}) };
         command.status = result.terminationReason === 'exit' && command.observationComplete ? 'closed' : 'unknown';
         if (!hasVerifiedManagedClosure(command)) { command.status = 'unknown'; command.observationComplete = false; }
+        if (failure !== undefined) throw lifecycleError(failure, 'JOURNAL_FAILED', name);
         await this.persist();
-        if (failure !== undefined) throw failure instanceof ReleaseError ? failure : new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'JOURNAL_FAILED', step: name });
         if (command.status !== 'closed') throw new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'CLOSURE_UNPROVEN', commandId: command.id, step: name,
           termination: result.terminationReason, exitCode: result.exitCode, identified: !!command.identity,
           ...(result.ownedScope ? { scopeReason: result.ownedScope.reason, empty: result.ownedScope.empty } : {}),
@@ -63,7 +73,7 @@ class ManagedProcess implements ExecutionLifecycle {
         failed.abort(); await running?.terminate(); await this.tail;
         command.status = 'unknown'; command.observationComplete = false;
         try { await this.persist(); } catch { /* 最后已持久化的意图仍不是关闭证明，不能释放槽。 */ }
-        throw error instanceof ReleaseError ? error : new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'PROCESS_LIFECYCLE_FAILED', step: name });
+        throw lifecycleError(error, 'PROCESS_LIFECYCLE_FAILED', name);
       }
     }, spec.signal);
   }

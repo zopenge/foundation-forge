@@ -1,4 +1,4 @@
-import { lstat, open, opendir, realpath, rename, statfs, unlink } from 'node:fs/promises';
+import { lstat, open, opendir, readlink, realpath, rename, statfs, unlink } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import type { FileIdentity, ManagedPaths } from './release-context.js';
 import { record, ReleaseError } from './errors.js';
@@ -45,25 +45,75 @@ export async function readBoundedJson(path: string, maxBytes = 1_048_576): Promi
     throw new ReleaseError('SLOT_STATE', { reason: 'JSON_READ' });
   } finally { await handle?.close(); }
 }
+async function assertInternalLink(root: string, path: string, active: () => void): Promise<void> {
+  try {
+    if (!within(root, await realpath(path))) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'EXTERNAL_LINK' });
+    return;
+  } catch (error) { if (record(error).code !== 'ENOENT') throw error; }
+  const separators = (value: string) => process.platform === 'win32' ? value.replaceAll('\\', '/') : value;
+  const compare = (value: string) => process.platform === 'win32' ? value.toLowerCase() : value;
+  const rootText = separators(root);
+  let current = dirname(path), pending: string[] = [], hops = 1;
+  const follow = (target: string) => {
+    let value = separators(target);
+    if (isAbsolute(target)) {
+      if (compare(value) !== compare(rootText) && !compare(value).startsWith(`${compare(rootText)}/`)) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'EXTERNAL_LINK' });
+      current = root; value = value.slice(rootText.length);
+    } else if (process.platform === 'win32' && /^[a-z]:/iu.test(value)) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'LINK_TARGET_UNKNOWN' });
+    pending = [...value.split('/').filter(Boolean), ...pending];
+  };
+  follow(await readlink(path));
+  // 保留原始组件顺序，先解析已有链接，再解释后续 ..；不能提前作词法折叠。
+  while (pending.length > 0) {
+    active(); const part = pending.shift();
+    if (!part || part === '.') continue;
+    if (part === '..') {
+      current = dirname(current);
+      if (!within(root, current)) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'EXTERNAL_LINK' });
+      continue;
+    }
+    const candidate = resolve(current, part);
+    if (!within(root, candidate)) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'EXTERNAL_LINK' });
+    let stat;
+    try { stat = await lstat(candidate); }
+    catch (error) {
+      if (record(error).code !== 'ENOENT') throw error;
+      if (pending.includes('..')) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'LINK_TARGET_UNKNOWN' });
+      return;
+    }
+    if (stat.isSymbolicLink()) {
+      if (hops++ >= 40) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'LINK_RESOLUTION_LIMIT' });
+      follow(await readlink(candidate));
+    } else {
+      if (!stat.isDirectory() && pending.length > 0) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'LINK_ANCESTOR_TYPE' });
+      current = candidate;
+    }
+  }
+}
 export async function measureManagedUsageOnce(paths: ManagedPaths, signal?: AbortSignal): Promise<{ bytes: number; freeBytes: number }> {
   let bytes = 0, entries = 0;
   const active = () => { if (signal?.aborted) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'OBSERVATION_DEADLINE' }); };
   const visit = async (path: string): Promise<void> => {
     active();
     if (++entries > 500_000) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'ENTRY_LIMIT' });
-    const stat = await lstat(path);
+    const stat = await lstat(path, { bigint: true });
     if (stat.isSymbolicLink()) {
-      if (!within(paths.slotRoot, await realpath(path))) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'EXTERNAL_LINK' });
-      bytes += stat.size;
+      await assertInternalLink(paths.slotRoot, path, active);
+      if (!sameIdentity(stat, await lstat(path, { bigint: true }))) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'LINK_REPLACED' });
+      bytes += Number(stat.size);
     } else if (stat.isDirectory()) {
       const directory = await opendir(path);
       if (signal?.aborted) { await directory.close(); active(); }
       for await (const entry of directory) await visit(resolve(path, entry.name));
-    } else if (stat.isFile()) bytes += stat.size;
+    } else if (stat.isFile()) bytes += Number(stat.size);
     else throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'FILE_TYPE' });
     if (!Number.isSafeInteger(bytes)) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'SIZE_OVERFLOW' });
   };
   try {
+    const assertRoot = async () => {
+      if (!sameIdentity(await fileIdentity(paths.slotRoot), paths.slotIdentity) || await realpath(paths.slotRoot) !== paths.slotRoot) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'ROOT_REPLACED' });
+    };
+    await assertRoot();
     await visit(paths.slotRoot);
     if (await pathExists(paths.anchorPath)) {
       const stat = await lstat(paths.anchorPath);
@@ -71,6 +121,7 @@ export async function measureManagedUsageOnce(paths: ManagedPaths, signal?: Abor
       bytes += stat.size;
     }
     const volume = await statfs(paths.slotRoot, { bigint: true });
+    await assertRoot();
     active();
     const available = volume.bavail * volume.bsize;
     if (available < 0n || available > BigInt(Number.MAX_SAFE_INTEGER)) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'VOLUME_SIZE' });

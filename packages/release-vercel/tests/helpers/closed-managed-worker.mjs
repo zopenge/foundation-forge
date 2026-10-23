@@ -1,0 +1,22 @@
+import { mkdir, readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import process from 'node:process';
+import { validateReleaseConfig } from '../../dist/node.js';
+import { Execution } from '../../dist/node/execution.js';
+import { freezeManagedSource } from '../../dist/node/source.js';
+import { openManagedSlot } from '../../dist/node/managed-paths.js';
+import { createManagedSession } from '../../dist/node/managed-process.js';
+
+const [cwd] = process.argv.slice(2);
+if (!cwd) throw new Error('fixture cwd required');
+const config = validateReleaseConfig(JSON.parse(await readFile(resolve(cwd, 'release.config.json'), 'utf8')));
+const source = await freezeManagedSource(cwd, 'release.config.json', new Execution(cwd, config, undefined, []));
+const slot = await openManagedSlot(source, new Execution(cwd, config, undefined, []));
+await mkdir(slot.paths.checkoutRoot, { recursive: true });
+const session = await createManagedSession(slot, 'publish');
+await session.execution.run('fixture-closed-command', { command: 'node', args: ['-e', 'process.stdout.write("closed")'] }, 'CHECK_FAILED');
+await session.assertClosed();
+session.state.stage = 'install'; await session.persist();
+await slot.store.writeAnchor({ schemaVersion: 2, slotId: slot.slotId, slotPath: slot.paths.slotRoot, sourceRoot: source.root, configPath: source.configPath });
+// 真实作业已见证关闭；模拟协调者在整体状态关闭/释放旧锁之前退出。
+process.stdout.write('closed journal saved');

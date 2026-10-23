@@ -35,6 +35,8 @@ source 使用以下配置，其他字段沿用完整示例：
 
 先提交受管槽及 `.tmp/forge-vercel-release/` 的 ignore 规则。slotPath 是仓库内 ASCII 相对路径，不能跳出、含 `.git` 或重叠管理锚点。示例单槽 2 GiB、卷至少 5 GiB 余量；公共包通过配置接收，不绑定盘符。采样间隔 250–5000 毫秒，prepare 允许 0–32 项。
 
+ignore 文件允许 Git checkout 带来的 CRLF/LF 行尾差异，其他字节仍须与冻结提交一致；不执行 clean filter 来掩盖真实改动。全局 ignore 和 `.git/info/exclude` 不能替代已提交规则。工作树中的未提交规则仍被拒绝。
+
 managed-commit 冻结开发分支完整 SHA、已提交配置、精确 `pnpm@<版本>`、锁文件和脚本。源 tracked/index/配置必须干净，无关 untracked 原样保留。真实独立 clone 从远端建立，再从冻结源 fetch 尚未推送的候选对象；安装、prepare、检查与验收均在同一 checkout 执行。安装核对本机 pnpm 版本，使用 frozen-lockfile，不自动下载其他版本。禁止配置对象覆盖，不复制源私有 Git 配置、不创建 worktree、不切源分支、不使用 reset/stash/clean、不迁移共享 store。
 
 同一槽复用依赖，同 SHA 重跑不重建环境；下一 SHA 必须可从干净槽快进。脏槽、分叉、外来目录、junction 根、外部 Git 对象依赖、源码链接、gitlink、LFS 指针或不支持的路径失败，不增加旁路槽。拒绝继承 Git 目录、索引、对象库及 namespace 覆盖；认证、路由、hooks 仍属调用方受信任配置。
@@ -80,6 +82,10 @@ runRelease 支持 command、cwd、configPath、workspace 专用 config 对象、
 原生依赖 Koffi 精确固定 3.3.3。本仓与 tarball 消费安装禁用其构建脚本，其他 pnpm 消费者也应设置 `allowBuilds.koffi: false`。缺少预编译制品、原生能力或 Job 绑定失败在业务 argv 前拒绝，不下载、不编译、不提权、不回退。归属层不是安全沙箱，受信任命令不得通过 WMI、系统服务等外部所有者代办；workspace 不启用新 scope。
 
 预算统计包含槽内全部条目及原根锚点，hardlink 各条目重复计数，内部链接不遍历，外部或未知链接失败。一次最多观察 500000 项，原子元数据写入检查临时峰值。准入、运行监测和阶段观察遇到超限、余量不足或观测不完整即取消。报告记录观测峰值、最小余量和采样间隔。有限采样不等于 OS 配额，间隔内可能短暂超限；不调整宿主卷或配额、不整理共享 store。
+
+pnpm 安装过程中，受管根内的 symlink 或 Windows junction 可以暂时指向尚未创建的目标。观察器逐段核对已有祖先及根身份，链接解析最多 40 跳，缺失目标时统计链接自身，目标形成后通过普通目录遍历计数；外部目标、祖先逃逸、循环链接和根替换仍拒绝。已具备关闭证明的历史运行可带着这类内部链接通过正式 recover 入口恢复并复用槽。旧运行若未保存 OS 关闭见证，更新工具后仍不能凭 PID 消失解锁，应保留原状态和锁；本修复不伪造正常退出，也不提供清槽绕行。
+
+生命周期包装错误保留 Node 系统错误及底层公开契约已定义的 `causeCode`，后续持久化错误不能覆盖已记录首错，不记录原始异常消息、任意自定义错误码或环境。`PROCESS_LIFECYCLE_FAILED` 的历史记录若没有底层分类，不能仅凭后续测试通过就追认其根因。
 
 槽内 latest-check/latest-publish 分开，状态与单份收据不超过 1 MiB；原根 managed.json 锚点不超过 64 KiB，绑定槽/配置/发布身份。单步 stdout/stderr 各最多 2048 UTF-8 字节并标明截断，effects/关键错误不能截断。写入和释放前核对路径、源 index/HEAD 和锁归属，外来槽、陈旧锁和半写入残留不自动清理。
 
