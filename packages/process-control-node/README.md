@@ -15,8 +15,11 @@ Explicit `createWindowsOwnedProcessScopeProvider()` and
 Windows x64 (Job Objects) and Linux/glibc x64 (subreaper, wait/reap and pidfds).
 Other hosts, missing native capabilities or unsupported Job assignment fail
 before the job starts. Owned scopes currently require force termination.
-Windows verifies completed member handles and complete Job membership before
-synchronizing delayed exit accounting; a live descendant is rejected immediately.
+Windows retains verified member handles while allowing natural descendant exit
+for at most the smaller of one second and half the configured termination budget.
+Helper shutdown and final Job emptiness verification share the remaining deadline.
+Cancellation, timeout, unknown membership, or forced cleanup can never become a
+normal completion, even if the Job is empty afterward.
 Koffi is pinned to 3.3.3 and loaded lazily from installed prebuilds; runtime code
 never downloads or compiles a fallback. With pnpm, set `allowBuilds.koffi: false`
 when installing to prevent Koffi's optional install-time compilation fallback.

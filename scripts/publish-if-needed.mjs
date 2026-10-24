@@ -18,11 +18,14 @@ import {
 } from './package-manager-command.mjs';
 import { loadReleasePolicy } from './release-policy.mjs';
 import { createNpmEnvironment } from './release-environment.mjs';
+import { npmAuthenticationArguments } from './release-authentication.mjs';
 import { discoverWorkspacePackageModel } from './workspace-packages.mjs';
 
 export const publishIfNeeded = async ({ tag, bootstrap = false, model, policy,
-  environment = process.env, onPublishState, expectedNames,
+  environment = process.env, onPublishState, expectedNames, authMode = 'otp',
 } = {}) => {
+  const authenticationArguments = npmAuthenticationArguments(authMode);
+  if (authMode === 'web' && !bootstrap) throw new Error('WEB_AUTH_BOOTSTRAP_ONLY');
   const repositoryRoot = model?.repositoryRoot ?? fileURLToPath(new URL('../', import.meta.url));
   const packDirectory = resolve(repositoryRoot, '.tmp', 'release-packs');
 
@@ -112,7 +115,7 @@ export const publishIfNeeded = async ({ tag, bootstrap = false, model, policy,
       provenance: !bootstrap,
       tag,
     });
-    await runPackageManager('npm', args);
+    await runPackageManager('npm', [...args, ...authenticationArguments]);
   }
 
   async function ensureTag(release) {

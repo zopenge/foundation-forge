@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 
-import { parseOneTimePassword, readMaskedOneTimePassword } from './bootstrap-otp.mjs';
+import { readReleaseAuthentication } from './release-authentication.mjs';
 import { configureTrustedPublishers } from './configure-trusted-publishers.mjs';
 import { readReleaseGitState } from './github-release.mjs';
 import { publishIfNeeded } from './publish-if-needed.mjs';
@@ -31,10 +31,11 @@ const verifyPublishedTags = async ({ model, plan, headSha, readTag }) => {
   }
 };
 
-export const runBootstrapRelease = async ({ model, policy,
+export const runBootstrapRelease = async ({ model, policy, authMode = 'otp',
+  environment = process.env, input = process.stdin, output = process.stdout,
   readMetadata = readPackageRegistryMetadata, readState = readReleaseGitState,
   verifyTags = verifyPublishedTags, captureBinding = captureReleaseBinding,
-  readOtp = async () => process.env.NPM_CONFIG_OTP === undefined ? readMaskedOneTimePassword() : parseOneTimePassword(process.env.NPM_CONFIG_OTP),
+  readOtp,
   publish = publishIfNeeded, configure = configureTrustedPublishers, verify = runReportedVerification,
   waitForRegistry = waitForPackageVersion,
   readTag = readLocalTag,
@@ -59,11 +60,11 @@ export const runBootstrapRelease = async ({ model, policy,
   let stage = 'publish';
   let budget;
   try {
-    const otp = await readOtp();
+    const publishEnvironment = await readReleaseAuthentication({ authMode, environment, input, output, readOtp });
     await readState(model.repositoryRoot, policy.branch);
     if (JSON.stringify(await captureBinding(model, policy)) !== JSON.stringify(binding)) throw new Error('RELEASE_SOURCE_CHANGED');
-    await publish({ model, policy, tag: 'next', bootstrap: true, expectedNames: names,
-      environment: { ...process.env, NPM_CONFIG_OTP: otp },
+    await publish({ model, policy, tag: 'next', bootstrap: true, expectedNames: names, authMode,
+      environment: publishEnvironment,
       onPublishState: async ({ name }, state) => {
         const target = report.targets.find((value) => value.name === name);
         if (!target) throw new Error('BOOTSTRAP_TARGETS_CHANGED');
@@ -82,7 +83,7 @@ export const runBootstrapRelease = async ({ model, policy,
     stage = 'trustedPublisher';
     report.stages.trustedPublisher = 'started';
     await writeReleaseReport(model.repositoryRoot, report);
-    await configure({ model, policy, packageNames: names });
+    await configure({ model, policy, packageNames: names, authMode, environment, input, output });
     report.stages.trustedPublisher = 'succeeded';
     await writeReleaseReport(model.repositoryRoot, report);
   } catch (error) {

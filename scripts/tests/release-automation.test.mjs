@@ -187,7 +187,7 @@ test('includes pre-publish check failures and nearby diagnostics without exposin
 
 test('configures only missing trusted publishers and verifies the result', async () => {
   const configurations = new Map([
-    ['@example/configured', [{ environment: 'npm', file: 'release.yml', repository: 'example/project', type: 'github' }]],
+    ['@example/configured', [{ environment: 'npm', file: 'release.yml', repository: 'example/project', type: 'github', permissions: ['createPackage'] }]],
     ['@example/missing', []],
   ]);
   const configured = [];
@@ -195,7 +195,7 @@ test('configures only missing trusted publishers and verifies the result', async
   const result = await ensureTrustedPublisherConfigurations({
     configure: async (name) => {
       configured.push(name);
-      configurations.set(name, [{ environment: 'npm', file: 'release.yml', repository: 'example/project', type: 'github' }]);
+      configurations.set(name, [{ environment: 'npm', file: 'release.yml', repository: 'example/project', type: 'github', permissions: ['createPackage'] }]);
     },
     expected: { environment: 'npm', file: 'release.yml', repository: 'example/project' },
     listConfigurations: async (name) => configurations.get(name),
@@ -207,6 +207,28 @@ test('configures only missing trusted publishers and verifies the result', async
     { action: 'unchanged', name: '@example/configured' },
     { action: 'configured', name: '@example/missing' },
   ]);
+});
+
+for (const permissions of [undefined, [], ['createStagedPackage']]) test(
+  `不把缺少普通发布权限的 trust 配置判为就绪：${JSON.stringify(permissions)}`, async () => {
+    const expected = { environment: 'npm', file: 'release.yml', repository: 'example/project' };
+    let configuration = { ...expected, type: 'github', permissions };
+    let writes = 0;
+    const result = await ensureTrustedPublisherConfigurations({ expected, packageNames: ['@example/pkg'],
+      listConfigurations: async () => [configuration],
+      configure: async () => { writes += 1; configuration = { ...configuration, permissions: ['createPackage'] }; },
+    });
+    assert.equal(writes, 1);
+    assert.deepEqual(result, [{ action: 'configured', name: '@example/pkg' }]);
+  });
+
+test('trust 写入后仍缺少普通发布权限时拒绝成功', async () => {
+  const expected = { environment: 'npm', file: 'release.yml', repository: 'example/project' };
+  let configurations = [];
+  await assert.rejects(ensureTrustedPublisherConfigurations({ expected, packageNames: ['@example/pkg'],
+    listConfigurations: async () => configurations,
+    configure: async () => { configurations = [{ ...expected, type: 'github', permissions: ['createStagedPackage'] }]; },
+  }), /trusted publisher verification failed/u);
 });
 
 test('redacts OTP values from npm failures', () => {

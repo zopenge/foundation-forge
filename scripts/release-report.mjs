@@ -36,7 +36,7 @@ export const createReleaseReport = ({ binding, mode, targets, packages, expected
 
 export const recordReleaseFailure = (report, stage, error) => {
   if (stage in report.stages) report.stages[stage] = 'failed';
-  const failure = { stage, code: String(error?.code ?? 'RELEASE_STAGE_FAILED'),
+  const failure = { stage, code: redactKnownTokens(String(error?.code ?? 'RELEASE_STAGE_FAILED')).slice(0, 128),
     message: redactKnownTokens(String(error?.message ?? error)).slice(0, 4_096) };
   report.firstError ??= failure;
   report.lastError = failure;

@@ -57,7 +57,7 @@ Windows 身份 reader 使用 .NET `Process.GetProcessById` 读取目标 PID 的�
 
 ### 显式 owned scope
 
-`createWindowsOwnedProcessScopeProvider()` 面向 Windows x64：建立未命名 Job Object，开启 kill-on-close、禁止 breakaway，以真实进程句柄校验 helper 身份并加入 Job。正常关闭读取内核 active process accounting；直接作业 close 后确认仍有存活后代就立即终止自己的 Job，并返回 unknown。退出时 accounting、成员表和进程对象触发时机可能不同；只有完整成员表，或已验证属于该 Job 的稳定句柄及原生终止状态证明成员已终止，才允许有界等待统计同步。句柄未触发时使用 GetExitCodeProcess 区分已退出与 STILL_ACTIVE；仍活动的成员没有等待宽限。成员已删除时必须重新取得完整 root-only Job 表；不以 PID 查询缺失或进程名称作为关闭证明，权限、归属、句柄和不完整查询错误仍返回 unknown。
+`createWindowsOwnedProcessScopeProvider()` 面向 Windows x64：建立未命名 Job Object，开启 kill-on-close、禁止 breakaway，以真实进程句柄校验 helper 身份并加入 Job。直接作业 close 后，正常关闭允许自有后代在 `min(1000ms, terminationTimeoutMs / 2)` 内自然退出，其余关闭预算留给 helper 退出、必要的强制清理与最终 Job 空集合证明；所有关闭阶段共用同一个单调时钟期限，上层命令超时仍覆盖收尾过程。退出时 accounting、成员表和进程对象触发时机可能不同；等待期间保留已验证属于该 Job 的稳定句柄，使用原生终止状态与完整成员表确认退出，不因后续成员列表暂时缺少 PID 就遗忘仍存活的实例。句柄未触发时使用 GetExitCodeProcess 区分已退出与 STILL_ACTIVE；到期仍活动的成员会被终止，并返回 unknown。取消、超时、身份未知或强制清理不能转为正常完成，即使清理后 Job 已空。成员已删除时必须重新取得完整 root-only Job 表；不以 PID 查询缺失或进程名称作为关闭证明，权限、归属、句柄和不完整查询错误仍返回 unknown。
 
 `createLinuxOwnedProcessScopeProvider()` 面向 Linux/glibc x64，要求 glibc 的 prctl、waitpid、pidfd_open、pidfd_send_signal 和支持它们的内核。独立 helper 先设置并读回 subreaper，直接 child 先由 libuv 回收，再 wait/reap 额外后代；只有 ECHILD 证明空树。异常清理仅使用自己的孩子、复核 PPid 和稳定 pidfd。协调进程不设置 subreaper；helper 消失不能补造关闭证明。
 

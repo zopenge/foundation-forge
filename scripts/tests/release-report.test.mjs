@@ -64,3 +64,19 @@ test('独立 bootstrap 验证的 pending 报告可以续验且不覆盖实际发
   assert.notEqual(await writeReleaseReport(root, verification), await writeReleaseReport(root, publishing));
   assert.throws(() => assertResumeBinding(publishing, { binding, targets, packages: targets }), /PUBLISH_UNCONFIRMED/u);
 });
+
+test('网页认证失败报告不保留授权链接、长 OTP 或异常码中的凭据', async (context) => {
+  const { createReleaseReport, writeReleaseReport, recordReleaseFailure } = await implementation();
+  const root = await fixture(context);
+  const report = createReleaseReport({ binding, mode: 'bootstrap', targets, packages: targets });
+  recordReleaseFailure(report, 'trustedPublisher', Object.assign(new Error([
+    'https://www.npmjs.com/auth/cli/auth-fixture',
+    'https://www.npmjs.com/login?next=/login/cli/login-fixture',
+    'https://registry.npmjs.org/-/v1/login/done/done-fixture',
+    'otp 1234567890123456',
+  ].join(' ')), { code: 'npm_code_fixture' }));
+  const path = await writeReleaseReport(root, report);
+  assert.doesNotMatch(await readFile(path, 'utf8'),
+    /auth-fixture|login-fixture|done-fixture|1234567890123456|npm_code_fixture/u);
+  assert.equal(report.firstError.code, '[REDACTED]');
+});

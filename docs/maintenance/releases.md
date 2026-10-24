@@ -77,7 +77,7 @@ pnpm check
 不能把只含源码的压缩包当作可发布的 Git checkout。
 
 新机器发布还需要维护者自己的 GitHub 访问权限；首次 bootstrap 需要 npm 登录和
-可输入掩码 OTP 的交互终端。常规稳定版继续由合并 Changesets 版本 PR 后的 workflow
+真实交互终端，可使用默认掩码 OTP 或显式网页授权。常规稳定版继续由合并 Changesets 版本 PR 后的 workflow
 发布，依赖仓库 App、npm environment 和 Trusted Publisher 配置。上述权限与审批
 不会由本地命令跳过，也不需要 AI 工具代为执行。
 
@@ -161,7 +161,8 @@ pnpm release:resume --report .tmp/release/<报告文件名>.json
 再按工作区资源规则精确处理。消费者临时目录在正常完成或捕获失败后回收，小型
 报告保留；进程被强制终止后的临时目录在确认无运行任务后可回收。
 
-OTP 仍只在掩码终端输入，只有缺少 Trusted Publisher 配置时才再次读取。
+默认 OTP 仍只在掩码终端输入，只有缺少 Trusted Publisher 配置时才再次读取。
+续验也可追加 `--auth-mode web`，仅改变缺失配置的认证交互，不重新 publish。
 pnpm 专属设置保存在 `pnpm-workspace.yaml`，npm 子进程过滤已识别的 pnpm
 环境注入项，同时保留认证、代理、TLS 和 OIDC 配置，不通过隐藏 warning 治理日志。
 
@@ -223,6 +224,38 @@ npm package 存在之前无法配置 Trusted Publisher，因此首个版本是�
 `release:bootstrap` 是唯一允许省略 provenance 的发布路径。若本地普通发布出现
 `Automatic provenance generation not supported for provider: null`，说明误用了
 workflow 内部命令，不得通过全局关闭 provenance 绕过。
+
+### 使用手机完成网页二次验证
+
+需要从另一台设备完成 npm 二次验证时，在真实交互终端显式启用网页模式：
+
+```sh
+pnpm release:bootstrap --auth-mode web
+pnpm release:configure-trusted-publishers --package <包名> --auth-mode web
+pnpm release:resume --report .tmp/release/<报告文件名>.json --auth-mode web
+```
+
+这些是不同场景的入口，不应依次重复执行。首次创建使用 bootstrap；已确认发布且
+保留原报告时使用 resume；独立补齐配置时使用 configure-trusted-publishers。
+省略 `--auth-mode` 或传入 `otp` 保留默认掩码 OTP 行为。
+
+网页模式由 npm 官方 CLI 处理 `--auth-type=web`，通过 `--browser=false` 直接显示
+官方授权链接，不需要在电脑上按回车打开浏览器。用手机打开终端本次显示的 npm
+官方链接并完成二次验证；发布与 Trusted Publisher 配置可能各自要求授权。
+链接过期或授权取消时保留失败阶段和首错，不自动重试发布；先回读实际状态及报告，
+发布副作用未知时按原门禁阻断。npm 登录成功不等同于发布二次验证已完成。
+
+输入和输出都必须是实际 TTY，不能把命令输出重定向到日志；不伪造 TTY、不把 OTP
+或 token 复制到聊天。网页模式不调用仓库的数字 OTP 读取器，但 npm 的服务端挑战
+仍由 npm CLI 决定：如果它转而显示终端 OTP 提示，请取消，改用默认掩码入口；不要
+在 npm 原生明文提示中输入验证码。支持网页授权的前提与交互见
+[npm 官方二次验证文档](https://docs.npmjs.com/accessing-npm-using-2fa/)。
+
+网页写入关闭 JSON 输出，确保链接立即显示；配置写入退出后，再通过独立 JSON
+回读确认目标 Trusted Publisher 及 `createPackage` 发布权限；缺失权限、空权限或
+只有 `createStagedPackage` 均不会被判为就绪。授权链接只用于实时交互，失败报告对 npm 授权
+链接、OTP 和已识别 token 脱敏。此选项不会引入长期 token，也不会改变正常的
+`main` / Version Packages 自动发布入口、首次包资格、源码、tag 或消费者验证门禁。
 
 ## 已固化的故障经验
 
@@ -288,8 +321,8 @@ pnpm release:bootstrap
 
 Node 与 pnpm 版本应满足根 manifest；不需要生成 `.cmd`、`.cjs` 包装文件，
 不需要复制本机运行时路径。仓库的 `scripts/package-manager-command.mjs` 负责
-从正常安装解析包管理器入口。只有控制台实际显示掩码 OTP 提示，才确认交互输入
-可用；完整检查通过或进程已经启动不能代替这一确认。
+从正常安装解析包管理器入口。默认模式应实际显示掩码 OTP 提示；网页模式应实际
+显示 npm 官方授权链接。完整检查通过或进程已经启动不能代替交互可用性的确认。
 
 已有部分发布时，使用原报告的 `release:resume` 命令或下文分步恢复入口。
 进程最终退出码、阶段报告和 registry 回读共同决定结果；不要仅凭窗口打开或

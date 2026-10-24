@@ -66,3 +66,47 @@ test('publish 成功而 trust 失败时保留可续验报告', async (context) =
   assert.match(options.output(), /发布后仍有未完成阶段：fixture@1\.0\.0-rc\.0/u);
   assert.match(options.output(), /pnpm release:resume --report/u);
 });
+
+test('网页 bootstrap 通过预检后交给 npm 授权，不读取终端 OTP', async (context) => {
+  const { runBootstrapRelease } = await implementation();
+  const options = await setup(context);
+  const actions = [];
+  const result = await runBootstrapRelease({ ...options, authMode: 'web',
+    input: { isTTY: true }, output: { isTTY: true },
+    environment: { PATH: 'fixture', NPM_CONFIG_OTP: '123456' },
+    readOtp: () => assert.fail('网页模式不应读取 OTP'),
+    publish: async ({ authMode, environment, onPublishState }) => {
+      assert.equal(authMode, 'web');
+      assert.deepEqual(environment, { PATH: 'fixture' });
+      actions.push('publish');
+      await onPublishState(options.model.packages[0], 'started');
+      await onPublishState(options.model.packages[0], 'succeeded');
+    },
+    configure: async ({ authMode }) => { assert.equal(authMode, 'web'); actions.push('trust'); },
+    verify: async () => { actions.push('verify'); return 'verified'; },
+  });
+  assert.equal(result, 'verified');
+  assert.deepEqual(actions, ['publish', 'trust', 'verify']);
+});
+
+test('网页 bootstrap 在无终端时拒绝写入，且仍先做源码预检', async (context) => {
+  const { runBootstrapRelease } = await implementation();
+  const options = await setup(context);
+  let checked = false;
+  await assert.rejects(runBootstrapRelease({ ...options, authMode: 'web',
+    input: { isTTY: false }, output: { isTTY: true },
+    readState: () => { checked = true; },
+    readOtp: () => assert.fail('不应降级到 OTP'),
+    publish: () => assert.fail('无终端不应 publish'),
+  }), /WEB_AUTH_REQUIRES_TTY/u);
+  assert.equal(checked, true);
+});
+
+test('普通自动发布不能启用网页交互或越过首次发布门禁', async (context) => {
+  const { publishIfNeeded } = await import('../publish-if-needed.mjs');
+  const { model } = await setup(context);
+  context.mock.method(globalThis, 'fetch', () => assert.fail('认证模式校验前不应访问 registry'));
+  await assert.rejects(publishIfNeeded({ authMode: 'web', bootstrap: false, model,
+    policy: { registry: 'http://127.0.0.1' } }),
+    /WEB_AUTH_BOOTSTRAP_ONLY/u);
+});

@@ -44,7 +44,7 @@ export const runReportedVerification = async ({ model, policy, mode, packageName
   } finally { printReleaseSummary(report, path); }
 };
 
-export const resumeRelease = async ({ model, policy, reportPath,
+export const resumeRelease = async ({ model, policy, reportPath, authMode = 'otp',
   captureBinding = captureReleaseBinding, readMetadata = readPackageRegistryMetadata,
   configure = configureTrustedPublishers, verify = verifyRegistryPackages, readTag = readReleaseTagCommit,
 }) => {
@@ -69,7 +69,7 @@ export const resumeRelease = async ({ model, policy, reportPath,
       stage = 'trustedPublisher';
       report.stages.trustedPublisher = 'started';
       await writeReleaseReport(model.repositoryRoot, report);
-      await configure({ model, policy, packageNames: report.targets.map(({ name }) => name) });
+      await configure({ model, policy, packageNames: report.targets.map(({ name }) => name), authMode });
       report.stages.trustedPublisher = 'succeeded';
       await writeReleaseReport(model.repositoryRoot, report);
     }
