@@ -4,7 +4,7 @@ Explicit Git integration releases with bounded checks, fixed commit selection, a
 
 Internal Git commands keep automatic maintenance and garbage collection in the foreground through invocation-local settings. That work remains inside the command deadline and managed process scope; repository and global Git settings are not rewritten.
 
-Frozen-source checks preserve Git execution failures, command timeouts, and unknown process closure diagnostics. These errors stop the release without being relabeled as source changes; actual changes to the frozen source still fail with `SOURCE_CHANGED`.
+Frozen-source checks and committed-config reads preserve Git execution failures, command timeouts, cancellation, and unknown process closure diagnostics. These errors stop the release without being relabeled as source changes or an uncommitted config. A config path is reported as missing only after Git exits normally and confirms its absence; actual changes to the frozen source still fail with `SOURCE_CHANGED`.
 
 ```sh
 pnpm add -D @openge/forge-release-vercel

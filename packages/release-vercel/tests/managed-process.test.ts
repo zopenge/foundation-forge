@@ -5,7 +5,8 @@ import { createManagedSession } from '../src/node/managed-process.js';
 import { freezeManagedSource } from '../src/node/source.js';
 import { openManagedSlot } from '../src/node/managed-paths.js';
 import { managedFixture } from './helpers/managed-fixture.js';
-import { currentCoordinator, identityReader, processControl } from '../src/node/process-identities.js';
+import { currentCoordinator, identityReader } from '../src/node/process-identities.js';
+import { closeFixtureIdentity } from './helpers/close-fixture-process.js';
 import type { ManagedSession } from '../src/node/release-context.js';
 import { inspectManagedRecovery } from '../src/node/managed-recovery.js';
 
@@ -15,7 +16,7 @@ async function closeFastFixtureChild(marker: string): Promise<void> {
   for (let i = 0; i < 50; i++) {
     try {
       const pid = Number(await readFile(marker, 'utf8')), current = await identityReader().readIdentity({ pid, signal: AbortSignal.timeout(10_000) });
-      if (current.status === 'FOUND') await processControl().terminateProcessTree({ process: current.identity, policy: { mode: 'force' }, signal: AbortSignal.timeout(10_000) });
+      if (current.status === 'FOUND') await closeFixtureIdentity(current.identity, { signal: AbortSignal.timeout(10_000) });
       return;
     } catch (error) { if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error; await new Promise(accept => setTimeout(accept, 100)); }
   }
@@ -28,7 +29,7 @@ afterEach(async () => {
   for (const session of sessions.splice(0)) for (const command of session.state.processes) {
     for (const identity of [...command.descendants, ...(command.identity ? [command.identity] : [])]) {
       const observed = await identityReader().readIdentity({ pid: identity.pid });
-      if (observed.status === 'FOUND' && observed.identity.startToken === identity.startToken) await processControl().terminateProcessTree({ process: identity, policy: { mode: 'force' } });
+      if (observed.status === 'FOUND' && observed.identity.startToken === identity.startToken) await closeFixtureIdentity(identity);
     }
   }
   for (const f of fixtures.splice(0)) await f.dispose();
