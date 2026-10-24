@@ -55,6 +55,6 @@
     "@libp2p/websockets": "10.1.15",
     "@multiformats/multiaddr": "13.0.3",
     "@openge/forge-peer-network": "workspace:^",
-    "libp2p": "3.3.4"
+    "libp2p": "3.3.11"
   }
 }
