@@ -14,7 +14,8 @@ jobs:
     name: ${{ matrix.os }} / Node.js ${{ matrix.node-version }}
     runs-on: ${{ matrix.os }}
     env:
-      VITEST_MAX_WORKERS: ${{ matrix.os == 'windows-2025' && '2' || '' }}
+      # Vitest 的环境变量会覆盖包配置；Windows 原生进程用例逐文件占用宿主。
+      VITEST_MAX_WORKERS: ${{ matrix.os == 'windows-2025' && '1' || '' }}
     strategy:
       fail-fast: false
       matrix:

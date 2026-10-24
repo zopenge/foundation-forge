@@ -53,7 +53,8 @@ export class Execution {
         return control.listProcesses(request);
       } },
       terminationPolicy: { mode: 'force' }, terminationTimeoutMs: 5000,
-      identityAcquisition: { timeoutMs: lifecycle ? Math.min(10_000, config.limits.commandMs) : 2000, pollIntervalMs: 20 } });
+      // 管理检查同样需要宿主身份观测；统一启动预算，但不得超过原有总命令时限。
+      identityAcquisition: { timeoutMs: Math.min(10_000, config.limits.commandMs), pollIntervalMs: 20 } });
   }
   async run(name: string, check: ReleaseCheck, errorCode: ReleaseErrorCode, values?: Readonly<Record<string, string>>,
     signal = this.signal, captureStep = true, onOutput?: (text: string) => void): Promise<string> {

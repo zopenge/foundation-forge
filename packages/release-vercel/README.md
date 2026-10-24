@@ -52,6 +52,8 @@ The default file is `release.config.json`, relative to `--cwd` (default: the cur
 
 Both command arrays contain 1–32 entries. Each entry accepts only `command`, optional `args` (up to 128 arguments), and optional `timeoutMs`. Times are positive safe integers: commands and deployment waits are capped at one hour, requests at five minutes, and `pollMs` cannot exceed `deploymentMs`. Command-specific timeouts are capped by `commandMs`. Output is bounded per stream to `maxOutputBytes` (at most 1 MiB); configured job output may be truncated, while truncated Git/API protocol output fails closed. Add `.tmp/` to the consuming repository's ignore rules.
 
+Process identity observation for both managed commands and read-only management checks has a maximum ten-second budget, capped by `commandMs`. The command's own timeout continues to cover observation and execution together. Identity failure and cancellation still stop the command; they do not trigger an automatic retry.
+
 Prepare/check/acceptance commands receive protected `FORGE_RELEASE_COMMAND=check|publish|verify` and `FORGE_RELEASE_SHA`; acceptance also receives `FORGE_RELEASE_URL` and `FORGE_RELEASE_DEPLOYMENT_ID`. Inherited values cannot override this metadata. It describes intent, not business authorization. Consumers own business assertions and any idempotent remote preparation. The build marker must be deployed from source and contain the full SHA; do not fabricate it during verification.
 
 ## Managed commit mode
