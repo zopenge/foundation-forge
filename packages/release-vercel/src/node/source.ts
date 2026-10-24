@@ -20,7 +20,12 @@ export function relativeConfigPath(root: string, path: string): string {
   return value;
 }
 export async function readCommittedConfig(execution: Execution, sha: string, path: string): Promise<{ config: ReleaseConfig; oid: string; bytes: Buffer }> {
-  const oid = await execution.git(['rev-parse', '--verify', `${sha}:${path}`]).catch(() => { throw new ReleaseError('SOURCE_UNSUPPORTED', { reason: 'CONFIG_NOT_COMMITTED' }); });
+  const oid = await execution.git(['rev-parse', '--verify', '--quiet', `${sha}:${path}`]).catch((error: unknown) => {
+    // quiet 存在性检查仅在正常退出 1 时证明配置路径缺失，不能吞掉启动或观察失败。
+    if (error instanceof ReleaseError && error.code === 'GIT_FAILED' && error.details.exitCode === 1
+      && error.details.termination === 'exit') throw new ReleaseError('SOURCE_UNSUPPORTED', { reason: 'CONFIG_NOT_COMMITTED' });
+    throw error;
+  });
   const bytes = await gitBlob(execution, oid);
   let value: unknown;
   try { value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as unknown; }

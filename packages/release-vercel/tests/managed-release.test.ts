@@ -21,7 +21,11 @@ vi.mock('@openge/forge-command-runner/node', async importOriginal => {
   const actual = await importOriginal<typeof import('@openge/forge-command-runner/node')>();
   return { ...actual, createNodeCommandRunner: (...args: Parameters<typeof actual.createNodeCommandRunner>) => {
     const runner = actual.createNodeCommandRunner(...args);
-    return { ...runner, start: (...parameters: Parameters<typeof runner.start>) => {
+    return { ...runner, run: async (...parameters: Parameters<typeof runner.run>) => {
+      const result = await runner.run(...parameters);
+      for (const diagnostic of result.diagnostics) recordLifecycleFailure(diagnostic.code, diagnostic.cause ?? { code: diagnostic.code });
+      return result;
+    }, start: (...parameters: Parameters<typeof runner.start>) => {
       try {
         const running = runner.start(...parameters);
         return { ...running, result: running.result.catch((error: unknown) => { recordLifecycleFailure('command-result', error); throw error; }) };
@@ -68,7 +72,8 @@ it('checks an unpublished committed input in a real independent checkout, preser
   const sha = await configure(f, { checks: [{ command: 'node', args: ['-e', 'process.stdout.write(JSON.stringify({cwd:process.cwd(),sha:require("node:child_process").execFileSync("git",["rev-parse","HEAD"],{encoding:"utf8"}).trim(),intent:process.env.FORGE_RELEASE_COMMAND,frozen:process.env.FORGE_RELEASE_SHA}))'] }] });
   const transport: ReleaseTransport = { api: async () => { throw new Error('check must not query Vercel'); }, buildInfo: async () => { throw new Error('check must not fetch online'); } };
   const report = await run({ cwd: f.cwd, command: 'check', transport });
-  expect(report, JSON.stringify({ error: report.error, members: scopeObservation?.members })).toMatchObject({ ok: true, schemaVersion: 2, candidateSha: sha, stage: 'complete', processes: { status: 'closed' } });
+  if (!report.ok) process.stderr.write(`managed-check command diagnostics: ${JSON.stringify(lifecycleFailures)}\n`);
+  expect(report, JSON.stringify({ error: report.error, lifecycleFailures, members: scopeObservation?.members })).toMatchObject({ ok: true, schemaVersion: 2, candidateSha: sha, stage: 'complete', processes: { status: 'closed' } });
   expect(report.executionRoot).toBe(resolve(f.cwd, '.tmp/release-slot/checkout'));
   const checked = report.steps.find(step => step.name === 'check:0');
   expect(JSON.parse(checked?.stdout ?? '')).toEqual({ cwd: report.executionRoot, sha, intent: 'check', frozen: sha });

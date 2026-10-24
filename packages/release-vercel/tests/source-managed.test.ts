@@ -2,13 +2,31 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
-import { freezeManagedSource, assertSourceFrozen, inspectCommitTree } from '../src/node/source.js';
+import { freezeManagedSource, assertSourceFrozen, inspectCommitTree, readCommittedConfig } from '../src/node/source.js';
 import { ReleaseError } from '../src/node/errors.js';
 import { git, managedFixture } from './helpers/managed-fixture.js';
 
 const fixtures: Awaited<ReturnType<typeof managedFixture>>[] = [];
 afterEach(async () => { vi.unstubAllEnvs(); for (const f of fixtures.splice(0)) await f.dispose(); });
 const fixture = async () => { const f = await managedFixture(); fixtures.push(f); return f; };
+it.each([
+  new ReleaseError('GIT_FAILED', { exitCode: null, termination: 'start-failure' }),
+  new ReleaseError('GIT_FAILED', { exitCode: 128, termination: 'termination-failure' }),
+  new ReleaseError('GIT_FAILED', { exitCode: 128, termination: 'exit' }),
+  new ReleaseError('COMMAND_TIMEOUT', { step: 'git' }),
+  new ReleaseError('CANCELLED'),
+  new ReleaseError('PROCESS_STATE_UNKNOWN'),
+])('preserves committed-config observation failure $code with $details', async failure => {
+  const f = await fixture();
+  const observation = vi.spyOn(f.execution, 'git').mockRejectedValueOnce(failure);
+  try { await expect(readCommittedConfig(f.execution, f.sha, 'release.config.json')).rejects.toBe(failure); }
+  finally { observation.mockRestore(); }
+  await expect(readCommittedConfig(f.execution, f.sha, 'release.config.json')).resolves.toMatchObject({ config: f.config });
+});
+it('classifies a genuinely absent committed-config path after a normal Git exit', async () => {
+  const f = await fixture();
+  await expect(readCommittedConfig(f.execution, f.sha, 'absent.json')).rejects.toMatchObject({ code: 'SOURCE_UNSUPPORTED', details: { reason: 'CONFIG_NOT_COMMITTED' } });
+});
 it.each(['GIT_DIR', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY'])('refuses inherited %s context before creating an isolated checkout', async name => {
   const f = await fixture();
   vi.stubEnv(name, resolve(f.cwd, name === 'GIT_DIR' ? '.git' : name === 'GIT_INDEX_FILE' ? '.git/index' : '.git/objects'));
