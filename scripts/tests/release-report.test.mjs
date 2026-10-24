@@ -80,3 +80,17 @@ test('网页认证失败报告不保留授权链接、长 OTP 或异常码中的
     /auth-fixture|login-fixture|done-fixture|1234567890123456|npm_code_fixture/u);
   assert.equal(report.firstError.code, '[REDACTED]');
 });
+
+test('npm JSON 错误中的 done URL 和转义换行不会泄漏授权标识或吞掉后文', async (context) => {
+  const { createReleaseReport, writeReleaseReport, recordReleaseFailure } = await implementation();
+  const root = await fixture(context);
+  const report = createReleaseReport({ binding, mode: 'bootstrap', targets, packages: targets });
+  recordReleaseFailure(report, 'trustedPublisher', new Error(JSON.stringify({ error: {
+    code: 'EOTP',
+    detail: 'https://www.npmjs.com/auth/cli/auth-fixture\nAfter authenticating',
+    doneUrl: 'https://registry.npmjs.org/-/v1/done?authId=done-fixture',
+  } })));
+  const text = await readFile(await writeReleaseReport(root, report), 'utf8');
+  assert.doesNotMatch(text, /auth-fixture|done-fixture/u);
+  assert.match(text, /After authenticating/u);
+});

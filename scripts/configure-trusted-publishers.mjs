@@ -38,6 +38,11 @@ export const configureTrustedPublishers = async ({ model, policy, packageNames: 
   let otp;
   let authenticated = false;
   let npmEnvironment = authMode === 'web' ? removeNpmOtp(environment) : environment;
+  const authenticate = async () => {
+    npmEnvironment = await readReleaseAuthentication({ authMode, environment, input, output, readOtp });
+    otp = npmEnvironment.NPM_CONFIG_OTP;
+    authenticated = true;
+  };
   const commandPrefix = [
     'exec',
     '--yes',
@@ -55,14 +60,32 @@ export const configureTrustedPublishers = async ({ model, policy, packageNames: 
       { stdio: interactive ? 'inherit' : ['ignore', 'pipe', 'pipe'] });
     if (result.status !== 0) {
       const message = result.stderr || result.stdout || `npm trust exited with code ${String(result.status)}`;
-      throw new Error(redactSecrets(message, [otp ?? '']));
+      const error = new Error(redactSecrets(message, [otp ?? '']));
+      // 只有 npm 的结构化认证错误可以进入交互；其余失败保持原样。
+      try {
+        if (parseJsonDocuments(result.stdout ?? '').some((document) => document?.error?.code === 'EOTP')) {
+          error.code = 'EOTP';
+        }
+      } catch { /* 格式错误不能成为重试认证的依据。 */ }
+      throw error;
     }
     if (result.stderr) process.stderr.write(redactSecrets(result.stderr, [otp ?? '']));
     return result.stdout;
   };
-  const listConfigurations = async (name) => parseJsonDocuments(
-    runNpmTrust(['list', name, '--json']),
-  ).flatMap((document) => Array.isArray(document) ? document : [document]);
+  const listConfigurations = async (name) => {
+    const read = () => runNpmTrust(['list', name, '--json']);
+    let response;
+    try { response = read(); }
+    catch (error) {
+      if (error.code !== 'EOTP' || (authMode === 'otp' && authenticated)) throw error;
+      await authenticate();
+      process.stderr.write(`${error.message}\n`);
+      if (authMode === 'web') runNpmTrust(['list', name], true);
+      // 交互输出不作为配置证据；每次读取最多一次授权及一次独立 JSON 回读。
+      response = read();
+    }
+    return parseJsonDocuments(response).flatMap((document) => Array.isArray(document) ? document : [document]);
+  };
   const expected = {
     environment: policy.environment,
     file: policy.workflow,
@@ -70,11 +93,7 @@ export const configureTrustedPublishers = async ({ model, policy, packageNames: 
   };
   const results = await ensureTrustedPublisherConfigurations({
     configure: async (name) => {
-      if (!authenticated) {
-        npmEnvironment = await readReleaseAuthentication({ authMode, environment, input, output, readOtp });
-        otp = npmEnvironment.NPM_CONFIG_OTP;
-        authenticated = true;
-      }
+      if (!authenticated) await authenticate();
       runNpmTrust([
         'github',
         name,
