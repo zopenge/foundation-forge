@@ -80,7 +80,11 @@ runRelease 支持 command、cwd、configPath、workspace 专用 config 对象、
 
 ## 恢复与资源所有权
 
-受管锁覆盖准备、安装、检查、推送、等待和验收。显式装配 Windows x64 Job Object 或 Linux/glibc x64 subreaper/wait/pidfd Provider。runner 的 manual 门先取得 scope-ready，再持久保存真实身份、scopeId 和 run/command/nonce 绑定，复核预算、路径和锁后放行。只有匹配的 OS scope closed/normal/empty 证明允许同一运行的下一命令或正常释放锁；取消、身份变化、崩溃缺口、遗留后代及强制清理即使最后 empty=true 也仍 unknown。下述显式中断封存单独处理资源归属，不补造正常关闭。
+受管锁覆盖准备、安装、检查、推送、等待和验收。显式装配 Windows x64 Job Object 或 Linux/glibc x64 subreaper/wait/pidfd Provider。runner 的 manual 门先取得 scope-ready，再持久保存真实身份、scopeId 和 run/command/nonce 绑定，复核预算、路径和锁后放行。只有匹配的 OS scope closed/normal/empty 证明允许同一运行继续下一命令。受控取消或超时可单独证明资源已停止：必须有明确终止请求、Provider 的 terminated/empty 终态，以及精确 scope、binding 和 root identity；命令仍失败或取消，后续新运行重新经过完整门禁。owner-lost、provider-failed、意外遗留后代、身份变化和崩溃缺口不自动升级为安全停止。
+
+新活动状态采用 schema 3，终态回执采用独立 schema 1。放行 argv 前从既有额度中保留 1 MiB 元数据空间，单份 terminal.json 上限 256 KiB；校验和、稳定 proof 摘要、宿主及源/槽/owner/anchor/lock/state 文件身份共同绑定停止事实。回执先落盘，再归并普通状态；写入不扫描 checkout payload、不调用 Git。payload 或其 Git 元数据异常仍阻止执行、复用和清理，但不会抹掉已经取得的停止事实。真实元数据替换、磁盘不足或写盘失败继续阻断。新 checkout 不需要既有 .tmp 或 Codex 环境；恢复旧运行则必须保留原宿主上的原始本地证据。
+
+每次主状态替换前，终态回执先封存旧文件和已 fsync 暂存文件的精确身份及摘要；协调者在 rename 两侧退出均可读取原有停止事实，同字节复制仍被拒绝。恢复先归档原记录，再在排他声明内清理与封印匹配的未提交暂存文件；未知暂存文件继续阻断，原始状态和远端副作用不改写。
 
 旧 schema 2 轮询 closure 可读，但属于弱证据，不能自动升级、复用为成功或依据 PID 消失删锁。旧 command-gate/result 文件不执行、不自动清理；新运行不再创建它们。持久 OS 证据绑定已结束实例，可复用而不重新探测后来复用的 PID。每条记录的 nonce 仅存在受控 journal，不输出到 CLI 报告。
 
@@ -94,7 +98,9 @@ pnpm 安装过程中，受管根内的 symlink 或 Windows junction 可以暂时
 
 槽内 latest-check/latest-publish 分开，状态与单份收据不超过 1 MiB；原根 managed.json 锚点不超过 64 KiB，绑定槽/配置/发布身份。单步 stdout/stderr 各最多 2048 UTF-8 字节并标明截断，effects/关键错误不能截断。写入和释放前核对路径、源 index/HEAD 和锁归属，外来槽、陈旧锁和半写入残留不自动清理。
 
-受管 push 不明时保留 pending/unknown 与运行锁。recover 独占取得恢复声明，核对 owner、进程、真实 refs 与部署身份，不安装、不检查、不验收、不推送、不部署、不回滚。仅在关闭可证明且引用可恢复时落观察并精确释放旧锁：等于候选记 already-current，候选祖先记 not-current（只表示观察时未指向候选，不能声称从未尝试）；已向后推进、分叉或无法核验时保留锁。原发布失败和 unknown 保留，另附时间戳观察；status 结合证据和当前 refs 展示已核实事实。崩溃缺闭环见证时，即使进程后来消失也仍 unknown，无强制确认或自动删锁入口。按 recovery.nextCommand 继续，未消除的身份缺口须维护者调查精确运行。workspace 不支持 recover。
+执行结果、OS 停止、本地处置和远端副作用分别记录。可靠停止且本地所有权可信时，普通入口或 recover 可先收尾旧运行；失败、取消和 unknown 原文保存在不可变 history/<runId>.json。release-ready 表示具备精确解锁资格，不宣称后续 unlink 已成功；可选 outcome 保存解锁前的执行结果。新状态绑定前代历史的摘要和文件身份，后来的 check 不会覆盖旧远端未决事实，历史缺失或被同内容替换也会拒绝。
+
+recover 不要求 Vercel 登录，不安装、不检查、不验收、不推送、不部署、不回滚。dev 后续提交、分叉或远端不可达不再占住已安全结束的本地资源，但每次新的远端写入前都必须重新只读核验全部历史未决意图。candidate 或 superseded 只说明当前远端事实；before、diverged、unknown 继续阻止远端写入，原 effects 不改写。若响应丢失的旧意图与本次 SHA、仓库、目标分支完全相同，且新鲜观察确认远端已指向候选，则记 already-current 并跳过该次 push，其余推送仍为普通精确 SHA、非 force 操作。身份不明、协调者仍活动或缺少停止见证时继续阻止复用；PID 消失不能补造证明。workspace 不支持 recover。
 
 ### 显式中断封存
 
@@ -104,9 +110,9 @@ pnpm 安装过程中，受管根内的 symlink 或 Windows junction 可以暂时
 
 命令保存检查点；实际宿主重启后再执行同一 retire 命令。Windows 仅在同一宿主的系统 uptime 比检查点至少下降 60 秒时接受新开机周期，Linux 要求 kernel boot_id 改变；PID 消失、睡眠和墙钟变化都不是该证明。基线过短、重启后等待太久、宿主身份读取失败时继续阻断，不静默刷新基线，不自动重启电脑。Windows 读取 MachineGuid，Linux 读取 machine-id 和 kernel boot-id；报告仅保存宿主摘要。
 
-Windows 原生 mutex / Linux 对原槽目录 fd 的 flock 串行化封存元数据事务。取得该 OS 锁仅证明之前的封存事务不再活动；它不能替代旧受管命令的结束证明。只有本协议自身的遗留协调声明可在 OS 锁内重新取得，普通 recover 或外来锁仍保护。封存再次核对源 commit/config、原文件字节与身份、当前 refs 和项目/部署身份；已向后推进、分叉或 unknown 的 refs 阻断。
+Windows 原生 mutex / Linux 对原槽目录 fd 的 flock 串行化 recover 和 retire 元数据事务。取得该 OS 锁仅证明之前的元数据事务不再活动，不能替代旧受管命令的结束证明。各协议只能在该锁内续接自身的遗留声明，外来声明仍受保护。封存再次核对源 commit/config、原文件字节与身份；远端观察单独保存，dev 快进、分叉、不可达或 Vercel 未登录均不阻本地封存，下一次远端写入仍受未决门禁约束。
 
-先将带 checksum 的原始 state、现有收据、锁、所有权和锚点封存到同槽 `retired/<runId>.json`，再精确释放旧 run.lock；单份封存最多 8 MiB，计入槽预算。原 state 与既有收据不改写；原子写入中断和释放锁前后中断都可续验。`retirement.status=retired`、退出 0 仅表示资源封存完成，`historicalVerification=unknown` 与原 effects 保留。下一次 publish 仍走完整门禁并复用同槽，不增加新的发布授权；workspace 模式不支持 retire。
+先将带 checksum 的原始 state、现有收据、锁、所有权和锚点封存到同槽 `retired/<runId>.json`，再精确释放旧 run.lock；history 与 retired 单份均最多 8 MiB，全部计入槽预算。历史空间不足时拒绝新运行，不自动删历史。原 state 与既有收据不改写；原子写入中断和释放锁前后中断都可续验。`retirement.status=retired`、退出 0 仅表示资源封存完成，`historicalVerification=unknown` 与原 effects 保留。下一次 publish 仍走完整门禁并复用同槽，不增加新的发布授权；workspace 模式不支持 retire。
 
 以下原根报告与人工恢复说明仅适用于 workspace 模式：
 

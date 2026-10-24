@@ -69,40 +69,48 @@ it('does not execute a job when its lock was replaced before launch', async () =
 it.each(['journal-failure', 'lock-replaced'])('never authorizes the real job after scope-ready with %s', async mode => {
   const f = await fixture(), marker = resolve(f.slot.paths.slotRoot, 'forbidden-after-ready');
   const write = f.slot.store.writeState.bind(f.slot.store);
-  vi.spyOn(f.slot.store, 'writeState').mockImplementation(async state => {
+  vi.spyOn(f.slot.store, 'writeState').mockImplementation(async (state, beforeCommit) => {
     if (state.processes.some(command => command.status === 'identified')) {
       if (mode === 'journal-failure') throw Error('fixture journal unavailable');
-      await write(state); await writeFile(f.slot.paths.lockPath, 'replacement'); return;
+      await write(state, beforeCommit); await writeFile(f.slot.paths.lockPath, 'replacement'); return;
     }
-    await write(state);
+    await write(state, beforeCommit);
   });
   await expect(f.session.execution.run('never-authorized', { command: 'node', args: ['-e', 'require("node:fs").writeFileSync(process.argv[1],"bad")', marker] }, 'CHECK_FAILED')).rejects.toThrow();
   await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' });
-  expect(f.session.state.processes[0]?.status).toBe('unknown');
+  if (mode === 'journal-failure') {
+    expect(f.session.state.processes[0]?.status).toBe('stopped');
+    expect(JSON.parse(await readFile(resolve(f.slot.paths.slotRoot, 'terminal.json'), 'utf8'))).toMatchObject({ command: {
+      observationComplete: true, closure: { requestedTermination: 'abort', ownedScope: { reason: 'terminated', empty: true } },
+    } });
+  } else expect(f.session.state.processes[0]?.status).toBe('unknown');
 });
 it.each(['EBUSY', 'SECRETCODE'])('preserves only known lifecycle failure codes without exposing messages: %s', async code => {
   const f = await fixture(), write = f.slot.store.writeState.bind(f.slot.store);
-  vi.spyOn(f.slot.store, 'writeState').mockImplementation(async state => {
+  vi.spyOn(f.slot.store, 'writeState').mockImplementation(async (state, beforeCommit) => {
     if (state.processes.some(command => command.status === 'closed')) throw Object.assign(new Error('token=fixture-private'), { code });
-    await write(state);
+    await write(state, beforeCommit);
   });
   const observed = await f.session.execution.run('journal-code', { command: 'node', args: ['-e', 'process.stdout.write("done")'] }, 'CHECK_FAILED')
     .then(value => ({ value }), (error: unknown) => ({ error }));
   expect(observed).toMatchObject({ error: { code: 'PROCESS_STATE_UNKNOWN', details: { reason: 'PROCESS_LIFECYCLE_FAILED', ...(code === 'EBUSY' ? { causeCode: code } : {}) } } });
   expect(JSON.stringify(observed)).not.toContain('fixture-private');
   if (code !== 'EBUSY') expect(JSON.stringify(observed)).not.toContain(code);
-  expect(f.session.state.processes[0]?.status).toBe('unknown');
+  expect(f.session.state.processes[0]?.status).toBe('closed');
+  const terminal = await readFile(resolve(f.slot.paths.slotRoot, 'terminal.json'), 'utf8');
+  expect(JSON.parse(terminal)).toMatchObject({ command: { status: 'closed', closure: { ownedScope: { status: 'closed', empty: true } } } });
+  expect(terminal).not.toContain('fixture-private');
 });
 it('keeps the queued first failure when a retained atomic file blocks later journal writes', async () => {
   const f = await fixture(), write = f.slot.store.writeState.bind(f.slot.store);
   let failed = false;
-  vi.spyOn(f.slot.store, 'writeState').mockImplementation(async state => {
+  vi.spyOn(f.slot.store, 'writeState').mockImplementation(async (state, beforeCommit) => {
     if (!failed && state.processes.some(command => command.status === 'identified')) {
       failed = true;
       await writeFile(resolve(f.slot.paths.slotRoot, '.state.json.next'), 'retained first failure');
       throw Object.assign(new Error('private first failure'), { code: 'EBUSY' });
     }
-    await write(state);
+    await write(state, beforeCommit);
   });
   const marker = resolve(f.slot.paths.slotRoot, 'must-not-run');
   await expect(f.session.execution.run('first-failure', { command: 'node', args: ['-e', 'require("node:fs").writeFileSync(process.argv[1],"bad")', marker] }, 'CHECK_FAILED'))
@@ -122,16 +130,18 @@ it('does not treat an exited parent as proof that its writer child closed', asyn
   await expect(f.session.assertClosed()).rejects.toMatchObject({ code: 'PROCESS_STATE_UNKNOWN' });
   expect(await readFile(f.slot.paths.lockPath, 'utf8')).toContain(f.slot.runId);
 });
-it('cancels a real foreground writer while preserving unknown closure', async () => {
+it('keeps cancellation failed while distinguishing safe stopping from normal closure', async () => {
   const f = await fixture(), path = resolve(f.slot.paths.slotRoot, 'cancel-writes');
   const controller = new AbortController();
   const pending = f.session.execution.run('cancelled', { command: 'node', args: ['-e', 'setInterval(()=>require("node:fs").appendFileSync(process.argv[1],"x"),100)', path] }, 'CHECK_FAILED', undefined, controller.signal);
-  const failure = expect(pending).rejects.toMatchObject({ code: 'PROCESS_STATE_UNKNOWN' });
+  const failure = expect(pending).rejects.toMatchObject({ code: 'CANCELLED' });
   try { for (let i = 0; i < 60; i++) { try { await readFile(path); break; } catch { await new Promise(accept => setTimeout(accept, 100)); } } }
   finally { controller.abort(); }
   await failure; const size = (await readFile(path)).length;
   await new Promise(accept => setTimeout(accept, 250)); expect((await readFile(path)).length).toBe(size);
-  expect(f.session.state.processes[0]?.status).toBe('unknown');
+  expect(f.session.state.processes[0]?.status).toBe('stopped');
+  await expect(f.session.assertClosed()).rejects.toMatchObject({ code: 'PROCESS_STATE_UNKNOWN' });
+  await expect(f.session.assertStopped()).resolves.toBeUndefined();
 });
 it('fails closed when a recorded running identity changes', async () => {
   const f = await fixture(), path = resolve(f.slot.paths.slotRoot, 'identity-started');

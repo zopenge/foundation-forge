@@ -12,6 +12,9 @@ import { currentCoordinator } from './process-identities.js';
 import { assertNoGitContext } from './git-context.js';
 import { hasVerifiedManagedClosure } from './managed-closure.js';
 import { hasFinalizedRetirement } from './retirement-record.js';
+import { metadataReserveBytes } from './managed-metadata.js';
+import { archiveManagedDisposition, hasManagedDisposition } from './managed-disposition.js';
+import { assertManagedHistory } from './managed-history.js';
 
 export async function assertManagementUntracked(source: FrozenSource, execution: Execution): Promise<void> {
   assertNoGitContext();
@@ -119,7 +122,7 @@ export async function openManagedSlot(source: FrozenSource, execution: Execution
       || !sameIdentity(record(owner.slotIdentity), paths.slotIdentity)) throw new ReleaseError('SLOT_FOREIGN');
     slotId = owner.slotId;
     if (anchored && existingAnchor.slotId !== slotId) throw new ReleaseError('SLOT_STATE', { reason: 'ANCHOR_SLOT_ID' });
-    const allowed = ['ownership.json', 'run.lock', 'recover.lock', 'state.json', 'checkout', 'latest-check.json', 'latest-publish.json', 'command-gate.json', 'command-result.json', 'retirement.json', 'retirement-work', 'retired'];
+    const allowed = ['ownership.json', 'run.lock', 'recover.lock', 'state.json', 'checkout', 'latest-check.json', 'latest-publish.json', 'command-gate.json', 'command-result.json', 'retirement.json', 'retirement-work', 'retired', 'history', 'terminal.json', '.terminal.json.next'];
     if ((await readdir(paths.slotRoot)).some(name => !allowed.includes(name))) throw new ReleaseError('SLOT_FOREIGN', { reason: 'UNKNOWN_ENTRY' });
   }
   await assertManagedPaths(paths);
@@ -128,7 +131,7 @@ export async function openManagedSlot(source: FrozenSource, execution: Execution
   const usage = await measureManagedUsage(paths), budget = source.config.source;
   const ownerJson = JSON.stringify({ schemaVersion: 2, slotId, sourceRoot: source.root,
     configPath: source.configPath, repository: source.config.git.repository, sourceIdentity: paths.sourceIdentity, slotIdentity: paths.slotIdentity });
-  const admissionBytes = 1024 + (created ? Buffer.byteLength(ownerJson) : 0);
+  const admissionBytes = 1024 + metadataReserveBytes + (created ? Buffer.byteLength(ownerJson) : 0);
   if (Buffer.byteLength(ownerJson) > 65_536 || usage.bytes + admissionBytes > budget.maxBytes || usage.freeBytes - admissionBytes < budget.minFreeBytes) throw new ReleaseError('BUDGET_EXCEEDED', { reason: 'SLOT_ADMISSION' });
   const rawLock = await acquireLock(paths.lockPath, { runId, identity: coordinator });
   const management = new Execution(source.root, source.config, undefined, []);
@@ -140,7 +143,11 @@ export async function openManagedSlot(source: FrozenSource, execution: Execution
     const guard = async () => { await assertManagedPaths(paths); await lock.assertOwned(); };
     const store = createManagedStateStore(paths, source, slotId, guard);
     const state = await store.read();
-    if (state && (state.status !== 'closed' || state.pendingPush || Object.values(state.effects).includes('unknown') || !state.processes.every(hasVerifiedManagedClosure)) && !await hasFinalizedRetirement(paths, state)) throw new ReleaseError('RECOVERY_REQUIRED', { runId: state.runId });
-    return { paths, source, slotId, lock, store, runId, coordinator };
+    if (state) await assertManagedHistory(paths, state);
+    if (state && !await hasManagedDisposition(paths, state) && !await hasFinalizedRetirement(paths, state)) {
+      if (state.status !== 'closed' || state.pendingPush || Object.values(state.effects).includes('unknown') || !state.processes.every(hasVerifiedManagedClosure)) throw new ReleaseError('RECOVERY_REQUIRED', { runId: state.runId });
+      await archiveManagedDisposition(paths, state, state, guard, undefined, true);
+    }
+    return { paths, source, slotId, lock, store, runId, coordinator, assertMetadataOwned: () => rawLock.assertOwned() };
   } catch (error) { await lock.release(); throw error; }
 }

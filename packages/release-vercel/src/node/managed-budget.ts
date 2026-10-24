@@ -29,7 +29,7 @@ export class BudgetMonitor {
   private running = false;
   private sampling = Promise.resolve();
   constructor(readonly paths: ManagedPaths, readonly config: ManagedSourceConfig,
-    private readonly observe: typeof observeBudget = observeBudget) {}
+    private readonly observe: typeof observeBudget = observeBudget, private readonly reservedBytes = 0) {}
   async sample(): Promise<void> {
     const observation = this.sampling.then(() => this.sampleNow());
     this.sampling = observation.catch(() => {});
@@ -42,7 +42,7 @@ export class BudgetMonitor {
     this.count++; this.maxBytes = Math.max(this.maxBytes, observation.bytes); this.minFree = Math.min(this.minFree, observation.freeBytes);
     if (this.lastObserved !== undefined) this.maxGap = Math.max(this.maxGap, observation.observedAt - this.lastObserved);
     this.lastObserved = observation.observedAt;
-    if (observation.bytes > this.config.maxBytes || observation.freeBytes < this.config.minFreeBytes) throw new ReleaseError('BUDGET_EXCEEDED', { bytes: observation.bytes, freeBytes: observation.freeBytes });
+    if (observation.bytes + this.reservedBytes > this.config.maxBytes || observation.freeBytes - this.reservedBytes < this.config.minFreeBytes) throw new ReleaseError('BUDGET_EXCEEDED', { bytes: observation.bytes, freeBytes: observation.freeBytes });
   }
   async run<T>(operation: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {
     if (this.running) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'OVERLAPPING_OPERATION' });

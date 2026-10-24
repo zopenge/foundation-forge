@@ -1,6 +1,7 @@
 import { lstat, open, opendir, readlink, realpath, rename, statfs, unlink } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
-import type { FileIdentity, ManagedPaths } from './release-context.js';
+import type { FileIdentity, ManagedPaths, MetadataFile } from './release-context.js';
 import { record, ReleaseError } from './errors.js';
 
 export const within = (root: string, path: string): boolean => {
@@ -143,7 +144,8 @@ export async function measureManagedUsage(paths: ManagedPaths, signal?: AbortSig
     }
   }
 }
-export async function atomicJson(path: string, value: unknown, maxBytes: number, paths: ManagedPaths, guard: () => Promise<void>, maxTotal: number, minFree: number): Promise<void> {
+export async function atomicJson(path: string, value: unknown, maxBytes: number, paths: ManagedPaths, guard: () => Promise<void>, maxTotal: number, minFree: number,
+  beforeCommit?: (prepared: MetadataFile) => Promise<void>): Promise<void> {
   const bytes = Buffer.from(`${JSON.stringify(value)}\n`, 'utf8');
   if (bytes.length > maxBytes) throw new ReleaseError('BUDGET_EXCEEDED', { reason: 'METADATA_LIMIT' });
   await guard();
@@ -151,10 +153,22 @@ export async function atomicJson(path: string, value: unknown, maxBytes: number,
   // 原文件与原子替换的临时文件会短暂共存，按写入峰值准入。
   if (usage.bytes + bytes.length > maxTotal || usage.freeBytes - bytes.length < minFree) throw new ReleaseError('BUDGET_EXCEEDED', { reason: 'METADATA_ADMISSION' });
   const temporary = resolve(dirname(path), `.${path.slice(dirname(path).length + 1)}.next`);
-  const handle = await open(temporary, 'wx');
-  try { await handle.writeFile(bytes); await handle.sync(); }
-  catch (error) { await handle.close(); await unlink(temporary); throw error; }
-  await handle.close();
-  await guard();
-  await rename(temporary, path);
+  const handle = await open(temporary, 'wx'), created = await handle.stat({ bigint: true });
+  const prepared = { identity: { dev: created.dev.toString(), ino: created.ino.toString() }, sha256: createHash('sha256').update(bytes).digest('hex') };
+  let renamed = false;
+  const intact = async () => sameIdentity(created, await lstat(temporary, { bigint: true }))
+    && await readBoundedText(temporary, maxBytes) === bytes.toString('utf8');
+  try {
+    await handle.writeFile(bytes); await handle.sync(); await handle.close();
+    // 在目标替换前持久预告暂存文件的精确身份，恢复可区分 rename 两侧的合法状态。
+    await beforeCommit?.(prepared); await guard();
+    if (!await intact()) throw new ReleaseError('SLOT_STATE', { reason: 'METADATA_TEMP_REPLACED' });
+    await rename(temporary, path); renamed = true;
+  } finally {
+    await handle.close();
+    if (!renamed) {
+      // 已知失败不遗留本次完整暂存文件；未知归属/内容与崩溃残留仍由恢复门禁处理。
+      try { await guard(); if (await pathExists(temporary) && await intact()) await unlink(temporary); } catch { /* 保留首错，不清理无法证明归属的文件。 */ }
+    }
+  }
 }

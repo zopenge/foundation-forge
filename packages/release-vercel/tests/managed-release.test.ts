@@ -1,5 +1,5 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { basename, resolve } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { runRelease } from '../src/node.js';
 import type { ReleaseConfig, ReleaseReport, ReleaseTransport, RunReleaseOptions } from '../src/contracts.js';
@@ -7,14 +7,18 @@ import { git, managedFixture } from './helpers/managed-fixture.js';
 import { gitRoutingParameters } from './helpers/git-routing.js';
 import { observeWindowsJobMembers } from '../../process-control-node/tests/helpers/windows-job-observer.js';
 
-const lifecycleFailures = vi.hoisted((): { phase: string; name: string; code?: string; reason?: string }[] => []);
+const lifecycleFailures = vi.hoisted((): { phase: string; name: string; code?: string; reason?: string; syscall?: string; entry?: string }[] => []);
 function recordLifecycleFailure(phase: string, error: unknown): void {
   if (!error || typeof error !== 'object') { lifecycleFailures.push({ phase, name: typeof error }); return; }
   const code: unknown = Reflect.get(error, 'code'), details: unknown = Reflect.get(error, 'details');
   const reason: unknown = details && typeof details === 'object' ? Reflect.get(details, 'reason') : undefined;
   const safeCode = (value: unknown): value is string => typeof value === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/u.test(value);
+  const syscall: unknown = Reflect.get(error, 'syscall'), path: unknown = Reflect.get(error, 'path');
+  const entry = typeof path === 'string' ? basename(path) : undefined;
   lifecycleFailures.push({ phase, name: error instanceof Error ? error.name : 'object',
-    ...(safeCode(code) ? { code } : {}), ...(safeCode(reason) ? { reason } : {}) });
+    ...(safeCode(code) ? { code } : {}), ...(safeCode(reason) ? { reason } : {}),
+    ...(typeof syscall === 'string' && ['open', 'rename', 'unlink', 'write', 'fsync'].includes(syscall) ? { syscall } : {}),
+    ...(entry && ['state.json', '.state.json.next', 'terminal.json', '.terminal.json.next'].includes(entry) ? { entry } : {}) });
 }
 // 透传真实 runner 与状态写入，只为失败断言保留错误分类，不记录环境或原始 cause。
 vi.mock('@openge/forge-command-runner/node', async importOriginal => {

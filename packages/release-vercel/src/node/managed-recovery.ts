@@ -4,7 +4,7 @@ import type { FileIdentity, FrozenSource, ManagedAnchor, ManagedPaths, ManagedRe
 import { assertActive, record, ReleaseError } from './errors.js';
 import { assertPathChain, pathExists, readBoundedJson, within } from './managed-io.js';
 import { assertManagedPaths } from './managed-paths.js';
-import { createManagedStateStore, parseManagedReceipt, parseManagedState } from './managed-state.js';
+import { parseManagedReceipt, parseManagedState } from './managed-state.js';
 import { validateReleaseConfig } from './config.js';
 import { Execution } from './execution.js';
 import { assertRepository, normalizeRepository, remoteRefs } from './git.js';
@@ -20,7 +20,11 @@ import { openManagedSlot } from './managed-paths.js';
 import { createManagedSession } from './managed-process.js';
 import { assertCheckoutFrozen } from './managed-checkout.js';
 import { publishCandidate } from './publication.js';
-import { hasVerifiedManagedClosure } from './managed-closure.js';
+import { hasVerifiedManagedStop } from './managed-closure.js';
+import { discardPreparedState, restoreManagedTerminal } from './managed-terminal.js';
+import { archiveManagedDisposition, assertDispositionSnapshot, hasManagedDisposition, readManagedDisposition } from './managed-disposition.js';
+import { hasFinalizedRetirement } from './retirement-record.js';
+import { assertManagedHistory } from './managed-history.js';
 
 export async function classifyRemoteRef(execution: Execution, sha: string, ref: string): Promise<ReleaseRefRelation> {
   if (sha === ref) return 'candidate';
@@ -29,7 +33,7 @@ export async function classifyRemoteRef(execution: Execution, sha: string, ref: 
     catch (error) { if (error instanceof ReleaseError && error.code === 'GIT_FAILED') return error.details.exitCode === 1 ? false : undefined; throw error; }
   };
   const before = await ancestor(ref, sha); if (before === undefined) return 'unknown'; if (before) return 'before';
-  const after = await ancestor(sha, ref); return after === undefined ? 'unknown' : after ? 'after' : 'diverged';
+  const after = await ancestor(sha, ref); return after === undefined ? 'unknown' : after ? 'superseded' : 'diverged';
 }
 interface ReceiptOutcome {
   readonly startedAt: string; readonly source?: FrozenSource; readonly location?: ManagedLocation; readonly runId?: string;
@@ -53,11 +57,20 @@ export async function observeRefs(execution: Execution, source: FrozenSource, ob
     developmentRef: { sha: development, relation: await classifyRemoteRef(execution, source.sha, development) },
     releaseRef: { sha: release, relation: await classifyRemoteRef(execution, source.sha, release) } };
 }
+export async function observeRefsForDisposition(execution: Execution, source: FrozenSource, observation: RecoveryObservation): Promise<ReleaseRecoveryObservation> {
+  try { return await observeRefs(execution, source, observation); }
+  catch (error) {
+    assertActive(execution.signal);
+    if (!(error instanceof ReleaseError) || !['GIT_FAILED', 'GIT_DIVERGED', 'COMMAND_TIMEOUT'].includes(error.code)) throw error;
+    return { owner: observation.owner, processes: observation.processes, observedAt: new Date().toISOString(),
+      developmentRef: { sha: '', relation: 'unknown' }, releaseRef: { sha: '', relation: 'unknown' } };
+  }
+}
 async function recoverManagedPublication(options: RunReleaseOptions): Promise<ReleaseReport> {
   const startedAt = new Date().toISOString();
   let location: ManagedLocation | undefined, source: FrozenSource | undefined, state: ManagedState | undefined;
   let recovery: Awaited<ReturnType<typeof claimManagedRecovery>> | undefined, observation: RecoveryObservation | undefined, refs: ReleaseRecoveryObservation | undefined;
-  let budget: BudgetMonitor | undefined, deployment: ReleaseDeployment | undefined, failure: ReleaseDiagnostic | undefined;
+  let budget: BudgetMonitor | undefined, failure: ReleaseDiagnostic | undefined;
   let effects: ReleaseReport['effects'] = { developmentPush: 'not-attempted', releasePush: 'not-attempted' };
   try {
     assertActive(options.signal);
@@ -67,65 +80,60 @@ async function recoverManagedPublication(options: RunReleaseOptions): Promise<Re
     state = parseManagedState(value, source, location.anchor.slotId); effects = { ...state.effects };
     await assertHistoricalSource(source, options.signal);
     recovery = await claimManagedRecovery(location.paths, state, options.signal);
-    observation = await inspectManagedRecovery(state, location.paths, options.signal);
+    const restored = await restoreManagedTerminal(location.paths, state, { allowReleasedLock: !recovery.oldLock, ...(options.signal ? { signal: options.signal } : {}) });
+    observation = await inspectManagedRecovery(restored.state, location.paths, options.signal);
+    refs = { owner: observation.owner, processes: observation.processes, observedAt: new Date().toISOString() };
     if (source.config.source.mode !== 'managed-commit') throw new ReleaseError('SOURCE_UNSUPPORTED');
     budget = new BudgetMonitor(location.paths, source.config.source); await budget.sample();
     const execution = new Execution(source.root, source.config, options.signal, []);
-    refs = await observeRefs(execution, source, observation);
-    const verify = new VercelVerification(source.config, options.transport ?? createTransport(execution), options.signal);
-    await verify.project(); deployment = await verify.find(source.sha);
+    refs = await observeRefsForDisposition(execution, source, observation);
     if (observation.owner !== 'inactive') throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'OWNER_NOT_INACTIVE', owner: observation.owner });
     if (observation.processes !== 'closed') throw new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'CLOSURE_UNPROVEN', processes: observation.processes });
-    for (const [effect, ref] of [['developmentPush', refs.developmentRef], ['releasePush', refs.releaseRef]] as const) {
-      if (state.effects[effect] !== 'unknown' && state.pendingPush !== effect) continue;
-      if (!ref || !['candidate', 'before'].includes(ref.relation)) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'REMOTE_NOT_RESUMABLE', effect, relation: ref?.relation, sha: ref?.sha });
-      effects[effect] = ref.relation === 'candidate' ? 'already-current' : 'not-current';
-    }
     await budget.sample();
-    if (recovery.oldLock) {
-      const oldState = state, oldLocation = location, oldLock = recovery.oldLock, claim = recovery.claim;
-      const frozen = source;
-      const guard = async () => { await assertHistoricalSource(frozen, options.signal); await assertManagedPaths(oldLocation.paths); await claim.assertOwned(); await oldLock.assertOwned(); };
-      const store = createManagedStateStore(location.paths, source, location.anchor.slotId, guard);
-      const kind = state.command === 'check' ? 'check' : 'publish';
-      if (state.command !== 'verify') {
-        const previous = await store.readReceipt(kind);
-        if (previous && previous.report.runId === state.runId) {
-          await store.writeReceipt(kind, { ...previous, report: { ...previous.report,
-            recovery: { candidateSha: source.sha, reportPath: resolve(location.paths.slotRoot, `latest-${kind}.json`), nextCommand: recoveryCommand('publish', source), observation: refs } } });
-        } else {
-          const interrupted: ReleaseReport = { schemaVersion: 2, command: state.command, ok: false, startedAt, finishedAt: new Date().toISOString(),
-            candidateSha: source.sha, configSha256: source.configSha256, sourceRoot: source.root, executionRoot: location.paths.checkoutRoot,
-            slotId: state.slotId, runId: state.runId, configPath: source.configPath, stage: state.stage, steps: [], effects: { ...state.effects },
-            error: { code: 'RECOVERY_REQUIRED', details: { reason: 'RECOVERED_INTERRUPTED_RUN' } }, recovery: { candidateSha: source.sha,
-              reportPath: resolve(location.paths.slotRoot, `latest-${kind}.json`), nextCommand: recoveryCommand('publish', source), observation: refs } };
-          await store.writeReceipt(kind, { schemaVersion: 2, slotId: state.slotId, source, report: interrupted });
-        }
-      }
-      oldState.effects = effects; delete oldState.pendingPush; oldState.status = 'closed'; await store.writeState(oldState);
-      // 旧运行的关键结果全部持久化后，才精确释放原锁；恢复声明仍阻止新运行进入。
-      await oldLock.release();
-    }
+    const oldLocation = location, claim = recovery.claim, oldLock = recovery.oldLock, frozen = source;
+    const guard = async () => { await assertHistoricalSource(frozen, options.signal); await assertManagedPaths(oldLocation.paths); await claim.assertOwned(); await oldLock?.assertOwned(); };
+    const archived = await archiveManagedDisposition(location.paths, state, restored.state, guard, refs);
+    await discardPreparedState(location.paths, restored.terminal, async () => { await guard(); await assertDispositionSnapshot(oldLocation.paths, archived, !!oldLock); });
+    // 原始失败和未决副作用均已归档；这里只结束本地占用，不重放远端操作。
+    await oldLock?.release();
   } catch (error) { failure = diagnostic(error); }
   finally { if (recovery) { try { await recovery.claim.release(); } catch (error) { failure = diagnostic(error); } } }
   let reportExists: boolean | undefined;
   if (location) { try { reportExists = await pathExists(resolve(location.paths.slotRoot, state?.command === 'check' ? 'latest-check.json' : 'latest-publish.json')); } catch { /* 存在性未知时省略此字段，不把路径文本当作文件证据。 */ } }
   return receiptReport(options, { startedAt, stage: failure ? 'recover' : 'complete', steps: [], effects, ...(reportExists === undefined ? {} : { reportExists }),
     ...(source ? { source } : {}), ...(location ? { location } : {}), ...(state ? { runId: state.runId, kind: state.command === 'check' ? 'check' : 'publish' } : {}),
-    ...(observation ? { observation } : {}), ...(refs ? { refs } : {}), ...(budget ? { budget: budget.summary() } : {}), ...(deployment ? { deployment } : {}), ...(failure ? { failure } : {}),
+    ...(observation ? { observation } : {}), ...(refs ? { refs } : {}), ...(budget ? { budget: budget.summary() } : {}), ...(failure ? { failure } : {}),
     next: failure ? failure.details.reason === 'CLOSURE_UNPROVEN' && state ? `retire --run-id ${state.runId}` : 'recover' : effects.releasePush === 'pushed' || effects.releasePush === 'already-current' ? 'verify' : 'publish' });
+}
+export async function settleManagedSlot(options: RunReleaseOptions): Promise<void> {
+  if (!await pathExists(resolve(options.cwd, '.tmp/forge-vercel-release/managed.json'))) return;
+  const location = await readManagedLocation(options.cwd, options.configPath ?? 'release.config.json');
+  const value = await readBoundedJson(location.paths.statePath);
+  if (value === undefined) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'STATE_MISSING' });
+  const source = frozenSource(record(value).source, location), state = parseManagedState(value, source, location.anchor.slotId);
+  await assertHistoricalSource(source, options.signal);
+  if (!await pathExists(location.paths.lockPath) && (await hasManagedDisposition(location.paths, state)
+    || await hasFinalizedRetirement(location.paths, state)
+    || (state.status === 'closed' && !state.pendingPush && !Object.values(state.effects).includes('unknown') && state.processes.every(hasVerifiedManagedStop)))) return;
+  const recovered = await recoverManagedPublication({ ...options, command: 'recover' });
+  if (!recovered.ok) throw new ReleaseError(recovered.error?.code ?? 'RECOVERY_REQUIRED', { ...recovered.error?.details,
+    runId: state.runId, ...(recovered.recovery?.nextCommand ? { nextCommand: recovered.recovery.nextCommand } : {}) });
 }
 async function runManagedVerification(options: RunReleaseOptions): Promise<ReleaseReport> {
   const startedAt = new Date().toISOString();
   let selected: Awaited<ReturnType<typeof loadManagedPublication>> | undefined, slot: ManagedSlot | undefined, session: ManagedSession | undefined;
   let failure: ReleaseDiagnostic | undefined, deployment: ReleaseDeployment | undefined, closed = true;
+  const report = () => receiptReport(options, { startedAt, stage: session?.state.stage ?? 'source', steps: session?.steps ?? [], effects: session?.state.effects ?? { developmentPush: 'not-attempted', releasePush: 'not-attempted' },
+    ...(selected ? { source: selected.receipt.source, location: selected.location, ...(session ? { runId: session.state.runId } : {}) } : {}),
+    ...(session ? { observation: { owner: closed ? 'inactive' : 'unknown', processes: closed ? 'closed' : 'unknown', knownCount: new Set(session.state.processes.flatMap(command => [...command.descendants, ...(command.identity ? [command.identity] : [])]).map(identity => `${String(identity.pid)}:${identity.startToken}`)).size }, budget: session.budget.summary() } : {}),
+    ...(deployment ? { deployment } : {}), ...(failure ? { failure } : {}), next: closed ? 'verify' : 'recover' });
   try {
     if (options.config !== undefined) throw new ReleaseError('SOURCE_UNSUPPORTED', { reason: 'COMMITTED_CONFIG_REQUIRED' });
     selected = await loadManagedPublication(options.cwd, options.configPath ?? 'release.config.json', options.sha, options.signal);
     const { source } = selected.receipt;
     if (!await pathExists(resolve(selected.location.paths.checkoutRoot, '.git'))) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'CHECKOUT_MISSING' });
     const original = new Execution(source.root, source.config, options.signal, []);
-    slot = await openManagedSlot(source, original); session = await createManagedSession(slot, 'verify', options.signal);
+    await settleManagedSlot(options); slot = await openManagedSlot(source, original); session = await createManagedSession(slot, 'verify', options.signal);
     const current = session;
     const assertFrozen = async () => { await assertHistoricalSource(source, options.signal); await assertCheckoutFrozen(current); };
     await assertFrozen();
@@ -135,15 +143,18 @@ async function runManagedVerification(options: RunReleaseOptions): Promise<Relea
     await session.assertClosed(); await session.budget.sample(); session.state.stage = 'complete';
   } catch (error) { failure = diagnostic(error); }
   if (session) {
-    try { await session.assertClosed(); } catch { closed = false; }
+    try { await session.assertStopped(); } catch { closed = false; }
     session.state.status = closed ? 'closed' : 'unknown';
-    try { await session.persist(); } catch (error) { failure ??= diagnostic(error); closed = false; }
+    try {
+      await session.persist();
+      if (closed) {
+        const completed = session; await completed.assertStopped();
+        await archiveManagedDisposition(completed.slot.paths, completed.state, completed.state, () => completed.slot.lock.assertOwned(), undefined, false, report());
+      }
+    } catch (error) { failure ??= diagnostic(error); closed = false; }
   }
   if (slot && closed) { try { await slot.lock.release(); } catch (error) { failure = diagnostic(error); closed = false; } }
-  return receiptReport(options, { startedAt, stage: session?.state.stage ?? 'source', steps: session?.steps ?? [], effects: session?.state.effects ?? { developmentPush: 'not-attempted', releasePush: 'not-attempted' },
-    ...(selected ? { source: selected.receipt.source, location: selected.location, ...(session ? { runId: session.state.runId } : {}) } : {}),
-    ...(session ? { observation: { owner: closed ? 'inactive' : 'unknown', processes: closed ? 'closed' : 'unknown', knownCount: new Set(session.state.processes.flatMap(command => [...command.descendants, ...(command.identity ? [command.identity] : [])]).map(identity => `${String(identity.pid)}:${identity.startToken}`)).size }, budget: session.budget.summary() } : {}),
-    ...(deployment ? { deployment } : {}), ...(failure ? { failure } : {}), next: closed ? 'verify' : 'recover' });
+  return report();
 }
 
 export async function runManagedReceiptCommand(options: RunReleaseOptions): Promise<ReleaseReport> {
@@ -166,20 +177,17 @@ export async function runManagedReceiptCommand(options: RunReleaseOptions): Prom
     const stateSource = frozenSource(record(stateValue).source, location);
     await assertHistoricalSource(stateSource, options.signal);
     const state = parseManagedState(stateValue, stateSource, location.anchor.slotId);
-    observation = await inspectManagedRecovery(state, location.paths, options.signal);
-    needsRecovery = observation.owner !== 'inactive' || observation.processes !== 'closed' || state.status !== 'closed' || !!state.pendingPush || Object.values(state.effects).includes('unknown');
+    await assertManagedHistory(location.paths, state);
+    const restored = await restoreManagedTerminal(location.paths, state, { allowReleasedLock: !await pathExists(location.paths.lockPath), ...(options.signal ? { signal: options.signal } : {}) });
+    observation = await inspectManagedRecovery(restored.state, location.paths, options.signal);
+    const locallyReady = await hasManagedDisposition(location.paths, state);
+    needsRecovery = observation.owner !== 'inactive' || observation.processes !== 'closed' || (state.status !== 'closed' && !locallyReady);
     const execution = new Execution(source.root, source.config, options.signal, []);
     refs = await observeRefs(execution, source, observation);
-    const recovered = receipt.report.recovery;
-    const proof = recovered?.observation;
-    for (const [effect, previous, current] of [['developmentPush', proof?.developmentRef, refs.developmentRef], ['releasePush', proof?.releaseRef, refs.releaseRef]] as const) {
+    const published = receipt.report.runId ? await readManagedDisposition(location.paths, receipt.report.runId) : undefined;
+    for (const [effect, current] of [['developmentPush', refs.developmentRef], ['releasePush', refs.releaseRef]] as const) {
       if (effects[effect] !== 'unknown') continue;
-      const witnessed = recovered?.candidateSha === source.sha && proof?.owner === 'inactive' && proof.processes === 'closed'
-        && Number.isFinite(Date.parse(proof.observedAt)) && previous && /^[a-f0-9]{40}$/u.test(previous.sha)
-        && (previous.relation === 'candidate' ? previous.sha === source.sha : previous.relation === 'before' && previous.sha !== source.sha);
-      if (witnessed && current?.relation === 'candidate') effects[effect] = 'already-current';
-      else if (witnessed && current?.relation === 'before') effects[effect] = 'not-current';
-      else needsRecovery = true;
+      if (!published || published.stopped.source.sha !== source.sha || !current || !['candidate', 'superseded'].includes(current.relation)) needsRecovery = true;
     }
     stage = 'deployment';
     const verify = new VercelVerification(source.config, options.transport ?? createTransport(execution), options.signal);
@@ -206,7 +214,7 @@ export async function inspectManagedRecovery(state: ManagedState, paths: Managed
   const controller = new AbortController(), timer = setTimeout(() => controller.abort(), Math.min(30_000, state.source.config.limits.commandMs));
   const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
   const identities = new Map(state.processes.flatMap(command => [...command.descendants, ...(command.identity ? [command.identity] : [])]).map(value => [`${String(value.pid)}:${value.startToken}`, value]));
-  const unresolved = state.processes.filter(command => !hasVerifiedManagedClosure(command));
+  const unresolved = state.processes.filter(command => !hasVerifiedManagedStop(command));
   const pendingIdentities = new Map(unresolved.flatMap(command => [...command.descendants, ...(command.identity ? [command.identity] : [])]).map(value => [`${String(value.pid)}:${value.startToken}`, value]));
   let owner: RecoveryObservation['owner'] = 'unknown';
   let unknown = unresolved.length > 0, running = false;
@@ -214,7 +222,8 @@ export async function inspectManagedRecovery(state: ManagedState, paths: Managed
     try {
       const observed = await reader.readIdentity({ pid: state.coordinator.pid, signal: combined });
       if (observed.status === 'ABSENT') owner = 'inactive';
-      else if (observed.identity.startToken === state.coordinator.startToken) owner = await pathExists(paths.lockPath) ? 'active' : state.status === 'closed' ? 'inactive' : 'unknown';
+      else if (observed.identity.startToken === state.coordinator.startToken) owner = await pathExists(paths.lockPath) ? 'active' : state.status === 'closed' || await hasManagedDisposition(paths, state) ? 'inactive' : 'unknown';
+      else owner = 'inactive';
     } catch { assertActive(signal); }
     // 已见证关闭的原实例不能重新出现；复用完整证据，未闭环实例仍逐个核验且不升为 PASS。
     for (const identity of pendingIdentities.values()) {

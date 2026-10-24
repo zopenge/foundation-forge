@@ -44,7 +44,9 @@ for (const name of ['alpha', 'beta']) {
     limits: { commandMs: 30000, deploymentMs: 1000, pollMs: 20, requestMs: 1000, maxOutputBytes: 4096 } });
   await writeFile(resolve(cwd, '.gitignore'), '.tmp/\nnode_modules/\n');
   await writeFile(resolve(cwd, 'release.config.json'), JSON.stringify(config));
-  await writeFile(resolve(cwd, 'package.json'), JSON.stringify({ name: `consumer-${name}`, private: true, packageManager: `pnpm@${pnpmVersion}` }));
+  const installOnce = 'const fs=require("node:fs");fs.mkdirSync("node_modules",{recursive:true});const p="node_modules/install-attempt";if(!fs.existsSync(p)){fs.writeFileSync(p,"failed once");process.exit(23)}';
+  await writeFile(resolve(cwd, 'package.json'), JSON.stringify({ name: `consumer-${name}`, private: true, packageManager: `pnpm@${pnpmVersion}`,
+    ...(name === 'beta' ? { scripts: { postinstall: `node -e ${JSON.stringify(installOnce)}` } } : {}) }));
   await writeFile(resolve(cwd, 'pnpm-workspace.yaml'), 'packages: []\n');
   await writeFile(resolve(cwd, 'pnpm-lock.yaml'), "lockfileVersion: '9.0'\n\nsettings:\n  autoInstallPeers: true\n  excludeLinksFromLockfile: false\n\nimporters:\n\n  .: {}\n");
   await writeFile(resolve(cwd, 'source.txt'), 'initial\n'); git('add', '.'); git('commit', '-m', 'initial'); git('push', 'origin', 'HEAD:dev', 'HEAD:main');
@@ -59,8 +61,18 @@ for (const name of ['alpha', 'beta']) {
     if (git('diff', '--cached', '--', '.gitignore') !== '' || git('status', '--porcelain=v1', '--untracked-files=no') !== '') throw new Error('CRLF fixture baseline is not clean');
     if (!(await readFile(resolve(cwd, '.gitignore'), 'utf8')).includes('\r\n') || git('diff', 'HEAD', '--', '.gitignore') !== '') throw new Error('CRLF checkout fixture was not materialized');
   }
+  let failed;
+  if (name === 'beta') {
+    failed = await runRelease({ command: 'check', cwd });
+    if (failed.ok || failed.error?.code !== 'COMMAND_FAILED' || failed.stage !== 'install' || failed.processes?.status !== 'closed') throw new Error(`tarball failed-install closure mismatch: ${JSON.stringify(failed.error)}`);
+  }
   const first = await runRelease({ command: 'check', cwd });
   if (!first.ok || first.candidateSha !== sha) throw new Error(`tarball managed check failed: ${JSON.stringify(first.error)}`);
+  if (failed) {
+    if (first.slotId !== failed.slotId || first.executionRoot !== failed.executionRoot) throw new Error('tarball retry changed its owned slot');
+    const history = JSON.parse(await readFile(resolve(cwd, '.tmp/release-slot/history', `${failed.runId}.json`), 'utf8'));
+    if (JSON.parse(history.snapshot.check).report.ok !== false || history.outcome?.error?.code !== 'COMMAND_FAILED') throw new Error('tarball retry lost its failed install outcome');
+  }
   const expected = ['check', sha, first.executionRoot];
   if (JSON.stringify(JSON.parse(first.steps.find(step => step.name === 'check:0')?.stdout ?? 'null')) !== JSON.stringify(expected)) throw new Error('tarball frozen command metadata mismatch');
   const lock = await readFile(resolve(first.executionRoot, 'pnpm-lock.yaml'));
@@ -75,9 +87,10 @@ for (const name of ['alpha', 'beta']) {
     const state = JSON.parse(await readFile(statePath, 'utf8'));
     if (!/^[a-f0-9]{64}$/u.test(state.host?.hostId ?? '')) throw new Error('managed origin was not recorded');
     // 在自有 fixture 中构造旧格式的中断 journal；真实 check 子进程已经退出，不制造悬挂进程。
-    delete state.host; state.status = 'unknown'; const interrupted = state.processes.at(-1);
+    delete state.host; delete state.history; state.schemaVersion = 2; state.status = 'unknown'; const interrupted = state.processes.at(-1);
     if (!interrupted) throw new Error('managed command evidence missing');
-    delete interrupted.closure; interrupted.status = 'identified'; interrupted.observationComplete = false;
+    delete interrupted.closure; delete interrupted.terminalSha256; interrupted.status = 'identified'; interrupted.observationComplete = false;
+    await unlink(resolve(slot, 'terminal.json'));
     const original = JSON.stringify(state); await writeFile(statePath, original);
     const oldLock = JSON.stringify({ pid: state.coordinator.pid, identity: state.coordinator, runId: state.runId, token: randomUUID(), startedAt: new Date().toISOString() });
     await writeFile(resolve(slot, 'run.lock'), oldLock, { flag: 'wx' });
