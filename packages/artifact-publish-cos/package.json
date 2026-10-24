@@ -1,6 +1,6 @@
 {
   "name": "@openge/forge-artifact-publish-cos",
-  "version": "0.1.0-rc.0",
+  "version": "0.1.0",
   "description": "Explicit Tencent COS Provider for bounded immutable artifact publication",
   "type": "module",
   "main": "./dist/index.js",
@@ -28,7 +28,7 @@
   "homepage": "https://github.com/zopenge/foundation-forge#readme",
   "bugs": { "url": "https://github.com/zopenge/foundation-forge/issues" },
   "dependencies": {
-    "@openge/forge-artifact-publish": "workspace:0.1.0-rc.0",
+    "@openge/forge-artifact-publish": "workspace:0.1.0",
     "@openge/forge-path-safety": "workspace:0.1.1",
     "cos-fast-xml-parser": "1.0.0",
     "cos-nodejs-sdk-v5": "3.0.0"
