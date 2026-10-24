@@ -9,13 +9,14 @@ import { retirementDigest, writeRetirementJson } from './retirement-record.js';
 import type { RetirementLease } from './retirement-lease.js';
 
 /** 调用方必须先持有原生 retirement lease；仅此协议的死亡声明可在该锁内接管。 */
-export async function claimRetirement(paths: ManagedPaths, state: ManagedState, snapshotSha256: string, lease: RetirementLease, guard: () => Promise<void>, signal?: AbortSignal) {
+export async function claimRetirement(paths: ManagedPaths, state: ManagedState, snapshotSha256: string, lease: RetirementLease, guard: () => Promise<void>, signal?: AbortSignal,
+  kind: 'retirement-claim' | 'managed-recovery-claim' = 'retirement-claim') {
   await lease.assertOwned();
   await assertPathChain(paths.slotRoot, paths.recoveryLockPath);
   const previous = await readBoundedJson(paths.recoveryLockPath, 65_536);
   if (previous !== undefined) {
     const item = record(previous), identity = record(item.identity), before = await fileIdentity(paths.recoveryLockPath);
-    if (item.schemaVersion !== 1 || item.kind !== 'retirement-claim' || item.runId !== state.runId || item.slotId !== state.slotId
+    if (item.schemaVersion !== 1 || item.kind !== kind || item.runId !== state.runId || item.slotId !== state.slotId
       || item.snapshotSha256 !== snapshotSha256 || typeof item.token !== 'string' || !/^[a-f0-9-]{36}$/u.test(item.token)
       || !Number.isSafeInteger(identity.pid) || typeof identity.startToken !== 'string') throw new ReleaseError('LOCKED', { reason: 'FOREIGN_RECOVERY_CLAIM' });
     // 旧声明只保护本协议的元数据事务。原生 lease 已排除活动事务，不依赖长寿命 API 宿主的 PID 消失。
@@ -23,7 +24,7 @@ export async function claimRetirement(paths: ManagedPaths, state: ManagedState, 
     if (!sameIdentity(before, await fileIdentity(paths.recoveryLockPath)) || retirementDigest(await readBoundedJson(paths.recoveryLockPath)) !== retirementDigest(previous)) throw new ReleaseError('LOCK_OWNERSHIP');
     await unlink(paths.recoveryLockPath);
   }
-  const value = { schemaVersion: 1, kind: 'retirement-claim', runId: state.runId, slotId: state.slotId, snapshotSha256,
+  const value = { schemaVersion: 1, kind, runId: state.runId, slotId: state.slotId, snapshotSha256,
     token: randomUUID(), identity: await currentCoordinator(signal) };
   const staged = resolve(paths.slotRoot, 'retirement-work/claim.json');
   await writeRetirementJson(staged, value, paths, state, guard);

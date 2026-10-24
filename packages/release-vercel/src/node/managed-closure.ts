@@ -9,3 +9,14 @@ export function hasVerifiedManagedClosure(command: ManagedCommand): boolean {
     && owned.scopeId === command.scope.scopeId && owned.binding === command.scope.binding
     && owned.rootIdentity.pid === command.identity.pid && owned.rootIdentity.startToken === command.identity.startToken;
 }
+
+/** 资源停止与正常关闭分别判断；受控终止不能升级历史命令结果。 */
+export function hasVerifiedManagedStop(command: ManagedCommand): boolean {
+  if (hasVerifiedManagedClosure(command)) return true;
+  const closure = command.closure, owned = closure?.ownedScope;
+  return command.status === 'stopped' && command.observationComplete && !!command.identity && !!command.scope && !!closure
+    && ['abort', 'timeout'].includes(closure.requestedTermination ?? '') && Number.isFinite(Date.parse(closure.observedAt))
+    && owned?.status === 'unknown' && owned.reason === 'terminated' && owned.empty === true
+    && owned.scopeId === command.scope.scopeId && owned.binding === command.scope.binding
+    && owned.rootIdentity?.pid === command.identity.pid && owned.rootIdentity.startToken === command.identity.startToken;
+}

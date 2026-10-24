@@ -67,7 +67,7 @@ export async function runWorkspaceRelease(options: RunReleaseOptions): Promise<R
         if (await digest(current) !== configSha256) throw new ReleaseError('CANDIDATE_CHANGED', { reason: 'CONFIG_CHANGED' });
       };
       result = await publishCandidate({ execution, config, sha: candidateSha, signal: options.signal, transport: options.transport, effects, assertFrozen,
-        mutationGuard: async () => { await assertFrozen(); await releaseLock?.assertOwned(); }, stage: async () => {}, checkpoint: async () => {} }, options.command);
+        mutationGuard: async () => { await assertFrozen(); await releaseLock?.assertOwned(); return undefined; }, stage: async () => {}, checkpoint: async () => {} }, options.command);
     }
   } catch (error) { failure = diagnostic(error); }
   const buildReport = (): ReleaseReport => ({ schemaVersion: 2, command: options.command, ok: failure === undefined,

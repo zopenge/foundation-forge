@@ -16,6 +16,8 @@ export interface FrozenSource {
   readonly fetchUrl: string;
 }
 export interface FileIdentity { readonly dev: string; readonly ino: string }
+export interface MetadataFile { readonly identity: FileIdentity; readonly sha256: string }
+export interface ManagedHistoryReference { readonly path: string; readonly file: { readonly identity: FileIdentity; readonly sha256: string } }
 export interface ManagedPaths {
   readonly sourceRoot: string; readonly slotRoot: string; readonly checkoutRoot: string;
   readonly anchorPath: string; readonly ownershipPath: string; readonly statePath: string;
@@ -25,18 +27,20 @@ export interface ManagedPaths {
 export interface RecordedIdentity { readonly pid: number; readonly startToken: string }
 export interface ManagedCommand {
   readonly id: string; readonly name: string;
-  status: 'intent' | 'spawned' | 'identified' | 'closed' | 'unknown';
+  status: 'intent' | 'spawned' | 'identified' | 'closed' | 'stopped' | 'unknown';
   pid?: number; identity?: RecordedIdentity;
   descendants: RecordedIdentity[];
   observationComplete: boolean;
   scope?: { readonly scopeId: string; readonly binding: string };
-  closure?: { readonly observedAt: string; readonly exitCode: number | null; readonly termination: CommandTerminationReason; readonly ownedScope?: ProcessScopeClosure };
+  terminalSha256?: string;
+  closure?: { readonly observedAt: string; readonly exitCode: number | null; readonly termination: CommandTerminationReason; readonly requestedTermination?: 'abort' | 'timeout'; readonly ownedScope?: ProcessScopeClosure };
 }
 export interface ManagedState {
-  readonly schemaVersion: 2; readonly slotId: string; readonly runId: string;
+  readonly schemaVersion: 2 | 3; readonly slotId: string; readonly runId: string;
   readonly source: FrozenSource; readonly command: ReleaseCommand;
   readonly coordinator: RecordedIdentity;
   readonly host?: RetirementHost;
+  readonly history?: readonly ManagedHistoryReference[];
   stage: ReleaseStage; status: 'running' | 'closed' | 'unknown';
   processes: ManagedCommand[];
   effects: ReleaseReport['effects'];
@@ -50,7 +54,7 @@ export interface ManagedAnchor {
 }
 export interface ManagedStateStore {
   read(): Promise<ManagedState | undefined>;
-  writeState(state: ManagedState): Promise<void>;
+  writeState(state: ManagedState, beforeCommit?: (prepared: MetadataFile) => Promise<void>): Promise<void>;
   readReceipt(kind: 'check' | 'publish'): Promise<ManagedReceipt | undefined>;
   writeReceipt(kind: 'check' | 'publish', receipt: ManagedReceipt): Promise<void>;
   writeAnchor(anchor: ManagedAnchor): Promise<void>;
@@ -58,6 +62,7 @@ export interface ManagedStateStore {
 export interface ManagedSlot {
   readonly slotId: string; readonly paths: ManagedPaths; readonly source: FrozenSource;
   readonly lock: OwnedLock; readonly store: ManagedStateStore;
+  assertMetadataOwned(): Promise<void>;
   readonly runId: string; readonly coordinator: RecordedIdentity;
 }
 export interface ExecutionLifecycle {
@@ -72,6 +77,7 @@ export interface ManagedSession {
   readonly steps: ReleaseReport['steps'];
   persist(): Promise<void>;
   assertClosed(): Promise<void>;
+  assertStopped(): Promise<void>;
   executionAt(cwd: string): Execution;
 }
 export interface ExecutionContext {
@@ -79,7 +85,7 @@ export interface ExecutionContext {
   readonly signal: AbortSignal | undefined; readonly transport: ReleaseTransport | undefined;
   readonly effects: ReleaseReport['effects'];
   assertFrozen(): Promise<void>;
-  mutationGuard(): Promise<void>;
+  mutationGuard(effect?: 'developmentPush' | 'releasePush'): Promise<'already-current' | undefined>;
   stage(stage: ReleaseStage): Promise<void>;
   checkpoint(pending?: 'developmentPush' | 'releasePush'): Promise<void>;
 }

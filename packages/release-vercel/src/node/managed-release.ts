@@ -11,6 +11,9 @@ import { assertCheckoutFrozen, prepareCheckout, prepareEnvironment } from './man
 import { publishCandidate } from './publication.js';
 import { diagnostic, readConfig } from './workspace-release.js';
 import { recoveryCommand } from './release-commands.js';
+import { settleManagedSlot } from './managed-recovery.js';
+import { archiveManagedDisposition } from './managed-disposition.js';
+import { assertManagedRemoteSettled } from './managed-remote-state.js';
 
 export async function runManagedRelease(options: RunReleaseOptions): Promise<ReleaseReport> {
   const startedAt = new Date().toISOString();
@@ -34,7 +37,7 @@ export async function runManagedRelease(options: RunReleaseOptions): Promise<Rel
     const original = new Execution(options.cwd, entry, options.signal, []);
     source = await freezeManagedSource(options.cwd, options.configPath ?? 'release.config.json', original);
     await inspectCommitTree(source, original);
-    stage = 'admission'; slot = await openManagedSlot(source, original);
+    stage = 'admission'; await settleManagedSlot(options); slot = await openManagedSlot(source, original);
     session = await createManagedSession(slot, options.command === 'publish' ? 'publish' : 'check', options.signal);
     const currentSession = session, frozen = source;
     let previousPublish;
@@ -50,18 +53,24 @@ export async function runManagedRelease(options: RunReleaseOptions): Promise<Rel
     const assertFrozen = async () => { await assertSourceFrozen(frozen, original); await assertCheckoutFrozen(currentSession); };
     result = await publishCandidate({ execution: session.execution, config: source.config, sha: source.sha, signal: options.signal, transport: options.transport,
       effects: session.state.effects, assertFrozen,
-      mutationGuard: async () => { await assertFrozen(); await currentSession.assertClosed(); await currentSession.budget.sample(); await currentSession.slot.lock.assertOwned(); },
+      mutationGuard: async effect => { await assertFrozen(); await currentSession.assertClosed(); await currentSession.budget.sample(); await currentSession.slot.lock.assertOwned();
+        return assertManagedRemoteSettled(currentSession.slot.paths, currentSession.execution, effect ? { effect, source: frozen } : undefined); },
       stage: async value => { currentSession.state.stage = value; await currentSession.persist(); },
       checkpoint: async pending => { if (pending) currentSession.state.pendingPush = pending; else delete currentSession.state.pendingPush; await currentSession.persist(); } }, options.command === 'publish' ? 'publish' : 'check');
     await assertFrozen(); await session.assertClosed(); await session.budget.sample(); session.state.stage = 'complete';
   } catch (error) { failure = diagnostic(error); }
   if (session) {
-    try { await session.assertClosed(); } catch { closed = false; }
-    retained = !closed || !!session.state.pendingPush || Object.values(session.state.effects).includes('unknown');
+    try { await session.assertStopped(); } catch { closed = false; }
+    retained = !closed;
     session.state.status = retained ? 'unknown' : 'closed';
     try {
       await session.persist();
       await session.slot.store.writeReceipt(options.command === 'publish' ? 'publish' : 'check', { schemaVersion: 2, slotId: session.slot.slotId, source: session.slot.source, report: buildReport() });
+      if (closed) {
+        const completed = session;
+        await completed.assertStopped();
+        await archiveManagedDisposition(completed.slot.paths, completed.state, completed.state, () => completed.slot.lock.assertOwned(), undefined, false, buildReport());
+      }
     } catch (error) { failure ??= diagnostic(error); retained = true; }
   }
   if (slot && !retained) { try { await slot.lock.release(); } catch (error) { failure = diagnostic(error); retained = true; } }

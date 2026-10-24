@@ -60,12 +60,13 @@ it('reconciles a real rejected main push after its coordinator exits without rep
   expect(report, `${JSON.stringify(report.error)}\n${new TextDecoder().decode(result.stderr)}`).toMatchObject({ ok: false, error: { code: 'GIT_FAILED' }, effects: { developmentPush: 'pushed', releasePush: 'unknown' }, processes: { status: 'closed' } });
   expect(f.ref('dev')).toBe(f.sha); expect(f.ref('main')).toBe(f.initial); await waitForOwnerExit(worker);
   const recovered = await runRelease({ cwd: f.cwd, command: 'recover', transport: emptyTransport });
-  expect(recovered, JSON.stringify(recovered.error)).toMatchObject({ ok: true, effects: { developmentPush: 'pushed', releasePush: 'not-current' }, processes: { status: 'closed' } });
+  expect(recovered, JSON.stringify(recovered.error)).toMatchObject({ ok: true, effects: { developmentPush: 'pushed', releasePush: 'unknown' }, processes: { status: 'closed' }, recovery: { observation: { releaseRef: { sha: f.initial, relation: 'before' } } } });
   expect(f.ref('dev')).toBe(f.sha); expect(f.ref('main')).toBe(f.initial);
   await expect(readFile(resolve(f.cwd, '.tmp/release-slot/run.lock'))).rejects.toMatchObject({ code: 'ENOENT' });
   const saved = JSON.parse(await readFile(resolve(f.cwd, '.tmp/release-slot/latest-publish.json'), 'utf8')) as { report: ReleaseReport };
   expect(saved.report.effects.releasePush).toBe('unknown'); expect(saved.report.ok).toBe(false);
-  expect(saved.report.recovery?.observation?.releaseRef).toMatchObject({ sha: f.initial, relation: 'before' });
+  const history = JSON.parse(await readFile(resolve(f.cwd, '.tmp/release-slot/history', `${report.runId}.json`), 'utf8'));
+  expect(JSON.parse(history.snapshot.publish).report).toEqual(saved.report);
 });
 it('keeps an accepted remote push unknown after a real coordinator crash instead of replaying it', { timeout: 720_000 }, async () => {
   const f = await fixture(), marker = resolve(f.root, 'accepted'), barrier = resolve(f.root, 'release-hook');

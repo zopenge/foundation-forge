@@ -36,6 +36,10 @@ const fixture = async ({ legacy = true, maxBytes = 2 ** 31 } = {}) => {
   const state: ManagedState = JSON.parse(await readFile(statePath, 'utf8')) as ManagedState;
   const command = state.processes[0]; if (!command) throw new Error('missing real fixture command');
   command.status = 'identified'; command.observationComplete = false; delete command.closure;
+  delete command.terminalSha256;
+  // 明确模拟没有独立终态协议的旧运行，不能保留新协议的恢复证明。
+  Reflect.set(state, 'schemaVersion', 2);
+  try { await filesystem.unlink(resolve(slot, 'terminal.json')); } catch (error) { if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error; }
   // 模拟旧格式缺少宿主来源以及完成事件未持久化；真实子进程已经由 helper 正常收尾。
   if (legacy) Reflect.deleteProperty(state, 'host');
   await writeFile(statePath, `${JSON.stringify(state)}\n`);
@@ -86,6 +90,8 @@ it('the public command requires an exact run id and normal recovery still preser
   const recovery = await runRelease({ cwd: f.cwd, command: 'recover', transport });
   expect(recovery).toMatchObject({ ok: false, error: { code: 'PROCESS_STATE_UNKNOWN' }, recovery: { reportExists: false } });
   expect(recovery.recovery?.nextCommand).toContain(`retire --run-id ${f.state.runId}`);
+  const normal = await runRelease({ cwd: f.cwd, command: 'check', transport });
+  expect(normal).toMatchObject({ ok: false, error: { code: 'PROCESS_STATE_UNKNOWN', details: { runId: f.state.runId, nextCommand: expect.stringContaining(`retire --run-id ${f.state.runId}`) } } });
 });
 it('resumes after archive persistence and after lock release without rewriting historical evidence', async () => {
   const f = await fixture(), first = await f.run(); await f.run(first.retirement?.originConfirmation); f.reboot();
@@ -121,12 +127,16 @@ it('keeps a live original coordinator and a foreign recovery claim protected', a
   expect(await f.run(active.retirement?.originConfirmation)).toMatchObject({ ok: false, error: { details: { reason: 'OWNER_NOT_INACTIVE' } } });
   await expect(readFile(resolve(f.slot, 'retirement.json'))).rejects.toMatchObject({ code: 'ENOENT' });
 });
-it('keeps retirement blocked when current remote refs cannot reconcile the old candidate', async () => {
+it('retires local resources after a remote successor without requiring Vercel authentication', async () => {
   const f = await fixture(), first = await f.run(); await f.run(first.retirement?.originConfirmation); f.reboot();
   await writeFile(resolve(f.cwd, 'source.txt'), 'later candidate\n'); f.commit(); git(f.cwd, 'push', 'origin', 'HEAD:dev');
-  expect(await f.run()).toMatchObject({ ok: false, error: { details: { reason: 'RETIREMENT_REMOTE_UNRESOLVED' } } });
-  expect(await readFile(resolve(f.slot, 'run.lock'), 'utf8')).toBe(f.lock);
-  await expect(readFile(resolve(f.slot, 'retired', `${f.state.runId}.json`))).rejects.toMatchObject({ code: 'ENOENT' });
+  const unavailable: ReleaseTransport = { api: async () => { throw new Error('Vercel login must not gate local retirement'); }, buildInfo: async () => { throw new Error('no acceptance'); } };
+  const retired = await runManagedRetirement({ ...f.options, transport: unavailable }, () => Promise.resolve(f.getHost()));
+  expect(retired).toMatchObject({ ok: true, retirement: { status: 'retired' } });
+  await expect(readFile(resolve(f.slot, 'run.lock'))).rejects.toMatchObject({ code: 'ENOENT' });
+  const archive = JSON.parse(await readFile(resolve(f.slot, 'retired', `${f.state.runId}.json`), 'utf8'));
+  expect(archive.final.observation.developmentRef.relation).toBe('superseded');
+  expect(archive.snapshot.state).toBe(f.original);
 });
 it('rejects corruption of the recorded boot evidence even when the new values look plausible', async () => {
   const f = await fixture(), first = await f.run(); await f.run(first.retirement?.originConfirmation);
@@ -141,9 +151,9 @@ it('uses recorded original-host evidence without requiring a legacy assertion', 
   f.reboot(); expect(await f.run()).toMatchObject({ ok: true, retirement: { status: 'retired', origin: 'recorded-run-host' } });
 });
 it('never releases a run if archive peak bytes exceed its frozen resource budget', async () => {
-  const f = await fixture({ maxBytes: 131_072 }), first = await f.run();
+  const f = await fixture({ maxBytes: 2_097_152 }), first = await f.run();
   await f.run(first.retirement?.originConfirmation); f.reboot();
-  await writeFile(resolve(f.slot, 'checkout/budget.bin'), Buffer.alloc(131_072));
+  await writeFile(resolve(f.slot, 'checkout/budget.bin'), Buffer.alloc(2_097_152));
   expect(await f.run()).toMatchObject({ ok: false, error: { code: 'BUDGET_EXCEEDED' } });
   expect(await readFile(resolve(f.slot, 'run.lock'), 'utf8')).toBe(f.lock);
 });
@@ -169,14 +179,14 @@ it('resumes its own atomic coordination claim after a real coordinator crash', a
     expect(await readFile(resolve(f.slot, 'run.lock'), 'utf8')).toBe(f.lock);
   } finally { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); await closed; }
 });
-it('retirement distinguishes a reused real PID from the original coordinator without upgrading normal recovery', async () => {
+it('retirement distinguishes a different coordinator instance without upgrading missing child closure', async () => {
   const f = await fixture(), current = await currentCoordinator();
   const historical = { pid: current.pid, startToken: `earlier-instance:${current.startToken}` };
   const state = { ...f.state, coordinator: historical };
   const original = JSON.stringify(state), lock = JSON.stringify({ ...JSON.parse(f.lock), pid: historical.pid, identity: historical });
   await writeFile(f.statePath, original); await writeFile(resolve(f.slot, 'run.lock'), lock);
   const normal = await runRelease({ command: 'recover', cwd: f.cwd, transport });
-  expect(normal).toMatchObject({ ok: false, processes: { status: 'unknown' }, recovery: { observation: { owner: 'unknown' } } });
+  expect(normal).toMatchObject({ ok: false, processes: { status: 'unknown' }, recovery: { observation: { owner: 'inactive' } } });
   const first = await f.run(), prepared = await f.run(first.retirement?.originConfirmation);
   expect(prepared, JSON.stringify(prepared.error)).toMatchObject({ ok: false, retirement: { status: 'prepared' }, error: { details: { reason: 'SUBSEQUENT_BOOT_REQUIRED' } } });
   f.reboot();

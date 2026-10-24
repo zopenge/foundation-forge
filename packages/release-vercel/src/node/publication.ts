@@ -21,7 +21,10 @@ export async function publishCandidate(context: ExecutionContext, command: 'chec
       await context.mutationGuard(); await fetchAndAssertFastForward(execution, config, sha);
       for (const [branch, effect, stage] of [[config.git.developmentBranch, 'developmentPush', 'push-dev'], [config.git.releaseBranch, 'releasePush', 'push-main']] as const) {
         await context.stage(stage); await context.assertFrozen(); assertActive(signal);
-        await verify.project(); await context.mutationGuard();
+        await verify.project();
+        if (await context.mutationGuard(effect) === 'already-current') {
+          effects[effect] = 'already-current'; await context.checkpoint(); continue;
+        }
         effects[effect] = 'unknown'; await context.checkpoint(effect);
         const output = await execution.git(['push', '--porcelain', config.git.remote, `${sha}:refs/heads/${branch}`]);
         effects[effect] = output.split(/\r?\n/u).some(line => line.startsWith('=') && line.includes(`:refs/heads/${branch}\t`)) ? 'already-current' : 'pushed';

@@ -50,7 +50,7 @@ export function parseRetirementRecord(value: unknown): RetirementRecord {
   if (final && (!validRetirementHost(final.host) || !hasSubsequentBoot(item.host, final.host)
     || typeof final.retiredAt !== 'string' || !Number.isFinite(Date.parse(final.retiredAt))
     || record(final.observation).owner !== 'inactive' || !['closed', 'unknown'].includes(String(record(final.observation).processes))
-    || !['developmentRef', 'releaseRef'].every(key => ['candidate', 'before'].includes(String(record(record(final.observation)[key]).relation))))) {
+    || !['developmentRef', 'releaseRef'].every(key => ['candidate', 'before', 'superseded', 'diverged', 'unknown'].includes(String(record(record(final.observation)[key]).relation))))) {
     throw new ReleaseError('SLOT_STATE', { reason: 'RETIREMENT_CESSATION' });
   }
   return value as RetirementRecord;

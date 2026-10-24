@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path';
 import type { ReleaseDiagnostic, ReleaseReport, RunReleaseOptions } from '../contracts.js';
 import type { ManagedState } from './release-context.js';
 import { hasSubsequentBoot, readRetirementHost, validRetirementHost, type RetirementHost } from './retirement-host.js';
-import { assertHistoricalSource, frozenSource, inspectManagedRecovery, observeRefs, readManagedLocation, type ManagedLocation } from './managed-recovery.js';
+import { assertHistoricalSource, frozenSource, inspectManagedRecovery, observeRefsForDisposition, readManagedLocation, type ManagedLocation } from './managed-recovery.js';
 import { parseManagedState } from './managed-state.js';
 import { assertActive, record, ReleaseError } from './errors.js';
 import { assertManagedPaths, assertManagementUntracked } from './managed-paths.js';
@@ -13,7 +13,6 @@ import { assertRetirementSnapshot, captureRetirementSnapshot, hasFinalizedRetire
 import { claimRetirement } from './retirement-claim.js';
 import { diagnostic } from './workspace-release.js';
 import { Execution } from './execution.js';
-import { createTransport, VercelVerification } from './vercel.js';
 import { recoveryCommand } from './release-commands.js';
 import { identityReader } from './process-identities.js';
 
@@ -92,10 +91,7 @@ export async function runManagedRetirement(options: RunReleaseOptions, hostReade
       if (retirementDigest(await readRetirementRecord(checkpointPath, paths)) !== retirementDigest(selected)) await writeRetirementJson(checkpointPath, selected, paths, current, writeGuard);
       retirement = { status: 'prepared', historicalVerification: 'unknown', origin: selected.origin };
       if (!hasSubsequentBoot(selected.host, host)) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'SUBSEQUENT_BOOT_REQUIRED', baselineUptimeSeconds: selected.host.uptimeSeconds, observedUptimeSeconds: host.uptimeSeconds });
-      const refs = await observeRefs(execution, source, observation);
-      if (![refs.developmentRef, refs.releaseRef].every(ref => ref && ['candidate', 'before'].includes(ref.relation))) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'RETIREMENT_REMOTE_UNRESOLVED' });
-      const verification = new VercelVerification(source.config, options.transport ?? createTransport(execution), options.signal);
-      await verification.project(); await verification.find(source.sha);
+      const refs = await observeRefsForDisposition(execution, source, observation);
       await assertHistoricalSource(source, options.signal); await writeGuard();
       await assertPathChain(paths.slotRoot, dirname(archivePath)); await mkdir(dirname(archivePath), { recursive: true });
       evidence = sealRetirementRecord({ ...selected, final: { host, retiredAt: new Date().toISOString(), observation: refs } });

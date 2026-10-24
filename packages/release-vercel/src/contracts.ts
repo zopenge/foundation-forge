@@ -54,7 +54,7 @@ export interface ReleaseStep {
   readonly exitCode?: number | null;
 }
 export type ReleasePushEffect = 'not-attempted' | 'pushed' | 'already-current' | 'unknown' | 'not-current';
-export type ReleaseRefRelation = 'candidate' | 'before' | 'after' | 'diverged' | 'unknown';
+export type ReleaseRefRelation = 'candidate' | 'before' | 'superseded' | 'diverged' | 'unknown';
 export interface ReleaseRecoveryObservation {
   readonly owner: 'inactive' | 'active' | 'unknown';
   readonly processes: 'closed' | 'running' | 'unknown';
