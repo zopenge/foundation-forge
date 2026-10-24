@@ -1,7 +1,8 @@
 const matchesExpectedConfiguration = (configuration, expected) => configuration?.type === 'github'
   && configuration.file === expected.file
   && configuration.repository === expected.repository
-  && configuration.environment === expected.environment;
+  && configuration.environment === expected.environment
+  && Array.isArray(configuration.permissions) && configuration.permissions.includes('createPackage');
 
 export const redactSecrets = (value, secrets) => secrets.reduce(
   (result, secret) => secret === '' ? result : result.replaceAll(secret, '[REDACTED]'),

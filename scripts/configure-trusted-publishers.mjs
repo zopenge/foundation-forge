@@ -3,6 +3,8 @@ import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 
 import { readMaskedOneTimePassword } from './bootstrap-otp.mjs';
+import { npmAuthenticationArguments, parseReleaseAuthenticationArguments,
+  readReleaseAuthentication, removeNpmOtp } from './release-authentication.mjs';
 import {
   createPackageManagerInvocation,
   findNpmCliPath,
@@ -17,12 +19,14 @@ import {
 import { discoverWorkspacePackageModel, parseJsonDocuments } from './workspace-packages.mjs';
 
 export const configureTrustedPublishers = async ({ model, policy, packageNames: selectedNames = [],
-  readOtp = readMaskedOneTimePassword,
-  execute = (invocation, env) => spawnSync(invocation.command, invocation.args, {
+  authMode = 'otp', environment = process.env, input = process.stdin, output = process.stdout,
+  readOtp = () => readMaskedOneTimePassword(input, output),
+  execute = (invocation, env, { stdio }) => spawnSync(invocation.command, invocation.args, {
     cwd: model.repositoryRoot, encoding: 'utf8', env, shell: false, windowsHide: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio,
   }),
 }) => {
+  const authenticationArguments = npmAuthenticationArguments(authMode);
   const byName = new Map(model.packages.map((value) => [value.name, value]));
   const packageNames = selectedNames.length === 0
     ? model.packages.map(({ name }) => name)
@@ -32,6 +36,8 @@ export const configureTrustedPublishers = async ({ model, policy, packageNames: 
   }
 
   let otp;
+  let authenticated = false;
+  let npmEnvironment = authMode === 'web' ? removeNpmOtp(environment) : environment;
   const commandPrefix = [
     'exec',
     '--yes',
@@ -40,13 +46,13 @@ export const configureTrustedPublishers = async ({ model, policy, packageNames: 
     'npm',
     'trust',
   ];
-  const runNpmTrust = (args) => {
-    const invocation = createPackageManagerInvocation('npm', [...commandPrefix, ...args], {
+  const runNpmTrust = (args, interactive = false) => {
+    const invocation = createPackageManagerInvocation('npm', [...commandPrefix, ...args,
+      ...(interactive ? authenticationArguments : [])], {
       npmCliPath: process.platform === 'win32' ? findNpmCliPath() : undefined,
     });
-    const result = execute(invocation, createNpmEnvironment({ ...process.env,
-      ...(otp === undefined ? {} : { NPM_CONFIG_OTP: otp }),
-    }));
+    const result = execute(invocation, createNpmEnvironment(npmEnvironment),
+      { stdio: interactive ? 'inherit' : ['ignore', 'pipe', 'pipe'] });
     if (result.status !== 0) {
       const message = result.stderr || result.stdout || `npm trust exited with code ${String(result.status)}`;
       throw new Error(redactSecrets(message, [otp ?? '']));
@@ -64,7 +70,11 @@ export const configureTrustedPublishers = async ({ model, policy, packageNames: 
   };
   const results = await ensureTrustedPublisherConfigurations({
     configure: async (name) => {
-      otp ??= await readOtp();
+      if (!authenticated) {
+        npmEnvironment = await readReleaseAuthentication({ authMode, environment, input, output, readOtp });
+        otp = npmEnvironment.NPM_CONFIG_OTP;
+        authenticated = true;
+      }
       runNpmTrust([
         'github',
         name,
@@ -76,8 +86,8 @@ export const configureTrustedPublishers = async ({ model, policy, packageNames: 
         expected.environment,
         '--allow-publish',
         '--yes',
-        '--json',
-      ]);
+        ...(authMode === 'web' ? [] : ['--json']),
+      ], authMode === 'web');
     },
     expected,
     listConfigurations,
@@ -91,10 +101,11 @@ export const configureTrustedPublishers = async ({ model, policy, packageNames: 
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
-  const args = parseReleaseArguments(process.argv.slice(2));
+  const { authMode, args: remaining } = parseReleaseAuthenticationArguments(process.argv.slice(2));
+  const args = parseReleaseArguments(remaining);
   if (args.logs || args.mode !== undefined || args.retry || args.sha !== undefined) {
-    throw new Error('configure-trusted-publishers accepts only repeatable --package options');
+    throw new Error('configure-trusted-publishers accepts only repeatable --package and --auth-mode options');
   }
   const [policy, model] = await Promise.all([loadReleasePolicy(repositoryRoot), discoverWorkspacePackageModel({ repositoryRoot })]);
-  await configureTrustedPublishers({ model, policy, packageNames: args.packages });
+  await configureTrustedPublishers({ model, policy, packageNames: args.packages, authMode });
 }

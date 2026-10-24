@@ -25,11 +25,11 @@ test('已发布后续验仅补齐 trust 与验证，拒绝已变化的 dist-tag'
   report.targets[0].publish = 'succeeded';
   const path = await writeReleaseReport(model.repositoryRoot, report);
   const actions = [];
-  const options = { model, policy: {}, reportPath: path,
+  const options = { model, policy: {}, reportPath: path, authMode: 'web',
     captureBinding: async () => binding,
     readTag: async () => binding.commit,
     readMetadata: async () => ({ 'dist-tags': { next: '1.0.0-rc.0' }, versions: { '1.0.0-rc.0': {} } }),
-    configure: async () => { actions.push('trust'); },
+    configure: async ({ authMode }) => { assert.equal(authMode, 'web'); actions.push('trust'); },
     verify: async ({ onEvent }) => {
       actions.push('verify');
       await onEvent({ stage: 'registry', state: 'succeeded' });

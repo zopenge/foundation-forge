@@ -34,7 +34,7 @@ test('npm trust 成功时仍显示剩余 warning 并脱敏', async (context) => 
   await configureTrustedPublishers({ model: { packages: [{ name: '@example/pkg' }] },
     policy: { environment: 'npm', workflow: 'release.yml', githubRepository: 'example/project', npmTrustVersion: '11.19.1' },
     execute: () => ({ status: 0, stderr: 'npm warn user option npm_secret\n',
-      stdout: JSON.stringify([{ type: 'github', environment: 'npm', file: 'release.yml', repository: 'example/project' }]) }),
+      stdout: JSON.stringify([{ type: 'github', environment: 'npm', file: 'release.yml', repository: 'example/project', permissions: ['createPackage'] }]) }),
   });
   assert.match(output.join(''), /npm warn user option \[REDACTED\]/u);
 });
@@ -73,7 +73,57 @@ test('已配置 Trusted Publisher 只回读，不再次请求 OTP', async () => 
     readOtp: async () => assert.fail('已有配置不应读取 OTP'),
     execute: (invocation) => {
       assert.ok(invocation.args.includes('list'));
-      return { status: 0, stdout: JSON.stringify([{ type: 'github', environment: 'npm', file: 'release.yml', repository: 'example/project' }]) };
+      return { status: 0, stdout: JSON.stringify([{ type: 'github', environment: 'npm', file: 'release.yml', repository: 'example/project', permissions: ['createPackage'] }]) };
+    },
+  });
+  assert.deepEqual(result, [{ action: 'unchanged', name: '@example/pkg' }]);
+});
+
+for (const readbackMatches of [true, false]) test(
+  `网页 trust 写入连接终端且必须另行回读确认：${readbackMatches}`, async () => {
+    const { configureTrustedPublishers } = await import('../configure-trusted-publishers.mjs');
+    const policy = { environment: 'npm', workflow: 'release.yml',
+      githubRepository: 'example/project', npmTrustVersion: '11.19.1' };
+    let written = false;
+    const actions = [];
+    const operation = configureTrustedPublishers({ model: { packages: [{ name: '@example/pkg' }] },
+      policy, authMode: 'web', input: { isTTY: true }, output: { isTTY: true },
+      environment: { PATH: 'fixture', npm_config_otp: '123456' },
+      readOtp: () => assert.fail('网页 trust 不应读取 OTP'),
+      execute: (invocation, environment, { stdio } = {}) => {
+        assert.equal(environment.npm_config_otp, undefined);
+        if (invocation.args.includes('list')) {
+          assert.deepEqual(stdio, ['ignore', 'pipe', 'pipe']);
+          assert.ok(invocation.args.includes('--json'));
+          actions.push('list');
+          return { status: 0, stdout: JSON.stringify(written && readbackMatches
+            ? [{ type: 'github', environment: 'npm', file: 'release.yml', repository: 'example/project', permissions: ['createPackage'] }] : []) };
+        }
+        assert.equal(stdio, 'inherit');
+        assert.ok(invocation.args.includes('--auth-type=web'));
+        assert.ok(invocation.args.includes('--browser=false'));
+        assert.ok(invocation.args.includes('--otp='));
+        assert.ok(invocation.args.includes('--json=false'));
+        assert.equal(invocation.args.includes('--json'), false);
+        actions.push('write'); written = true;
+        return { status: 0, stdout: null, stderr: null };
+      },
+    });
+    if (readbackMatches) assert.deepEqual(await operation, [{ action: 'configured', name: '@example/pkg' }]);
+    else await assert.rejects(operation, /trusted publisher verification failed/iu);
+    assert.deepEqual(actions, ['list', 'write', 'list']);
+  });
+
+test('网页模式已有 trust 时只回读，不要求交互终端', async () => {
+  const { configureTrustedPublishers } = await import('../configure-trusted-publishers.mjs');
+  const result = await configureTrustedPublishers({ model: { packages: [{ name: '@example/pkg' }] },
+    policy: { environment: 'npm', workflow: 'release.yml', githubRepository: 'example/project' },
+    authMode: 'web', input: { isTTY: false }, output: { isTTY: false },
+    readOtp: () => assert.fail('已有 trust 不应认证'),
+    execute: (invocation) => {
+      assert.ok(invocation.args.includes('list'));
+      return { status: 0, stdout: JSON.stringify([{ type: 'github', environment: 'npm',
+        file: 'release.yml', repository: 'example/project', permissions: ['createPackage'] }]) };
     },
   });
   assert.deepEqual(result, [{ action: 'unchanged', name: '@example/pkg' }]);

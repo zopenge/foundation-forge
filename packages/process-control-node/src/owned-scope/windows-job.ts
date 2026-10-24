@@ -1,8 +1,9 @@
 import { ProcessControlError, processControlErrorCodes, type ProcessIdentity } from '@openge/forge-process-control';
+import { performance } from 'node:perf_hooks';
+import { setTimeout as delay } from 'node:timers/promises';
 import { loadOwnedNative } from './native-loader.js';
 import type { ScopeBackend } from './backend.js';
-import type { SupervisorPort } from './supervisor.js';
-export async function createWindowsJob(port: SupervisorPort): Promise<ScopeBackend> {
+export async function createWindowsJob(): Promise<ScopeBackend> {
   const k = await loadOwnedNative('win32'), lib = k.load('kernel32.dll');
   const basic = k.struct({ processTimeLimit: 'int64_t', jobTimeLimit: 'int64_t', flags: 'uint32_t', minWorkingSet: 'size_t', maxWorkingSet: 'size_t', processLimit: 'uint32_t', affinity: 'uintptr_t', priority: 'uint32_t', scheduling: 'uint32_t' });
   const io = k.struct({ readCount: 'uint64_t', writeCount: 'uint64_t', otherCount: 'uint64_t', readBytes: 'uint64_t', writeBytes: 'uint64_t', otherBytes: 'uint64_t' });
@@ -46,49 +47,63 @@ export async function createWindowsJob(port: SupervisorPort): Promise<ScopeBacke
       if (!assign(job, processHandle)) throw fail('ASSIGN_JOB');
     },
     bind: async identity => { if (!actual || actual.pid !== identity.pid || actual.startToken !== identity.startToken) throw new ProcessControlError(processControlErrorCodes.scopeBinding, { reason: 'ROOT_IDENTITY' }); },
-    empty: async rootExited => {
+    empty: async (rootExited, budget) => {
       if (!job || !actual) throw fail('QUERY_STATE');
+      const rootIdentity = actual;
       const value = { userTime: 0, kernelTime: 0, periodUser: 0, periodKernel: 0, faults: 0, total: 0, active: 0, terminated: 0 };
-      const expected = rootExited ? 0 : 1, deadline = Date.now() + Math.min(1000, port.terminationTimeoutMs);
+      const expected = rootExited ? 0 : 1;
+      const handles = new Map<number, bigint>();
       const readMembers = () => {
         const list = { assigned: 0, count: 0, ids: Array<bigint>(4096).fill(0n) };
         if (!members(job, 3, list, k.sizeof(processList), null) || list.count !== list.assigned || list.count > 4096) throw fail('QUERY_JOB_MEMBERS');
         return list;
       };
-      const rootOnly = (list: ReturnType<typeof readMembers>) => list.count === expected && (rootExited || Number(list.ids[0]) === actual?.pid);
-      for (;;) {
+      const rootOnly = (list: ReturnType<typeof readMembers>) => list.count === expected && (rootExited || Number(list.ids[0]) === rootIdentity.pid);
+      const inspect = async () => { for (;;) {
+        if (budget.signal?.aborted) throw new ProcessControlError(processControlErrorCodes.scopeUnknown, { stage: 'JOB_QUERY_ABORTED' });
         if (!query(job, 1, value, k.sizeof(accounting), null)) throw fail('QUERY_JOB');
-        if (value.active === expected) return true;
+        if (value.active === expected && handles.size === 0) return true;
         const list = readMembers();
-        if (!rootExited && !list.ids.slice(0, list.count).some(pid => Number(pid) === actual?.pid)) throw fail('JOB_ROOT_MEMBERSHIP');
+        if (!rootExited && !list.ids.slice(0, list.count).some(pid => Number(pid) === rootIdentity.pid)) throw fail('JOB_ROOT_MEMBERSHIP');
         for (const pid of list.ids.slice(0, list.count)) {
-          if (!rootExited && Number(pid) === actual.pid) continue;
+          if (!rootExited && Number(pid) === rootIdentity.pid) continue;
+          if (handles.has(Number(pid))) continue;
           const handle = open(0x1000 | 0x100000, 0, Number(pid));
           if (!handle) {
             // 已删除实例不能打开；只有再次取得完整的 root-only Job 表才可继续，不以 PID 缺失代替关闭证据。
             if (Number(lastError()) !== 87 || !rootOnly(readMembers())) throw fail('JOB_MEMBER_INSTANCE');
             break;
           }
-          let active = false;
-          try {
-            const belongs = [0];
-            if (!inJob(handle, job, belongs) || belongs[0] !== 1) throw fail('JOB_MEMBER_OWNERSHIP');
+          handles.set(Number(pid), handle);
+          const belongs = [0];
+          if (!inJob(handle, job, belongs) || belongs[0] !== 1) throw fail('JOB_MEMBER_OWNERSHIP');
+        }
+        let active = false;
+        for (const [pid, handle] of handles) {
             const state = Number(wait(handle, 0));
             if (state !== 0 && state !== 258) throw fail('JOB_MEMBER_WAIT');
             if (state === 258) {
               // ExitProcess 的终止状态可先于进程对象触发；STILL_ACTIVE 之外的状态已证明退出。
               const code = [0];
               if (!exitCode(handle, code)) throw fail('JOB_MEMBER_EXIT_STATUS');
-              active = code[0] === 259;
+              if (code[0] === 259) { active = true; continue; }
             }
-          } catch (error) { close(handle); throw error; }
           if (!close(handle)) throw fail('CLOSE_MEMBER_HANDLE');
-          if (active) return false;
+          handles.delete(pid);
         }
-        // 完整成员表或稳定句柄已证明没有存活后代，才等待 accounting 同步；存活成员没有宽限。
-        if (Date.now() >= deadline) throw fail('JOB_ACCOUNTING_DEADLINE');
-        await new Promise(accept => setTimeout(accept, 10));
+        const remaining = budget.deadline - performance.now();
+        if (remaining <= 0) { if (active) return false; throw fail('JOB_ACCOUNTING_DEADLINE'); }
+        // 已打开实例保持句柄直到退出，不能因后续 PID 列表暂时缺失而遗忘仍存活的实例。
+        await delay(Math.min(10, remaining), undefined, { signal: budget.signal });
+      } };
+      const outcome = await inspect().then(result => ({ ok: true as const, result }), (error: unknown) => ({ ok: false as const, error }));
+      let cleanupError: unknown;
+      for (const handle of handles.values()) {
+        try { if (!close(handle)) throw fail('CLOSE_MEMBER_HANDLE'); } catch (error) { cleanupError ??= error; }
       }
+      if (!outcome.ok) throw outcome.error;
+      if (cleanupError) throw cleanupError;
+      return outcome.result;
     },
     force: async () => { if (job && !terminate(job, 125)) throw fail('TERMINATE_JOB'); },
     dispose: async () => {

@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import type { OwnedProcessCompletion, OwnedProcessLaunchRequest, OwnedProcessOutput, OwnedProcessScope, ProcessIdentity, ProcessScopeClosure } from '@openge/forge-process-control';
 import { ProcessControlError, processControlErrorCodes } from '@openge/forge-process-control';
@@ -30,13 +31,22 @@ export function startSupervisor(input: OwnedProcessLaunchRequest, platform: 'win
   let helperExit: { code: number | null; signal: string | null } | undefined;
   let directExit: { exitCode: number | null; signal: string | null } | undefined, finishing: Promise<void> | undefined;
   let finalReason: ProcessScopeClosure['reason'] = 'normal';
+  let closingDeadline: number | undefined, forced: Promise<void> | undefined;
+  const closingController = new AbortController();
+  const forceOnce = () => {
+    if (!forced && backend) { forced = backend.force(); void forced.catch(() => {}); }
+    return forced ?? Promise.resolve();
+  };
   const scopeError = (reason: string) => new ProcessControlError(processControlErrorCodes.scopeUnknown, { reason });
   const active = (signal?: AbortSignal) => { if (signal?.aborted || finishing || done) throw scopeError('INACTIVE'); };
   const rpc: SupervisorPort['rpc'] = (type, payload) => {
     if (!child?.connected) return Promise.reject(scopeError('CHANNEL_CLOSED'));
     const id = ++requestId;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { pending.delete(id); reject(scopeError('CONTROL_DEADLINE')); }, type === 'stop' || type === 'finish' || type === 'inspect' ? request.terminationTimeoutMs : request.startupTimeoutMs);
+      const configured = type === 'stop' || type === 'finish' || type === 'inspect' ? request.terminationTimeoutMs : request.startupTimeoutMs;
+      const remaining = closingDeadline === undefined ? configured : Math.min(configured, closingDeadline - performance.now());
+      if (remaining <= 0) { reject(scopeError('CONTROL_DEADLINE')); return; }
+      const timer = setTimeout(() => { pending.delete(id); reject(scopeError('CONTROL_DEADLINE')); }, remaining);
       pending.set(id, { resolve, reject, timer });
       child?.send(frame(key, ++outgoing, type, payload, id), error => {
         if (error) { const item = pending.get(id); if (item) { clearTimeout(item.timer); pending.delete(id); item.reject(scopeError('CONTROL_SEND')); } }
@@ -52,12 +62,25 @@ export function startSupervisor(input: OwnedProcessLaunchRequest, platform: 'win
   const waitClose = async () => {
     if (!child || rootExited) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    try { await Promise.race([closed.promise, new Promise<never>((_accept, reject) => { timer = setTimeout(() => reject(scopeError('CLOSE_DEADLINE')), request.terminationTimeoutMs); })]); }
+    const remaining = (closingDeadline ?? performance.now() + request.terminationTimeoutMs) - performance.now();
+    if (remaining <= 0) throw scopeError('CLOSE_DEADLINE');
+    try { await Promise.race([closed.promise, new Promise<never>((_accept, reject) => { timer = setTimeout(() => reject(scopeError('CLOSE_DEADLINE')), remaining); })]); }
     finally { clearTimeout(timer); }
   };
   const finish = (reason: ProcessScopeClosure['reason']): Promise<void> => {
-    if (finishing) return finishing;
+    if (finishing) {
+      if (!done && reason !== 'normal') {
+        if (finalReason === 'normal') finalReason = reason;
+        closingController.abort(); startupController.abort();
+        void forceOnce().catch(() => {});
+      }
+      return finishing;
+    }
     finalReason = reason;
+    const startedClosing = performance.now();
+    closingDeadline = startedClosing + request.terminationTimeoutMs;
+    // 沿用最多一秒的 Windows 收尾观察上限，并给强制清理与最终空集合证明保留至少一半预算。
+    const naturalDeadline = startedClosing + Math.min(1000, request.terminationTimeoutMs / 2);
     finishing = (async () => {
       let empty: boolean | undefined;
       clearTimeout(startup);
@@ -66,20 +89,21 @@ export function startSupervisor(input: OwnedProcessLaunchRequest, platform: 'win
         await initialization;
         if (reason === 'normal') {
           if (!backend || !identity || !authorized || !directExit) throw scopeError('MISSING_CLOSURE');
-          // 直接作业已 close；仍有成员就是前台契约违反，不能等待它自行结束后升级为正常。
-          if (!await backend.empty(false)) { finalReason = 'descendants-remained'; await backend.force(); }
+          const drained = await backend.empty(false, { deadline: naturalDeadline, signal: closingController.signal });
+          if (finalReason !== 'normal') await forceOnce();
+          else if (!drained) { finalReason = 'descendants-remained'; await forceOnce(); }
           else await rpc('finish');
-        } else await backend?.force();
+        } else await forceOnce();
         if (!rootExited && finalReason !== 'normal' && child && (platform === 'win32' || !backend)) child.kill('SIGKILL');
         await waitClose();
         if (finalReason === 'normal' && (helperExit?.code !== 0 || helperExit.signal !== null)) finalReason = 'owner-lost';
-        if (backend) empty = await backend.empty(true);
+        if (backend) empty = await backend.empty(true, { deadline: closingDeadline });
         if (empty !== true) finalReason = finalReason === 'normal' ? 'provider-failed' : finalReason;
       } catch {
         if (finalReason === 'normal') finalReason = 'provider-failed';
-        try { await backend?.force(); } catch { /* 仍保留未知，关闭 Job 句柄会执行其生命周期策略。 */ }
+        try { await forceOnce(); } catch { /* 仍保留未知，关闭 Job 句柄会执行其生命周期策略。 */ }
         if (!rootExited && (platform === 'win32' || !backend)) child?.kill('SIGKILL');
-        try { await waitClose(); if (backend) empty = await backend.empty(true); } catch { empty = undefined; }
+        try { await waitClose(); if (backend) empty = await backend.empty(true, { deadline: closingDeadline }); } catch { empty = undefined; }
       } finally {
         try { await backend?.dispose(); } catch { finalReason = 'provider-failed'; empty = undefined; }
         done = true;
