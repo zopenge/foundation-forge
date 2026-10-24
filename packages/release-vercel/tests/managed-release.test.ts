@@ -8,6 +8,7 @@ import { gitRoutingParameters } from './helpers/git-routing.js';
 import { observeWindowsJobMembers } from '../../process-control-node/tests/helpers/windows-job-observer.js';
 
 const lifecycleFailures = vi.hoisted((): { phase: string; name: string; code?: string; reason?: string; syscall?: string; entry?: string }[] => []);
+const commandFailures = vi.hoisted((): { durationMs: number; identityBudgetMs: number; owned: boolean; termination: string; operation?: string }[] => []);
 function recordLifecycleFailure(phase: string, error: unknown): void {
   if (!error || typeof error !== 'object') { lifecycleFailures.push({ phase, name: typeof error }); return; }
   const code: unknown = Reflect.get(error, 'code'), details: unknown = Reflect.get(error, 'details');
@@ -28,6 +29,10 @@ vi.mock('@openge/forge-command-runner/node', async importOriginal => {
     return { ...runner, run: async (...parameters: Parameters<typeof runner.run>) => {
       const result = await runner.run(...parameters);
       for (const diagnostic of result.diagnostics) recordLifecycleFailure(diagnostic.code, diagnostic.cause ?? { code: diagnostic.code });
+      if (result.terminationReason !== 'exit') commandFailures.push({ durationMs: result.durationMs,
+        identityBudgetMs: args[0].identityAcquisition.timeoutMs, owned: parameters[0].ownedScope !== undefined,
+        termination: result.terminationReason,
+        ...(parameters[0].command === 'git' && parameters[0].args?.[4] !== undefined ? { operation: parameters[0].args[4] } : {}) });
       return result;
     }, start: (...parameters: Parameters<typeof runner.start>) => {
       try {
@@ -50,6 +55,7 @@ vi.mock('../src/node/managed-state.js', async importOriginal => {
 let scopeObservation: Awaited<ReturnType<typeof observeWindowsJobMembers>> | undefined;
 beforeEach(async () => {
   lifecycleFailures.length = 0;
+  commandFailures.length = 0;
   if (process.platform === 'win32' && process.arch === 'x64') scopeObservation = await observeWindowsJobMembers();
 });
 
@@ -134,7 +140,7 @@ it('publishes the exact managed SHA to two real refs and runs frozen acceptance'
     throw new Error('unexpected fixture API path');
   }, buildInfo: async () => ({ revision: sha }) };
   const report = await run({ cwd: f.cwd, command: 'publish', transport });
-  expect(report, JSON.stringify({ error: report.error, lifecycleFailures })).toMatchObject({ ok: true, candidateSha: sha, stage: 'complete', effects: { developmentPush: 'pushed', releasePush: 'pushed' }, processes: { status: 'closed' }, budget: { observationsComplete: true } });
+  expect(report, JSON.stringify({ error: report.error, lifecycleFailures, commandFailures })).toMatchObject({ ok: true, candidateSha: sha, stage: 'complete', effects: { developmentPush: 'pushed', releasePush: 'pushed' }, processes: { status: 'closed' }, budget: { observationsComplete: true } });
   expect(f.ref('dev')).toBe(sha); expect(f.ref('main')).toBe(sha); expect(git(f.cwd, 'branch', '--show-current')).toBe('dev');
   expect(await readFile(resolve(f.cwd, 'user-note'), 'utf8')).toBe('unrelated');
   expect(JSON.parse(report.steps.find(step => step.name === 'acceptance:0')?.stdout ?? '')).toEqual(['publish', sha, f.config.vercel.productionUrl, deployment.id]);
