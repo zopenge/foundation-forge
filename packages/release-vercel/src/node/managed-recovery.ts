@@ -35,18 +35,18 @@ interface ReceiptOutcome {
   readonly startedAt: string; readonly source?: FrozenSource; readonly location?: ManagedLocation; readonly runId?: string;
   readonly stage: ReleaseStage; readonly effects: ReleaseReport['effects']; readonly steps: ReleaseReport['steps']; readonly failure?: ReleaseDiagnostic;
   readonly observation?: RecoveryObservation; readonly refs?: ReleaseRecoveryObservation; readonly deployment?: ReleaseDeployment; readonly budget?: ReleaseBudget;
-  readonly next?: string; readonly kind?: 'publish' | 'check';
+  readonly next?: string; readonly kind?: 'publish' | 'check'; readonly reportExists?: boolean;
 }
 function receiptReport(options: RunReleaseOptions, outcome: ReceiptOutcome): ReleaseReport {
   const { source, location } = outcome;
   return { schemaVersion: 2, command: options.command, ok: outcome.failure === undefined, startedAt: outcome.startedAt, finishedAt: new Date().toISOString(),
     stage: outcome.stage, steps: outcome.steps, effects: { ...outcome.effects }, ...(outcome.runId ? { runId: outcome.runId } : {}),
     ...(source && location ? { sourceRoot: source.root, executionRoot: location.paths.checkoutRoot, slotId: location.anchor.slotId, candidateSha: source.sha, configSha256: source.configSha256, configPath: source.configPath,
-      recovery: { candidateSha: source.sha, reportPath: resolve(location.paths.slotRoot, `latest-${outcome.kind ?? 'publish'}.json`), nextCommand: recoveryCommand(outcome.next ?? 'verify', source), ...(outcome.refs ? { observation: outcome.refs } : {}) } } : {}),
+      recovery: { candidateSha: source.sha, reportPath: resolve(location.paths.slotRoot, `latest-${outcome.kind ?? 'publish'}.json`), nextCommand: recoveryCommand(outcome.next ?? 'verify', source), ...(outcome.reportExists === undefined ? {} : { reportExists: outcome.reportExists }), ...(outcome.refs ? { observation: outcome.refs } : {}) } } : {}),
     ...(outcome.observation ? { processes: { status: outcome.observation.processes, knownCount: outcome.observation.knownCount } } : {}),
     ...(outcome.budget ? { budget: outcome.budget } : {}), ...(outcome.deployment ? { deployment: outcome.deployment } : {}), ...(outcome.failure ? { error: outcome.failure } : {}) };
 }
-async function observeRefs(execution: Execution, source: FrozenSource, observation: RecoveryObservation): Promise<ReleaseRecoveryObservation> {
+export async function observeRefs(execution: Execution, source: FrozenSource, observation: RecoveryObservation): Promise<ReleaseRecoveryObservation> {
   const refs = await remoteRefs(execution, source.config);
   const development = refs[source.config.git.developmentBranch] ?? '', release = refs[source.config.git.releaseBranch] ?? '';
   return { owner: observation.owner, processes: observation.processes, observedAt: new Date().toISOString(),
@@ -108,10 +108,12 @@ async function recoverManagedPublication(options: RunReleaseOptions): Promise<Re
     }
   } catch (error) { failure = diagnostic(error); }
   finally { if (recovery) { try { await recovery.claim.release(); } catch (error) { failure = diagnostic(error); } } }
-  return receiptReport(options, { startedAt, stage: failure ? 'recover' : 'complete', steps: [], effects,
+  let reportExists: boolean | undefined;
+  if (location) { try { reportExists = await pathExists(resolve(location.paths.slotRoot, state?.command === 'check' ? 'latest-check.json' : 'latest-publish.json')); } catch { /* 存在性未知时省略此字段，不把路径文本当作文件证据。 */ } }
+  return receiptReport(options, { startedAt, stage: failure ? 'recover' : 'complete', steps: [], effects, ...(reportExists === undefined ? {} : { reportExists }),
     ...(source ? { source } : {}), ...(location ? { location } : {}), ...(state ? { runId: state.runId, kind: state.command === 'check' ? 'check' : 'publish' } : {}),
     ...(observation ? { observation } : {}), ...(refs ? { refs } : {}), ...(budget ? { budget: budget.summary() } : {}), ...(deployment ? { deployment } : {}), ...(failure ? { failure } : {}),
-    next: failure ? 'recover' : effects.releasePush === 'pushed' || effects.releasePush === 'already-current' ? 'verify' : 'publish' });
+    next: failure ? failure.details.reason === 'CLOSURE_UNPROVEN' && state ? `retire --run-id ${state.runId}` : 'recover' : effects.releasePush === 'pushed' || effects.releasePush === 'already-current' ? 'verify' : 'publish' });
 }
 async function runManagedVerification(options: RunReleaseOptions): Promise<ReleaseReport> {
   const startedAt = new Date().toISOString();
@@ -229,13 +231,13 @@ export async function inspectManagedRecovery(state: ManagedState, paths: Managed
   } finally { clearTimeout(timer); }
 }
 
-interface ManagedLocation { readonly root: string; readonly configPath: string; readonly anchor: ManagedAnchor; readonly paths: ManagedPaths; readonly repository: string }
+export interface ManagedLocation { readonly root: string; readonly configPath: string; readonly anchor: ManagedAnchor; readonly paths: ManagedPaths; readonly repository: string }
 function identity(value: unknown): FileIdentity {
   const item = record(value);
   if (typeof item.dev !== 'string' || !/^\d+$/u.test(item.dev) || typeof item.ino !== 'string' || !/^\d+$/u.test(item.ino)) throw new ReleaseError('SLOT_STATE', { reason: 'FILE_IDENTITY' });
   return { dev: item.dev, ino: item.ino };
 }
-async function readManagedLocation(cwd: string, configPath: string): Promise<ManagedLocation> {
+export async function readManagedLocation(cwd: string, configPath: string): Promise<ManagedLocation> {
   const root = await realpath(cwd), path = relativeConfigPath(root, configPath), anchorPath = resolve(root, '.tmp/forge-vercel-release/managed.json');
   await assertPathChain(root, anchorPath);
   const value = await readBoundedJson(anchorPath, 65_536);
@@ -258,7 +260,7 @@ async function readManagedLocation(cwd: string, configPath: string): Promise<Man
   await assertManagedPaths(paths);
   return { root, configPath: path, anchor, paths, repository: owner.repository };
 }
-function frozenSource(value: unknown, location: ManagedLocation): FrozenSource {
+export function frozenSource(value: unknown, location: ManagedLocation): FrozenSource {
   const item = record(value), config = validateReleaseConfig(item.config);
   if (item.root !== location.root || item.configPath !== location.configPath || typeof item.sha !== 'string' || !/^[a-f0-9]{40}$/u.test(item.sha)
     || typeof item.configBlobOid !== 'string' || !/^[a-f0-9]{40}$/u.test(item.configBlobOid) || typeof item.configSha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(item.configSha256)
@@ -266,7 +268,7 @@ function frozenSource(value: unknown, location: ManagedLocation): FrozenSource {
     || config.git.repository !== location.repository || normalizeRepository(item.fetchUrl, location.root) !== normalizeRepository(config.git.repository, location.root)) throw new ReleaseError('SLOT_STATE', { reason: 'FROZEN_SOURCE' });
   return { root: location.root, configPath: location.configPath, sha: item.sha, config, configBlobOid: item.configBlobOid, configSha256: item.configSha256, fetchUrl: item.fetchUrl };
 }
-async function assertHistoricalSource(source: FrozenSource, signal?: AbortSignal): Promise<void> {
+export async function assertHistoricalSource(source: FrozenSource, signal?: AbortSignal): Promise<void> {
   const execution = new Execution(source.root, source.config, signal, []);
   try { await assertRepository(execution, source.config); }
   catch { assertActive(signal); throw new ReleaseError('SOURCE_CHANGED', { reason: 'REPOSITORY_IDENTITY' }); }

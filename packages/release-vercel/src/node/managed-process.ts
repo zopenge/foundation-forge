@@ -12,6 +12,7 @@ import { BudgetMonitor } from './managed-budget.js';
 import { Execution } from './execution.js';
 import { assertNoGitContext, isolatedGitEnvironment } from './git-context.js';
 import { hasVerifiedManagedClosure } from './managed-closure.js';
+import { readRetirementHost } from './retirement-host.js';
 
 const knownCauseCodes = new Set<string>([...getSystemErrorMap().values()].map(([code]) => code)
   .concat(Object.values(commandErrorCodes), Object.values(processControlErrorCodes)));
@@ -81,7 +82,7 @@ class ManagedProcess implements ExecutionLifecycle {
 export async function createManagedSession(slot: ManagedSlot, command: 'check' | 'publish' | 'verify', signal?: AbortSignal): Promise<ManagedSession> {
   if (slot.source.config.source.mode !== 'managed-commit') throw new ReleaseError('SOURCE_UNSUPPORTED');
   const state: ManagedState = { schemaVersion: 2, slotId: slot.slotId, runId: slot.runId, source: slot.source, command,
-    coordinator: slot.coordinator, stage: 'admission', status: 'running', processes: [], effects: { developmentPush: 'not-attempted', releasePush: 'not-attempted' } };
+    coordinator: slot.coordinator, host: await readRetirementHost(signal), stage: 'admission', status: 'running', processes: [], effects: { developmentPush: 'not-attempted', releasePush: 'not-attempted' } };
   const budget = new BudgetMonitor(slot.paths, slot.source.config.source), lifecycle = new ManagedProcess(slot, state, budget), steps: ReleaseStep[] = [];
   await lifecycle.persist();
   return { slot, command, state, budget, steps, execution: new Execution(slot.paths.checkoutRoot, slot.source.config, signal, steps, lifecycle),

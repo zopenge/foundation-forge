@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import process from 'node:process';
+import { randomUUID } from 'node:crypto';
 import { releaseErrorCodes } from '@openge/forge-release-vercel';
 import { runRelease, validateReleaseConfig } from '@openge/forge-release-vercel/node';
 
@@ -69,4 +70,20 @@ for (const name of ['alpha', 'beta']) {
   const sourceState = { branch: git('branch', '--show-current'), tracked: git('status', '--porcelain=v1', '--untracked-files=no'), note: await readFile(resolve(cwd, 'user-note'), 'utf8') };
   if (sourceState.branch !== 'dev' || sourceState.tracked !== '' || sourceState.note !== 'preserve') throw new Error(`source changed: ${JSON.stringify(sourceState)}`);
   for (const branch of ['dev', 'main']) if (execute(root, 'git', ['--git-dir', remote, 'rev-parse', branch]) !== initial) throw new Error('check changed remote refs');
+  if (name === 'alpha') {
+    const slot = resolve(cwd, '.tmp/release-slot'), statePath = resolve(slot, 'state.json');
+    const state = JSON.parse(await readFile(statePath, 'utf8'));
+    if (!/^[a-f0-9]{64}$/u.test(state.host?.hostId ?? '')) throw new Error('managed origin was not recorded');
+    // 在自有 fixture 中构造旧格式的中断 journal；真实 check 子进程已经退出，不制造悬挂进程。
+    delete state.host; state.status = 'unknown'; const interrupted = state.processes.at(-1);
+    if (!interrupted) throw new Error('managed command evidence missing');
+    delete interrupted.closure; interrupted.status = 'identified'; interrupted.observationComplete = false;
+    const original = JSON.stringify(state); await writeFile(statePath, original);
+    const oldLock = JSON.stringify({ pid: state.coordinator.pid, identity: state.coordinator, runId: state.runId, token: randomUUID(), startedAt: new Date().toISOString() });
+    await writeFile(resolve(slot, 'run.lock'), oldLock, { flag: 'wx' });
+    const retirement = spawnSync(process.execPath, [binaries['forge-vercel-release'], 'retire', '--run-id', state.runId, '--cwd', cwd], { encoding: 'utf8', shell: false, windowsHide: true, timeout: 30_000 });
+    const observation = JSON.parse(retirement.stdout || '{}');
+    if (retirement.status !== 1 || observation.error?.details?.reason !== 'ORIGIN_CONFIRMATION_REQUIRED' || observation.retirement?.historicalVerification !== 'unknown') throw new Error(`tarball retirement failed: ${JSON.stringify(observation.error)}`);
+    if (await readFile(statePath, 'utf8') !== original || await readFile(resolve(slot, 'run.lock'), 'utf8') !== oldLock) throw new Error('retirement changed unconfirmed historical evidence');
+  }
 }

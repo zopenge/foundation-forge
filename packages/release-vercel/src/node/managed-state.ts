@@ -6,6 +6,7 @@ import { validateReleaseConfig } from './config.js';
 import { resolve } from 'node:path';
 import { hasVerifiedManagedClosure } from './managed-closure.js';
 import type { ManagedCommand } from './release-context.js';
+import { validRetirementHost } from './retirement-host.js';
 
 const uuid = /^[a-f0-9-]{36}$/u, sha = /^[a-f0-9]{40}$/u;
 function boundSource(value: unknown, source: FrozenSource): asserts value is FrozenSource {
@@ -35,6 +36,7 @@ export function parseManagedState(value: unknown, source: FrozenSource, slotId: 
     || !['check', 'publish', 'verify'].includes(String(item.command)) || !['running', 'closed', 'unknown'].includes(String(item.status))
     || !Number.isSafeInteger(owner.pid) || typeof owner.startToken !== 'string' || !Array.isArray(item.processes)) throw new ReleaseError('SLOT_STATE', { reason: 'STATE' });
   boundSource(item.source, source); validateEffects(item.effects);
+  if (item.host !== undefined && !validRetirementHost(item.host)) throw new ReleaseError('SLOT_STATE', { reason: 'HOST_OBSERVATION' });
   for (const value of item.processes) {
     const command = record(value);
     if (typeof command.id !== 'string' || typeof command.name !== 'string' || !['intent', 'spawned', 'identified', 'closed', 'unknown'].includes(String(command.status))

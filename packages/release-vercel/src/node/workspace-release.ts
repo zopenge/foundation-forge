@@ -39,7 +39,7 @@ export async function runWorkspaceRelease(options: RunReleaseOptions): Promise<R
     } else {
       const path = resolve(options.cwd, options.configPath ?? 'release.config.json');
       const config = options.config === undefined ? await readConfig(path) : validateReleaseConfig(options.config);
-      if (options.command === 'recover') throw new ReleaseError('SOURCE_UNSUPPORTED');
+      if (options.command === 'recover' || options.command === 'retire') throw new ReleaseError('SOURCE_UNSUPPORTED');
       configSha256 = await digest(config);
       const execution = new Execution(options.cwd, config, options.signal, steps);
       await assertRepository(execution, config);

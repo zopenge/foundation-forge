@@ -3,6 +3,7 @@ import type { OwnedLock } from './lock.js';
 import type { CommandObserver, CommandResult, CommandRunner, CommandSpec, CommandTerminationReason } from '@openge/forge-command-runner';
 import type { ProcessScopeClosure } from '@openge/forge-process-control';
 import type { Execution } from './execution.js';
+import type { RetirementHost } from './retirement-host.js';
 import type { BudgetMonitor } from './managed-budget.js';
 
 export interface FrozenSource {
@@ -35,6 +36,7 @@ export interface ManagedState {
   readonly schemaVersion: 2; readonly slotId: string; readonly runId: string;
   readonly source: FrozenSource; readonly command: ReleaseCommand;
   readonly coordinator: RecordedIdentity;
+  readonly host?: RetirementHost;
   stage: ReleaseStage; status: 'running' | 'closed' | 'unknown';
   processes: ManagedCommand[];
   effects: ReleaseReport['effects'];

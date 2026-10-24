@@ -27,7 +27,7 @@ export async function assertPathChain(root: string, path: string): Promise<void>
     } catch (error) { if (record(error).code === 'ENOENT') return; throw error; }
   }
 }
-export async function readBoundedJson(path: string, maxBytes = 1_048_576): Promise<unknown> {
+export async function readBoundedText(path: string, maxBytes = 1_048_576): Promise<string | undefined> {
   let handle;
   try {
     const before = await lstat(path, { bigint: true });
@@ -38,12 +38,17 @@ export async function readBoundedJson(path: string, maxBytes = 1_048_576): Promi
     const bytes = Buffer.alloc(maxBytes + 1); let offset = 0;
     while (offset < bytes.length) { const result = await handle.read(bytes, offset, bytes.length - offset, null); if (result.bytesRead === 0) break; offset += result.bytesRead; }
     if (offset > maxBytes) throw new ReleaseError('SLOT_STATE', { reason: 'FILE_SIZE' });
-    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, offset))) as unknown;
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, offset));
   } catch (error) {
     if (record(error).code === 'ENOENT') return undefined;
     if (error instanceof ReleaseError) throw error;
     throw new ReleaseError('SLOT_STATE', { reason: 'JSON_READ' });
   } finally { await handle?.close(); }
+}
+export async function readBoundedJson(path: string, maxBytes = 1_048_576): Promise<unknown> {
+  const text = await readBoundedText(path, maxBytes);
+  try { return text === undefined ? undefined : JSON.parse(text) as unknown; }
+  catch { throw new ReleaseError('SLOT_STATE', { reason: 'JSON_READ' }); }
 }
 async function assertInternalLink(root: string, path: string, active: () => void): Promise<void> {
   try {
