@@ -4,7 +4,7 @@ import { runRelease } from './node/release.js';
 
 export async function runCli(args: readonly string[]): Promise<void> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0] ?? '')) {
-    process.stdout.write(`${JSON.stringify({ usage: 'forge-vercel-release <check|publish|status|verify|recover|login> [--cwd DIR] [--config FILE] [--sha SHA]', config: 'release.config.json', sha: 'status/verify only; full 40-character SHA' })}\n`);
+    process.stdout.write(`${JSON.stringify({ usage: 'forge-vercel-release <check|publish|status|verify|recover|retire|login> [--cwd DIR] [--config FILE] [--sha SHA] [--run-id UUID] [--confirm-origin SHA256]', config: 'release.config.json', sha: 'status/verify only; full 40-character SHA', retirement: 'retire requires --run-id; --confirm-origin attests that this exact legacy run originated on this host without migration or restoration. Subsequent OS boot proof is separately required; historical UNKNOWN is preserved.' })}\n`);
     return;
   }
   const controller = new AbortController();

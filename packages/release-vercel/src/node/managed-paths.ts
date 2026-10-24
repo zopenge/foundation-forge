@@ -11,6 +11,7 @@ import { createManagedStateStore } from './managed-state.js';
 import { currentCoordinator } from './process-identities.js';
 import { assertNoGitContext } from './git-context.js';
 import { hasVerifiedManagedClosure } from './managed-closure.js';
+import { hasFinalizedRetirement } from './retirement-record.js';
 
 export async function assertManagementUntracked(source: FrozenSource, execution: Execution): Promise<void> {
   assertNoGitContext();
@@ -118,7 +119,7 @@ export async function openManagedSlot(source: FrozenSource, execution: Execution
       || !sameIdentity(record(owner.slotIdentity), paths.slotIdentity)) throw new ReleaseError('SLOT_FOREIGN');
     slotId = owner.slotId;
     if (anchored && existingAnchor.slotId !== slotId) throw new ReleaseError('SLOT_STATE', { reason: 'ANCHOR_SLOT_ID' });
-    const allowed = ['ownership.json', 'run.lock', 'recover.lock', 'state.json', 'checkout', 'latest-check.json', 'latest-publish.json', 'command-gate.json', 'command-result.json'];
+    const allowed = ['ownership.json', 'run.lock', 'recover.lock', 'state.json', 'checkout', 'latest-check.json', 'latest-publish.json', 'command-gate.json', 'command-result.json', 'retirement.json', 'retirement-work', 'retired'];
     if ((await readdir(paths.slotRoot)).some(name => !allowed.includes(name))) throw new ReleaseError('SLOT_FOREIGN', { reason: 'UNKNOWN_ENTRY' });
   }
   await assertManagedPaths(paths);
@@ -139,7 +140,7 @@ export async function openManagedSlot(source: FrozenSource, execution: Execution
     const guard = async () => { await assertManagedPaths(paths); await lock.assertOwned(); };
     const store = createManagedStateStore(paths, source, slotId, guard);
     const state = await store.read();
-    if (state && (state.status !== 'closed' || state.pendingPush || Object.values(state.effects).includes('unknown') || !state.processes.every(hasVerifiedManagedClosure))) throw new ReleaseError('RECOVERY_REQUIRED', { runId: state.runId });
+    if (state && (state.status !== 'closed' || state.pendingPush || Object.values(state.effects).includes('unknown') || !state.processes.every(hasVerifiedManagedClosure)) && !await hasFinalizedRetirement(paths, state)) throw new ReleaseError('RECOVERY_REQUIRED', { runId: state.runId });
     return { paths, source, slotId, lock, store, runId, coordinator };
   } catch (error) { await lock.release(); throw error; }
 }

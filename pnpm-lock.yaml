@@ -202,6 +202,9 @@ importers:
       '@openge/forge-process-control-node':
         specifier: workspace:^
         version: link:../process-control-node
+      koffi:
+        specifier: 3.3.3
+        version: 3.3.3
       vercel:
         specifier: 64.7.0
         version: 64.7.0(@emnapi/core@1.11.3)(@emnapi/runtime@1.11.3)

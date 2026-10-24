@@ -17,9 +17,10 @@ pnpm exec forge-vercel-release publish
 pnpm exec forge-vercel-release status
 pnpm exec forge-vercel-release verify --sha <完整40位SHA>
 pnpm exec forge-vercel-release recover
+pnpm exec forge-vercel-release retire --run-id <运行UUID>
 ```
 
-参数支持 `--cwd DIR`、`--config FILE`；`--sha SHA` 仅适用于 status/verify。stdout 是 JSON，成功退出 0、运行失败退出 1、参数错误退出 2。项目可映射为 release:check、release、release:status、release:verify。prepare/check/acceptance 接收受保护的 `FORGE_RELEASE_COMMAND=check|publish|verify` 与 `FORGE_RELEASE_SHA`；验收另接收 URL、deployment ID。宿主同名值不能覆盖。这些值只说明操作意图，不授予业务权限；业务断言、幂等远端准备和业务恢复由消费方承担。
+参数支持 `--cwd DIR`、`--config FILE`；`--sha SHA` 仅适用于 status/verify，`--run-id UUID` 与 `--confirm-origin SHA256` 仅适用于 retire。stdout 是 JSON，成功退出 0、运行失败或封存证据待补退出 1、参数错误退出 2。项目可映射为 release:check、release、release:status、release:verify。prepare/check/acceptance 接收受保护的 `FORGE_RELEASE_COMMAND=check|publish|verify` 与 `FORGE_RELEASE_SHA`；验收另接收 URL、deployment ID。宿主同名值不能覆盖。这些值只说明操作意图，不授予业务权限；业务断言、幂等远端准备和业务恢复由消费方承担。
 
 ## 受管提交模式
 
@@ -75,11 +76,11 @@ const report = await runRelease({
 });
 ```
 
-runRelease 支持 command、cwd、configPath、workspace 专用 config 对象、sha、signal、transport、onLoginOutput。managed 必须用已提交文件。transport 仅替换 API/buildInfo 外部边界，必须响应取消；onLoginOutput 显示脱敏认证指引。公开签名不携带第三方实现类型。
+runRelease 支持 command、cwd、configPath、workspace 专用 config 对象、sha、signal、transport、onLoginOutput，以及 retire 专用 runId、confirmOrigin。managed 必须用已提交文件。transport 仅替换 API/buildInfo 外部边界，必须响应取消；onLoginOutput 显示脱敏认证指引。公开签名不携带第三方实现类型。
 
 ## 恢复与资源所有权
 
-受管锁覆盖准备、安装、检查、推送、等待和验收。显式装配 Windows x64 Job Object 或 Linux/glibc x64 subreaper/wait/pidfd Provider。runner 的 manual 门先取得 scope-ready，再持久保存真实身份、scopeId 和 run/command/nonce 绑定，复核预算、路径和锁后放行。只有匹配的 OS scope closed/normal/empty 证明允许下一命令或释放锁；取消、身份变化、崩溃缺口、遗留后代及强制清理即使最后 empty=true 也仍 unknown。
+受管锁覆盖准备、安装、检查、推送、等待和验收。显式装配 Windows x64 Job Object 或 Linux/glibc x64 subreaper/wait/pidfd Provider。runner 的 manual 门先取得 scope-ready，再持久保存真实身份、scopeId 和 run/command/nonce 绑定，复核预算、路径和锁后放行。只有匹配的 OS scope closed/normal/empty 证明允许同一运行的下一命令或正常释放锁；取消、身份变化、崩溃缺口、遗留后代及强制清理即使最后 empty=true 也仍 unknown。下述显式中断封存单独处理资源归属，不补造正常关闭。
 
 旧 schema 2 轮询 closure 可读，但属于弱证据，不能自动升级、复用为成功或依据 PID 消失删锁。旧 command-gate/result 文件不执行、不自动清理；新运行不再创建它们。持久 OS 证据绑定已结束实例，可复用而不重新探测后来复用的 PID。每条记录的 nonce 仅存在受控 journal，不输出到 CLI 报告。
 
@@ -94,6 +95,18 @@ pnpm 安装过程中，受管根内的 symlink 或 Windows junction 可以暂时
 槽内 latest-check/latest-publish 分开，状态与单份收据不超过 1 MiB；原根 managed.json 锚点不超过 64 KiB，绑定槽/配置/发布身份。单步 stdout/stderr 各最多 2048 UTF-8 字节并标明截断，effects/关键错误不能截断。写入和释放前核对路径、源 index/HEAD 和锁归属，外来槽、陈旧锁和半写入残留不自动清理。
 
 受管 push 不明时保留 pending/unknown 与运行锁。recover 独占取得恢复声明，核对 owner、进程、真实 refs 与部署身份，不安装、不检查、不验收、不推送、不部署、不回滚。仅在关闭可证明且引用可恢复时落观察并精确释放旧锁：等于候选记 already-current，候选祖先记 not-current（只表示观察时未指向候选，不能声称从未尝试）；已向后推进、分叉或无法核验时保留锁。原发布失败和 unknown 保留，另附时间戳观察；status 结合证据和当前 refs 展示已核实事实。崩溃缺闭环见证时，即使进程后来消失也仍 unknown，无强制确认或自动删锁入口。按 recovery.nextCommand 继续，未消除的身份缺口须维护者调查精确运行。workspace 不支持 recover。
+
+### 显式中断封存
+
+`retire --run-id <UUID>` 只处理精确受管运行的资源归属，不执行安装、测试、推送、部署或验收，不把旧命令和旧报告改写为成功。`recover` 发现无法补齐的 closure 缺口后给出该入口；`recovery.reportExists` 明确区分文件存在事实与预期保存路径。
+
+新运行在任何受管命令放行前保存宿主指纹和开机观察。旧记录没有宿主来源时，第一次调用返回 `ORIGIN_CONFIRMATION_REQUIRED` 和绑定原始文件及当前宿主的 `retirement.originConfirmation`。维护者必须确认该精确运行确实来自当前宿主，原槽未复制、克隆、迁移或还原，才能携带 `--confirm-origin <返回的 SHA256>` 再执行。此依据明确记为 `operator-confirmed-origin`，不能称为机器补证，也不能覆盖已有宿主不匹配或文件变化。
+
+命令保存检查点；实际宿主重启后再执行同一 retire 命令。Windows 仅在同一宿主的系统 uptime 比检查点至少下降 60 秒时接受新开机周期，Linux 要求 kernel boot_id 改变；PID 消失、睡眠和墙钟变化都不是该证明。基线过短、重启后等待太久、宿主身份读取失败时继续阻断，不静默刷新基线，不自动重启电脑。Windows 读取 MachineGuid，Linux 读取 machine-id 和 kernel boot-id；报告仅保存宿主摘要。
+
+Windows 原生 mutex / Linux 对原槽目录 fd 的 flock 串行化封存元数据事务。取得该 OS 锁仅证明之前的封存事务不再活动；它不能替代旧受管命令的结束证明。只有本协议自身的遗留协调声明可在 OS 锁内重新取得，普通 recover 或外来锁仍保护。封存再次核对源 commit/config、原文件字节与身份、当前 refs 和项目/部署身份；已向后推进、分叉或 unknown 的 refs 阻断。
+
+先将带 checksum 的原始 state、现有收据、锁、所有权和锚点封存到同槽 `retired/<runId>.json`，再精确释放旧 run.lock；单份封存最多 8 MiB，计入槽预算。原 state 与既有收据不改写；原子写入中断和释放锁前后中断都可续验。`retirement.status=retired`、退出 0 仅表示资源封存完成，`historicalVerification=unknown` 与原 effects 保留。下一次 publish 仍走完整门禁并复用同槽，不增加新的发布授权；workspace 模式不支持 retire。
 
 以下原根报告与人工恢复说明仅适用于 workspace 模式：
 

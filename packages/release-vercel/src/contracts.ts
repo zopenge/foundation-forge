@@ -1,4 +1,4 @@
-export type ReleaseCommand = 'check' | 'publish' | 'status' | 'verify' | 'recover' | 'login';
+export type ReleaseCommand = 'check' | 'publish' | 'status' | 'verify' | 'recover' | 'retire' | 'login';
 export interface ReleaseCheck {
   readonly command: string;
   readonly args?: readonly string[];
@@ -15,7 +15,7 @@ export type ReleaseSource = { readonly mode: 'workspace' } | {
 };
 export type ManagedSourceConfig = Extract<ReleaseSource, { mode: 'managed-commit' }>;
 export type ReleaseStage = 'source' | 'admission' | 'checkout' | 'install' | 'prepare' | 'checks'
-  | 'push-dev' | 'push-main' | 'deployment' | 'acceptance' | 'recover' | 'complete' | 'failed';
+  | 'push-dev' | 'push-main' | 'deployment' | 'acceptance' | 'recover' | 'retire' | 'complete' | 'failed';
 export interface ReleaseBudget {
   readonly sampleCount: number;
   readonly maxObservedBytes: number;
@@ -74,7 +74,15 @@ export interface ReleaseReport {
   readonly effects: { developmentPush: ReleasePushEffect; releasePush: ReleasePushEffect };
   readonly deployment?: ReleaseDeployment;
   readonly error?: ReleaseDiagnostic;
-  readonly recovery?: { readonly candidateSha: string; readonly nextCommand: string; readonly reportPath: string; readonly observation?: ReleaseRecoveryObservation };
+  readonly recovery?: { readonly candidateSha: string; readonly nextCommand: string; readonly reportPath: string; readonly reportExists?: boolean; readonly observation?: ReleaseRecoveryObservation };
+  readonly retirement?: {
+    readonly status: 'confirmation-required' | 'prepared' | 'retired';
+    readonly historicalVerification: 'unknown';
+    readonly origin?: 'operator-confirmed-origin' | 'recorded-run-host';
+    readonly originConfirmation?: string;
+    readonly cessation?: 'observed-subsequent-boot';
+    readonly archivePath?: string;
+  };
   readonly runId?: string;
   readonly sourceRoot?: string;
   readonly executionRoot?: string;
@@ -94,6 +102,8 @@ export interface RunReleaseOptions {
   readonly config?: ReleaseConfig;
   readonly configPath?: string;
   readonly sha?: string;
+  readonly runId?: string;
+  readonly confirmOrigin?: string;
   readonly signal?: AbortSignal;
   readonly transport?: ReleaseTransport;
   readonly onLoginOutput?: (text: string) => void;
