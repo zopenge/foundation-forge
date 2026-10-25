@@ -1,5 +1,11 @@
 # @openge/forge-release-vercel
 
+## 0.3.1
+
+### Patch Changes
+
+- e6aeabc: 统一受管发布与只读管理检查的身份观测预算，避免 Windows 身份读取超过两秒时提前终止正常 Git 检查。仍受原有总命令时限和最多十秒身份截止约束，保留取消、失败关闭及真实子进程清理，不自动重试发布。
+
 ## 0.3.0
 
 ### Minor Changes
