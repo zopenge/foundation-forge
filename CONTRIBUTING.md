@@ -11,7 +11,7 @@ domain-neutral boundaries documented in
 3. Run `pnpm install --frozen-lockfile`.
 4. Add a failing test for behavior changes, then implement the smallest complete change.
 5. Add a Changeset with `pnpm changeset` for every published-package change.
-6. Run `pnpm check` before opening a pull request.
+6. Run `pnpm check` locally before opening a pull request. CI runs only when a maintainer manually dispatches it.
 
 ## Pull requests
 
@@ -31,5 +31,9 @@ Maintainers must follow the verified
 [release runbook](docs/maintenance/releases.md). Routine prerelease and stable
 publishing runs entirely in GitHub Actions through npm Trusted Publishing. Do
 not add a long-lived npm token to the repository or GitHub secrets.
+
+Before a release, manually dispatch the complete CI matrix and verify its successful
+run against the exact candidate commit SHA, following the
+[manual acceptance procedure](docs/maintenance/validation.md#手动-ci-验收).
 
 By participating, you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).

@@ -58,6 +58,8 @@ Run these commands in a normal terminal after cloning the repository. Developmen
 
 `pnpm check` stores successful validation evidence and verified tarballs in the ignored `.tmp/check-cache/` directory. Exact repeats reuse that evidence; documentation, evaluation tools, script tests, and affected package groups select the relevant checks while verifying unchanged inputs and outputs. See [validation modes](docs/maintenance/validation.md) for the scope of each check. Use `pnpm check:full` to run every check from a clean package build regardless of the cache.
 
+Daily validation runs locally with `pnpm check`. The CI workflow accepts only `workflow_dispatch`; maintainers manually run its complete Linux/Windows and Node.js matrix before a release and verify that the successful run's `headSha` matches the exact candidate commit. See the [manual acceptance procedure](docs/maintenance/validation.md#手动-ci-验收). This policy takes effect on the default branch once the workflow change reaches it. The Release workflow retains its existing main-push automation.
+
 ## Versioning and releases
 
 Packages follow Semantic Versioning and use Changesets. Related package families may share fixed versions while unrelated packages evolve independently. Release candidates use the `next` npm dist-tag; stable releases use `latest`.

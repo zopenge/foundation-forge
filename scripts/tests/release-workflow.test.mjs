@@ -79,7 +79,13 @@ test('fails closed when release App configuration is absent', async () => {
   assert.doesNotMatch(preflight.run, /continue-on-error|GITHUB_TOKEN/u);
 });
 
-test('keeps App credentials out of pull request CI and preserves the supported matrix', async () => {
+test('allows CI only through an explicit manual dispatch', async () => {
+  const workflow = await readWorkflow(ciWorkflowUrl);
+
+  assert.deepEqual(workflow.on, { workflow_dispatch: null });
+});
+
+test('keeps App credentials out of manual CI and preserves the supported matrix', async () => {
   const [workflow, source] = await Promise.all([
     readWorkflow(ciWorkflowUrl),
     readFile(ciWorkflowUrl, 'utf8'),
@@ -87,6 +93,13 @@ test('keeps App credentials out of pull request CI and preserves the supported m
 
   assert.deepEqual(workflow.permissions, { contents: 'read' });
   assert.deepEqual(workflow.jobs.verify.strategy.matrix['node-version'], [22, 24, 26]);
+  assert.deepEqual(workflow.jobs.verify.strategy.matrix.os, ['ubuntu-24.04']);
+  assert.deepEqual(workflow.jobs.verify.strategy.matrix.include, [
+    { os: 'windows-2025', 'node-version': 24 },
+  ]);
+  const steps = workflow.jobs.verify.steps;
+  assert.ok(steps.some((step) => step.run === 'pnpm install --frozen-lockfile'));
+  assert.ok(steps.some((step) => step.run === 'pnpm check'));
   assert.doesNotMatch(source, /RELEASE_APP_|create-github-app-token|permission-contents|permission-pull-requests/u);
 });
 
