@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { runRelease } from '../src/node.js';
@@ -95,18 +95,6 @@ it('refuses an object configuration override in managed mode', async () => {
   const f = await fixture();
   const report = await run({ cwd: f.cwd, command: 'check', config: f.config });
   expect(report).toMatchObject({ ok: false, error: { code: 'SOURCE_UNSUPPORTED' } });
-});
-it('reuses one clean slot at the same SHA and safely fast-forwards the next SHA', { timeout: 720_000 }, async () => {
-  const f = await fixture();
-  const first = await run({ cwd: f.cwd, command: 'check' }); expect(first.ok, JSON.stringify(first.error)).toBe(true);
-  const dependency = resolve(first.executionRoot ?? '', 'node_modules/fixture-preserved'); await mkdir(resolve(first.executionRoot ?? '', 'node_modules'), { recursive: true });
-  await writeFile(dependency, 'keep');
-  const lock = await readFile(resolve(first.executionRoot ?? '', 'pnpm-lock.yaml'));
-  const second = await run({ cwd: f.cwd, command: 'check' }); expect(second.ok, JSON.stringify(second.error)).toBe(true);
-  await writeFile(resolve(f.cwd, 'source.txt'), 'next'); const sha = f.commit();
-  const third = await run({ cwd: f.cwd, command: 'check' }); expect(third.ok, JSON.stringify(third.error)).toBe(true);
-  expect(third).toMatchObject({ slotId: first.slotId, executionRoot: first.executionRoot, candidateSha: sha });
-  expect(await readFile(dependency, 'utf8')).toBe('keep'); expect(await readFile(resolve(third.executionRoot ?? '', 'pnpm-lock.yaml'))).toEqual(lock);
 });
 it('stops after a preparation command modifies committed source', async () => {
   const f = await fixture();

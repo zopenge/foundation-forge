@@ -27,7 +27,7 @@ const fixture = async () => {
   return { ...f, sha };
 };
 function start(cwd: string, command: string, sha?: string): Worker {
-  const worker = runner.start({ command: process.execPath, args: [resolve(import.meta.dirname, 'helpers/managed-worker.mjs'), cwd, command, ...(sha ? [sha] : [])],
+  const worker = runner.start({ command: process.execPath, args: [resolve(import.meta.dirname, 'helpers/managed-component-worker.mjs'), cwd, command, ...(sha ? [sha] : [])],
     cwd, environment: { mode: 'inherit' }, output: { mode: 'capture', maxBytesPerStream: 1_048_576, overflow: 'fail' }, timeoutMs: 600_000 });
   workers.push(worker); return worker;
 }

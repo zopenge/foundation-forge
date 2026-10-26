@@ -1,8 +1,9 @@
 import { isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ReleaseConfig } from '../contracts.js';
-import { ReleaseError } from './errors.js';
+import { redact, ReleaseError } from './errors.js';
 import type { Execution } from './execution.js';
+import { gitRecords } from './git-stream.js';
 
 export function normalizeRepository(value: string, cwd: string): string {
   const input = value.trim().replaceAll('\\', '/').replace(/\/$/u, '');
@@ -36,10 +37,37 @@ export async function assertRepository(execution: Execution, config: ReleaseConf
   }
 }
 export async function assertCandidate(execution: Execution, config: ReleaseConfig, sha?: string): Promise<string> {
-  if (await execution.git(['branch', '--show-current']) !== config.git.developmentBranch) throw new ReleaseError('GIT_BRANCH');
-  const head = await execution.git(['rev-parse', 'HEAD']);
-  const dirty = await execution.git(['status', '--porcelain=v1', '--untracked-files=all']);
-  if (sha !== undefined && (head !== sha || dirty !== '')) throw new ReleaseError('CANDIDATE_CHANGED', { reason: head !== sha ? 'HEAD_CHANGED' : 'WORKTREE_CHANGED', head, dirty });
+  // 同一次受管 status 读取分支、HEAD 与工作树，减少重复授权/持久化，不跨检查缓存。
+  let branch: string | undefined, head: string | undefined, dirty = '';
+  const invalid = () => new ReleaseError('GIT_FAILED', { reason: 'STATUS_PROTOCOL' });
+  try {
+    // 元数据增量解析沿用有界 NUL 协议，不能占用应用输出捕获预算而误拒绝长分支。
+    await gitRecords(execution, ['status', '--porcelain=v2', '--branch', '--no-ahead-behind', '-z', '--untracked-files=all'], entry => {
+      if (entry === '') throw invalid();
+      // rename 的第二条 NUL 记录是路径，可能恰似 header；已知脏状态后不再解释路径为头部。
+      if (dirty !== '') return;
+      if (entry.startsWith('# branch.oid ')) {
+        if (head !== undefined) throw invalid(); head = entry.slice('# branch.oid '.length);
+      } else if (entry.startsWith('# branch.head ')) {
+        if (branch !== undefined) throw invalid(); branch = entry.slice('# branch.head '.length);
+      } else if (!entry.startsWith('# ')) {
+        if (!/^(?:1 |2 |u |\? )/u.test(entry)) throw invalid(); dirty = entry;
+      }
+    });
+  } catch (error) {
+    if (error instanceof ReleaseError) {
+      const reason = error.details.reason;
+      if (error.code === 'SOURCE_UNSUPPORTED' && typeof reason === 'string'
+        && ['TREE_LIMIT', 'TREE_RECORD_LIMIT', 'INCOMPLETE_GIT_RECORD', 'INVALID_UTF8'].includes(reason)) {
+        throw new ReleaseError('GIT_FAILED', { reason: 'STATUS_PROTOCOL', protocolReason: reason });
+      }
+      if (error.code === 'GIT_FAILED' && error.details.termination === 'timeout') throw new ReleaseError('COMMAND_TIMEOUT', { step: 'git' });
+    }
+    throw error;
+  }
+  if (!branch || !head || !/^[a-f0-9]{40}$/u.test(head)) throw invalid();
+  if (branch !== config.git.developmentBranch) throw new ReleaseError('GIT_BRANCH');
+  if (sha !== undefined && (head !== sha || dirty !== '')) throw new ReleaseError('CANDIDATE_CHANGED', { reason: head !== sha ? 'HEAD_CHANGED' : 'WORKTREE_CHANGED', head, dirty: redact(dirty) });
   if (dirty !== '') throw new ReleaseError('GIT_DIRTY');
   return head;
 }

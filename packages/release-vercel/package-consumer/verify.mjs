@@ -66,18 +66,21 @@ for (const name of ['alpha', 'beta']) {
     failed = await runRelease({ command: 'check', cwd });
     if (failed.ok || failed.error?.code !== 'COMMAND_FAILED' || failed.stage !== 'install' || failed.processes?.status !== 'closed') throw new Error(`tarball failed-install closure mismatch: ${JSON.stringify(failed.error)}`);
   }
-  const first = await runRelease({ command: 'check', cwd });
-  if (!first.ok || first.candidateSha !== sha) throw new Error(`tarball managed check failed: ${JSON.stringify(first.error)}`);
+  // 两个独立消费者分别覆盖 Node 成功与 Node 失败后的 CLI 恢复，避免重复完整入口笛卡尔积。
+  // Node 成功入口使用真实子进程，保留后续历史退役测试所需的已退出协调器事实。
+  const lock = await readFile(resolve(failed?.executionRoot ?? cwd, 'pnpm-lock.yaml'));
+  const first = JSON.parse(execute(cwd, process.execPath, name === 'alpha'
+    ? [resolve(import.meta.dirname, 'node-check.mjs'), cwd]
+    : [binaries['forge-vercel-release'], 'check', '--cwd', cwd]));
+  if (!first.ok || first.candidateSha !== sha || first.processes?.status !== 'closed') throw new Error(`tarball managed check failed: ${JSON.stringify(first.error)}`);
   if (failed) {
     if (first.slotId !== failed.slotId || first.executionRoot !== failed.executionRoot) throw new Error('tarball retry changed its owned slot');
     const history = JSON.parse(await readFile(resolve(cwd, '.tmp/release-slot/history', `${failed.runId}.json`), 'utf8'));
     if (JSON.parse(history.snapshot.check).report.ok !== false || history.outcome?.error?.code !== 'COMMAND_FAILED') throw new Error('tarball retry lost its failed install outcome');
+    if (await readFile(resolve(first.executionRoot, 'node_modules/install-attempt'), 'utf8') !== 'failed once') throw new Error('tarball retry lost its install cache');
   }
   const expected = ['check', sha, first.executionRoot];
   if (JSON.stringify(JSON.parse(first.steps.find(step => step.name === 'check:0')?.stdout ?? 'null')) !== JSON.stringify(expected)) throw new Error('tarball frozen command metadata mismatch');
-  const lock = await readFile(resolve(first.executionRoot, 'pnpm-lock.yaml'));
-  const second = JSON.parse(execute(cwd, process.execPath, [binaries['forge-vercel-release'], 'check', '--cwd', cwd]));
-  if (!second.ok || second.slotId !== first.slotId || second.executionRoot !== first.executionRoot) throw new Error(`tarball CLI reuse failed: ${JSON.stringify(second.error)}`);
   if (!(await readFile(resolve(first.executionRoot, 'pnpm-lock.yaml'))).equals(lock)) throw new Error('frozen lock changed');
   const sourceState = { branch: git('branch', '--show-current'), tracked: git('status', '--porcelain=v1', '--untracked-files=no'), note: await readFile(resolve(cwd, 'user-note'), 'utf8') };
   if (sourceState.branch !== 'dev' || sourceState.tracked !== '' || sourceState.note !== 'preserve') throw new Error(`source changed: ${JSON.stringify(sourceState)}`);

@@ -7,6 +7,21 @@ import { Execution } from '../src/node/execution.js';
 import { ReleaseError } from '../src/node/errors.js';
 import { managedRuns } from './helpers/managed-runs.js';
 import type { ReleaseTransport } from '../src/contracts.js';
+import { commandComponentSession, publicationComponentSession } from './helpers/component-session.js';
+
+// 聚焦真实推送丢响应与恢复决策；只读元数据查询不重复完整受管日志链路。
+// push/fetch/检查命令仍真实受管，完整安装/发布接入在 managed-release 保留。
+vi.mock('../src/node/managed-process.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('../src/node/managed-process.js')>();
+  return { ...actual, createManagedSession: async (...args: Parameters<typeof actual.createManagedSession>) =>
+    publicationComponentSession(await actual.createManagedSession(...args)) };
+});
+vi.mock('../src/node/managed-checkout.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('../src/node/managed-checkout.js')>();
+  return { ...actual,
+    prepareCheckout: (session: Parameters<typeof actual.prepareCheckout>[0]) => actual.prepareCheckout(commandComponentSession(session)),
+    prepareEnvironment: (session: Parameters<typeof actual.prepareEnvironment>[0]) => actual.prepareEnvironment(commandComponentSession(session)) };
+});
 
 const fixtures: Awaited<ReturnType<typeof managedFixture>>[] = [];
 const runs = managedRuns();
@@ -44,4 +59,8 @@ it('observes an accepted push with a lost response and never pushes that old int
   expect(pushes.filter(target => target.endsWith(':refs/heads/main'))).toEqual([`${sha}:refs/heads/main`]);
   const history = JSON.parse(await readFile(resolve(f.cwd, '.tmp/release-slot/history', `${first.runId}.json`), 'utf8'));
   expect(JSON.parse(history.snapshot.publish).report).toMatchObject({ ok: false, effects: { developmentPush: 'unknown' } });
+  const prior = JSON.parse(history.snapshot.state);
+  expect(prior.pendingPush).toBe('developmentPush');
+  expect(prior.processes.some((command: { name: string; terminalSha256?: string; closure?: { ownedScope?: { status?: string; empty?: boolean } } }) =>
+    command.name === 'git' && command.terminalSha256 && command.closure?.ownedScope?.status === 'closed' && command.closure.ownedScope.empty === true)).toBe(true);
 });

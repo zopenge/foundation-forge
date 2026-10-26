@@ -9,6 +9,7 @@ import { openManagedSlot } from '../src/node/managed-paths.js';
 import { createManagedSession } from '../src/node/managed-process.js';
 import { prepareCheckout, prepareEnvironment } from '../src/node/managed-checkout.js';
 import { ReleaseError } from '../src/node/errors.js';
+import { commandComponentSession } from './helpers/component-session.js';
 
 it('preserves process closure failures while reading the frozen manifest', async () => {
   const f = await managedFixture();
@@ -69,7 +70,7 @@ it.each(['dirty', 'diverged'])('rejects an existing %s checkout without replacin
     git(slot.paths.checkoutRoot, 'switch', '--create', 'dev', previous);
     if (mode === 'dirty') await writeFile(resolve(slot.paths.checkoutRoot, 'source.txt'), 'user modification');
     const session = await createManagedSession(slot, 'check');
-    await expect(prepareCheckout(session)).rejects.toMatchObject({ code: mode === 'dirty' ? 'GIT_DIRTY' : 'SLOT_NOT_FAST_FORWARD' });
+    await expect(prepareCheckout(commandComponentSession(session))).rejects.toMatchObject({ code: mode === 'dirty' ? 'GIT_DIRTY' : 'SLOT_NOT_FAST_FORWARD' });
     expect(git(slot.paths.checkoutRoot, 'rev-parse', 'HEAD')).toBe(previous);
     if (mode === 'dirty') expect(await readFile(resolve(slot.paths.checkoutRoot, 'source.txt'), 'utf8')).toBe('user modification');
     expect(f.ref('dev')).toBe(f.initial); expect(f.ref('main')).toBe(f.initial); await slot.lock.release();
@@ -81,7 +82,7 @@ it('initializes a remote whose default branch is the configured development bran
     git(f.root, '--git-dir', f.remote, 'symbolic-ref', 'HEAD', 'refs/heads/dev');
     const source = await freezeManagedSource(f.cwd, 'release.config.json', f.execution), slot = await openManagedSlot(source, f.execution);
     const session = await createManagedSession(slot, 'check');
-    await prepareCheckout(session);
+    await prepareCheckout(commandComponentSession(session));
     expect(git(slot.paths.checkoutRoot, 'branch', '--show-current')).toBe('dev');
     expect(git(slot.paths.checkoutRoot, 'rev-parse', 'HEAD')).toBe(source.sha);
     expect(git(slot.paths.checkoutRoot, 'status', '--porcelain=v1')).toBe(''); await slot.lock.release();
@@ -103,7 +104,7 @@ it('creates and fetches a managed checkout beyond the Windows legacy path limit'
     const source = await freezeManagedSource(f.cwd, 'release.config.json', execution), slot = await openManagedSlot(source, execution);
     const session = await createManagedSession(slot, 'check');
     expect(resolve(slot.paths.checkoutRoot, '.git/objects/pack', `pack-${'a'.repeat(40)}.keep`).length).toBeGreaterThan(260);
-    await prepareCheckout(session).catch((error: unknown) => { throw new Error(error instanceof ReleaseError ? `${error.code}: ${JSON.stringify(error.details)}` : String(error)); });
+    await prepareCheckout(commandComponentSession(session)).catch((error: unknown) => { throw new Error(error instanceof ReleaseError ? `${error.code}: ${JSON.stringify(error.details)}` : String(error)); });
     expect(await readFile(resolve(slot.paths.checkoutRoot, 'source.txt'), 'utf8')).toBe('candidate\n');
     expect(git(slot.paths.checkoutRoot, 'rev-parse', 'HEAD')).toBe(source.sha);
     expect(git(f.cwd, 'config', '--local', '--list')).toBe(sourceConfig);
