@@ -16,6 +16,17 @@ import * as packageRunner from '../package-consumer-runner.mjs';
 
 const { preparePackagesForPacking, runBounded, runCaptured, runConsumerChecks } = packageRunner;
 
+test('coverage worker metadata cannot allocate more than the approved two-worker budget', async context => {
+  const value = await createPackage(context);
+  const path = join(value.packageRoot, 'package.verify.json');
+  await writeFile(path, JSON.stringify({ browserExports: ['.'], coverageWorkers: 2 }));
+  assert.equal((await loadPackageVerification(value)).coverageWorkers, 2);
+  for (const coverageWorkers of [0, 3, 1.5, '2']) {
+    await writeFile(path, JSON.stringify({ browserExports: ['.'], coverageWorkers }));
+    await assert.rejects(loadPackageVerification(value), /coverageWorkers/u);
+  }
+});
+
 test('documentation links reject missing local targets and accept present targets', async (context) => {
   assert.equal(typeof packageRunner.verifyDocumentationLinks, 'function');
   await mkdir(join('.tmp', 'tests'), { recursive: true });
@@ -34,7 +45,8 @@ const createPackage = async (context, {
   name = '@example/package',
   packageConsumer = false,
 } = {}) => {
-  const packageRoot = await mkdtemp(join(tmpdir(), 'foundation-forge-package-'));
+  const fixtureBase = resolve('.tmp/tests'); await mkdir(fixtureBase, { recursive: true });
+  const packageRoot = await mkdtemp(join(fixtureBase, 'foundation-forge-package-'));
   context.after(() => rm(packageRoot, { force: true, recursive: true }));
   for (const [relativePath, contents] of Object.entries(files)) {
     const path = join(packageRoot, relativePath);

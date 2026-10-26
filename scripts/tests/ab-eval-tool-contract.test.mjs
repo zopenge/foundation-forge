@@ -5,6 +5,7 @@ import { once } from 'node:events';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import { resolve } from 'node:path';
+import { performance } from 'node:perf_hooks';
 import process from 'node:process';
 import test from 'node:test';
 
@@ -27,7 +28,8 @@ const writeJson=(path,value)=>writeFile(path,`${JSON.stringify(value)}\n`);
 
 const withPack=async({server='repository.context',pages,declared=['investigate','read','continue'],
   allowed=declared.map(name=>`repository_context_${name}`),schemas={},
-  permissionOverride},fn)=>{
+  permissionOverride,trace},fn)=>{
+  trace?.('pack-start');
   await mkdir(tempRoot,{recursive:true});
   const root=await mkdtemp(resolve(tempRoot,'r48-01-contract-'));
   try{
@@ -71,8 +73,10 @@ for await(const line of createInterface({input:process.stdin})){
         [server]:Object.fromEntries(declared.map(name=>[
           name,schemas[name]??expectedSchemaSha256]))}}}};
     await writeJson(resolve(pack,'draft.json'),draft);
+    trace?.('freeze-start');
     await freezePack({draftPath:resolve(pack,'draft.json'),
       outputPath:resolve(pack,'pack.json')});
+    trace?.('freeze-end');
     const client=resolve(root,'opencode.exe');
     const auth=resolve(root,'auth.json');
     await writeFile(client,'fake-client');
@@ -85,55 +89,109 @@ for await(const line of createInterface({input:process.stdin})){
       throw new Error(`MODEL_CALL_FORBIDDEN:${spec.args[0]}`);
     };
     const runDir=resolve(root,'run');
+    trace?.('prepare-start');
     const preflight=await prepareEvaluation({manifestPath:resolve(pack,'pack.json'),
       runDir,clientExecutable:client,authPath:auth,processRunner});
+    trace?.('prepare-end');
     await fn({root,runDir,preflight,processRunner,calls});
-  }finally{await rm(root,{recursive:true,force:true});}
+  }finally{trace?.('pack-cleanup-start');await rm(root,{recursive:true,force:true});trace?.('pack-cleanup-end');}
 };
 
 const fullPages={first:{tools:[tool('investigate'),tool('read'),tool('continue')]}};
 
-const withObservedChildren=async({holdClose=false},fn)=>{
-  const originalSpawn=childProcess.spawn;const observed=[];
+const withMcpTimeline=async(t,run)=>{
+  const start=performance.now();let phase='test-start';
+  const trace=(next,details={})=>{
+    const event={test:t.name,phase:next,milliseconds:performance.now()-start,...details};phase=next;
+    if(process.env.FORGE_PROCESS_TIMELINE==='1'&&['test-cancelled','test-failure'].includes(next))
+      process.stderr.write(`FORGE_PROCESS_DIAGNOSTIC ${JSON.stringify(event)}\n`);
+    t.diagnostic(JSON.stringify(event));
+  };
+  const cancelled=()=>trace('test-cancelled',{atPhase:phase,reasonCode:t.signal.reason?.code});
+  t.signal.addEventListener('abort',cancelled,{once:true});
+  try{return await run(trace);}
+  catch(error){trace('test-failure',{atPhase:phase,errorCode:error?.code,causeCode:error?.cause?.code});throw error;}
+  finally{t.signal.removeEventListener('abort',cancelled);trace('test-body-end');}
+};
+
+const withObservedChildren=async({holdClose=false,trace},fn)=>{
+  const originalSpawn=childProcess.spawn,originalSpawnSync=childProcess.spawnSync;const observed=[];
   childProcess.spawn=(...args)=>{
+    trace?.('spawn-start');
     const child=originalSpawn(...args);
+    const snapshot=()=>({pid:child.pid,exitCode:child.exitCode,signalCode:child.signalCode,
+      stdinEnded:child.stdin?.writableEnded,stdoutEnded:child.stdout?.readableEnded,stderrEnded:child.stderr?.readableEnded,
+      stdoutDestroyed:child.stdout?.destroyed,stderrDestroyed:child.stderr?.destroyed,
+      hasIpc:child.channel!==undefined,connected:child.connected===true,holdClose});
+    trace?.('spawn-return',snapshot());
     const state={child,closed:false,emit:child.emit,closeArgs:null};
-    child.once('close',()=>{state.closed=true;});
+    child.stdout?.once('end',()=>trace?.('stdout-end',snapshot()));
+    child.stderr?.once('end',()=>trace?.('stderr-end',snapshot()));
+    child.once('exit',(code,signal)=>trace?.('child-exit',{...snapshot(),code,signal}));
+    child.once('close',()=>{state.closed=true;trace?.('child-close',snapshot());});
     if(holdClose)child.emit=function(event,...values){
-      if(event==='close'){state.closeArgs=values;return true;}
+      if(event==='close'){state.closeArgs=values;trace?.('close-event-held',snapshot());return true;}
       return state.emit.call(this,event,...values);
     };
     observed.push(state);return child;
   };
+  if(trace)childProcess.spawnSync=(...args)=>{
+    const termination=args[0]==='taskkill'||args[0]==='taskkill.exe';
+    if(termination)trace('termination-start');
+    const result=originalSpawnSync(...args);
+    if(termination)trace('termination-end',{pid:result.pid,status:result.status,signal:result.signal,errorCode:result.error?.code});
+    return result;
+  };
   syncBuiltinESMExports();
-  try{return await fn(observed);}
+  let bodyFailed=false;let bodyFailure;let value;
+  try{value=await fn(observed);}
+  catch(error){bodyFailed=true;bodyFailure=error;}
   finally{
-    childProcess.spawn=originalSpawn;syncBuiltinESMExports();
+    childProcess.spawn=originalSpawn;childProcess.spawnSync=originalSpawnSync;syncBuiltinESMExports();
+  }
+  let cleanupFailure;
+  trace?.('fixture-cleanup-start');
+  try{
+    let running=false;
     for(const state of observed){
       state.child.emit=state.emit;
-      if(state.closeArgs)state.child.emit('close',...state.closeArgs);
+      const alive=state.child.exitCode===null&&state.child.signalCode===null;
+      if(state.closeArgs&&!alive)state.child.emit('close',...state.closeArgs);
+      // 固定 fixture 只创建这一层 Node；失败清理不冒充生产 /T 整树终止成功。
+      if(alive){running=true;trace?.('fixture-force-kill',{pid:state.child.pid});state.child.kill('SIGKILL');}
     }
     await Promise.all(observed.filter(state=>!state.closed).map(state=>
       once(state.child,'close',{signal:globalThis.AbortSignal.timeout(5000)})));
+    if(running&&!bodyFailed)cleanupFailure=new Error('MCP_TEST_FIXTURE_LEFT_RUNNING');
+  }catch(error){cleanupFailure=error;}
+  trace?.('fixture-cleanup-end',{errorCode:cleanupFailure?.code});
+  if(bodyFailed){
+    if(cleanupFailure!==undefined&&bodyFailure instanceof Error)bodyFailure.cause??=cleanupFailure;
+    throw bodyFailure;
   }
+  if(cleanupFailure!==undefined)throw cleanupFailure;
+  return value;
 };
 
 test('MCP tool probe waits for the real child close before returning',
-  {timeout:15000},()=>withPack({pages:fullPages},({root,runDir})=>
-    withObservedChildren({},async observed=>{
+  {timeout:15000},t=>withMcpTimeline(t,trace=>withPack({pages:fullPages,trace},({root,runDir})=>
+    withObservedChildren({trace},async observed=>{
+      trace('probe-start');
       const result=await probeMcpTools({server:'fixture',
         config:{type:'local',command:[process.execPath,resolve(root,'pack/mcp.mjs')]},
         invocation:{cwd:resolve(runDir,'arms/pair-1-C/work'),env:process.env}});
+      trace('probe-end');
       assert.equal(result.tools.length,3);
       assert.equal(observed.length,1);
       assert.equal(observed[0].closed,true,'probe returned before its child closed');
-    })));
+    }))));
 
 for(const protocolFailure of [false,true])test(
   `MCP tool probe bounds a missing close event with protocolFailure=${protocolFailure}`,
-  {timeout:15000},()=>withPack({pages:protocolFailure
-    ?{first:{tools:null}}:fullPages},({root,runDir})=>
-    withObservedChildren({holdClose:true},async observed=>{
+  {timeout:15000},t=>withMcpTimeline(t,trace=>withPack({pages:protocolFailure
+    ?{first:{tools:null}}:fullPages,trace},({root,runDir})=>
+    withObservedChildren({holdClose:true,trace},async observed=>{
+      trace('probe-start');
       await assert.rejects(()=>probeMcpTools({server:'fixture',
         config:{type:'local',command:[process.execPath,resolve(root,'pack/mcp.mjs')]},
         invocation:{cwd:resolve(runDir,'arms/pair-1-C/work'),env:process.env}}),error=>{
@@ -142,20 +200,23 @@ for(const protocolFailure of [false,true])test(
         if(protocolFailure)assert.equal(error.cause?.code,'MCP_TOOL_PROBE_CLOSE_TIMEOUT');
         return true;
       });
+      trace('probe-end');
       assert.equal(observed.length,1);
-    })));
+    }))));
 
 test('MCP tool probe closes the real child after a request deadline',
-  {timeout:15000},()=>withPack({pages:fullPages},({runDir})=>
-    withObservedChildren({},async observed=>{
+  {timeout:15000},t=>withMcpTimeline(t,trace=>withPack({pages:fullPages,trace},({runDir})=>
+    withObservedChildren({trace},async observed=>{
+      trace('probe-start');
       await assert.rejects(()=>probeMcpTools({server:'fixture',timeoutMs:50,
         config:{type:'local',command:[process.execPath,'-e',
           'process.stdin.resume();setInterval(()=>{},1000)']},
         invocation:{cwd:resolve(runDir,'arms/pair-1-C/work'),env:process.env}}),
       {code:'MCP_TOOL_PROBE_TIMEOUT'});
+      trace('probe-end');
       assert.equal(observed.length,1);
       assert.equal(observed[0].closed,true,'deadline returned before its child closed');
-    })));
+    }))));
 
 test('doctor accepts a separately declared three-tool C navigation contract',()=>withPack(
   {pages:fullPages},async({runDir,processRunner,calls})=>{
@@ -259,3 +320,18 @@ test('run refuses a legacy connection receipt before creating a lock or model ca
       {code:'ENOENT'});
     assert.equal(calls.includes('run'),false);
   }));
+
+test('observed fixture cleanup preserves the original assertion failure and closes its own child',
+  {timeout:10000},async()=>{
+    const originalFailure=new Error('EXPECTED_FIXTURE_ASSERTION_FAILURE');
+    let child;
+    await assert.rejects(()=>withObservedChildren({},async()=>{
+      child=childProcess.spawn(process.execPath,['-e','setInterval(()=>{},1000)'],
+        {windowsHide:true,stdio:['ignore','pipe','pipe']});
+      await once(child,'spawn');
+      throw originalFailure;
+    }),error=>error===originalFailure);
+    assert.ok(child.exitCode!==null||child.signalCode!==null);
+    assert.equal(child.stdout.destroyed,true);
+    assert.equal(child.stderr.destroyed,true);
+  });

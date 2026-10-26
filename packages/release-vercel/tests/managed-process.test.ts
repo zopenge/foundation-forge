@@ -121,7 +121,7 @@ it('keeps the queued first failure when a retained atomic file blocks later jour
 it('does not treat an exited parent as proof that its writer child closed', async () => {
   const f = await fixture(), path = resolve(f.slot.paths.slotRoot, 'child-writes');
   const writer = 'setInterval(()=>require("node:fs").appendFileSync(process.argv[1],"x"),100)';
-  const parent = `const child=require("node:child_process").spawn(process.execPath,["-e",${JSON.stringify(writer)},process.argv[1]],{stdio:"ignore",detached:true});child.unref();setTimeout(()=>process.exit(0),2500)`;
+  const parent = `const child=require("node:child_process").spawn(process.execPath,["-e",${JSON.stringify(writer)},process.argv[1]],{stdio:"ignore",detached:true,windowsHide:true});child.unref();setTimeout(()=>process.exit(0),2500)`;
   const result = await f.session.execution.run('parent-child', { command: 'node', args: ['-e', parent, path] }, 'CHECK_FAILED').then(value => ({ value }), (error: unknown) => ({ error }));
   expect(result, JSON.stringify(f.session.state.processes)).toMatchObject({ error: { code: 'PROCESS_STATE_UNKNOWN' } });
   expect(f.session.state.processes[0]?.closure?.ownedScope).toMatchObject({ status: 'unknown', reason: 'descendants-remained', empty: true });
@@ -168,7 +168,7 @@ it('reuses a completed command closure witness while still observing the current
 it('does not claim closure for a detached writer whose parent exits immediately', async () => {
   const f = await fixture(), marker = resolve(f.slot.paths.slotRoot, 'fast-child-pid'), output = resolve(f.slot.paths.slotRoot, 'fast-child-writes');
   const writer = 'const fs=require("node:fs");fs.writeFileSync(process.argv[1],String(process.pid));setInterval(()=>fs.appendFileSync(process.argv[2],"x"),50)';
-  const parent = `const child=require("node:child_process").spawn(process.execPath,["-e",${JSON.stringify(writer)},process.argv[1],process.argv[2]],{stdio:"ignore",detached:true});child.unref();`;
+  const parent = `const child=require("node:child_process").spawn(process.execPath,["-e",${JSON.stringify(writer)},process.argv[1],process.argv[2]],{stdio:"ignore",detached:true,windowsHide:true});child.unref();`;
   try {
     const result = await f.session.execution.run('fast-detached-child', { command: 'node', args: ['-e', parent, marker, output] }, 'CHECK_FAILED').then(value => ({ value }), (error: unknown) => ({ error }));
     expect(result).toMatchObject({ error: { code: 'PROCESS_STATE_UNKNOWN' } });

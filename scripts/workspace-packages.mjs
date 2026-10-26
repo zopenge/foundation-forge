@@ -48,7 +48,7 @@ export const parseJsonDocuments = (value) => {
   return documents;
 };
 
-const capturePnpmOutput = (repositoryRoot) => new Promise((resolvePromise, reject) => {
+export const capturePnpmOutput = (repositoryRoot, { spawnCommand = spawn } = {}) => new Promise((resolvePromise, reject) => {
   const invocation = createPackageManagerInvocation('pnpm', [
     'list',
     '--recursive',
@@ -56,9 +56,10 @@ const capturePnpmOutput = (repositoryRoot) => new Promise((resolvePromise, rejec
     '-1',
     '--json',
   ]);
-  const child = spawn(invocation.command, invocation.args, {
+  const child = spawnCommand(invocation.command, invocation.args, {
     cwd: repositoryRoot,
     shell: false,
+    windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let stdout = '';

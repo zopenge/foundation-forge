@@ -5,6 +5,10 @@ import { fileURLToPath } from 'node:url';
 
 import { createPackageManagerInvocation } from './package-manager-command.mjs';
 import { verifyLocalPackages } from './package-consumer-runner.mjs';
+import { createTestRunContext } from './test-run-context.mjs';
+import { runScriptTestSuite } from './run-script-tests.mjs';
+import { runWorkspaceCoverage } from './run-workspace-coverage.mjs';
+import { testWorkerLimit } from './test-worker-budget.mjs';
 
 const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
 const scriptPath = fileURLToPath(import.meta.url);
@@ -20,8 +24,11 @@ const runPnpmScript = (name) => new Promise((resolvePromise, reject) => {
     : reject(new Error(`${name} exited with ${String(code)}`)));
 });
 
-export const runFullCheck = async ({ run = runPnpmScript, verify = verifyLocalPackages } = {}) => {
+export const runFullCheck = async ({ run = runPnpmScript, verify = verifyLocalPackages,
+  createContext = createTestRunContext, scriptTests = runScriptTestSuite, coverage = runWorkspaceCoverage } = {}) => {
   const started = performance.now();
+  let testRun, workspace;
+  const failures = [];
   const timed = (name, task) => {
     const start = performance.now();
     let result;
@@ -31,39 +38,45 @@ export const runFullCheck = async ({ run = runPnpmScript, verify = verifyLocalPa
       process.stdout.write(`check:full ${name}: ${((performance.now() - start) / 1_000).toFixed(2)}s\n`);
     });
   };
-  let builtChecks = Promise.resolve([]);
   let built = false;
-  const onBuilt = () => {
+  const onBuilt = async model => {
     if (built) throw new Error('package build signaled more than once');
     built = true;
-    builtChecks = Promise.allSettled([
-      timed('typecheck:built', () => run('typecheck:built')),
-      timed('packages:check-cycles:built', () => run('packages:check-cycles:built')),
-    ]);
+    workspace = model;
+    testRun = await createContext({ packages: model.packages });
+    return testRun;
   };
-  const initial = await Promise.allSettled([
-    timed('lint', () => run('lint')),
-    timed('test:scripts', () => run('test:scripts')),
-    timed('pack:check', () => verify({
+  try {
+    await timed('lint', () => run('lint'));
+    await timed('pack:check', () => verify({
       repositoryRoot,
       verificationRoot: resolve(repositoryRoot, '.tmp', 'package-verification'),
       tarballCacheRoot: resolve(repositoryRoot, '.tmp', 'check-cache', 'packs'),
       onBuilt,
-    })),
-  ]);
-  const final = await builtChecks;
-  const failures = [...initial, ...final]
-    .filter((result) => result.status === 'rejected')
-    .map((result) => result.reason);
-  if (failures.length > 0) {
-    throw new AggregateError(failures, failures.map((error) => error?.message ?? String(error)).join('; '));
+    }));
+    if (!built) throw new Error('package build did not complete');
+    await timed('typecheck:built', () => run('typecheck:built'));
+    await timed('packages:check-cycles:built', () => run('packages:check-cycles:built'));
+    await timed('test:scripts', () => scriptTests(testRun));
+    await timed('test:coverage', () => coverage({ packages: workspace.packages, context: testRun }));
+  } catch (error) {
+    failures.push(error);
+    try { testRun?.budget.stop(error); }
+    catch (stopError) { failures.push(stopError); }
+  } finally {
+    try { await testRun?.finalize(); }
+    catch (error) { failures.push(error); }
   }
-  if (!built) throw new Error('package build did not complete');
-  await timed('test:coverage', () => run('test:coverage'));
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) throw new AggregateError(failures, 'full check failed and context cleanup failed', { cause: failures[0] });
   process.stdout.write(`check:full complete: ${((performance.now() - started) / 1_000).toFixed(2)}s\n`);
 };
 
 if (process.argv[1] && resolve(process.argv[1]) === scriptPath) {
-  try { await runFullCheck(); }
+  try {
+    if (process.argv.slice(2).some(value => value !== '--serial')) throw new Error('unsupported full check option');
+    if (process.argv.includes('--serial')) process.env.FORGE_CHECK_TEST_WORKERS = '1';
+    testWorkerLimit(); await runFullCheck();
+  }
   catch (error) { process.stderr.write(`${error?.stack ?? error}\n`); process.exitCode = 1; }
 }

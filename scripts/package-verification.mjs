@@ -37,11 +37,15 @@ export const loadPackageVerification = async (packageValue) => {
     }
   }
   const candidate = resolve(packageValue.packageRoot, consumerScriptName);
+  const coverageWorkers = configuration.coverageWorkers ?? 1;
+  if (!Number.isSafeInteger(coverageWorkers) || coverageWorkers < 1 || coverageWorkers > 2) {
+    throw new Error(`${packageValue.name} coverageWorkers must be 1 or 2`);
+  }
   const consumerScript = await exists(candidate) ? candidate : undefined;
   if (packageValue.bins.length > 0 && consumerScript === undefined) {
     throw new Error(`${packageValue.name} exposes a binary and requires a consumer smoke`);
   }
-  return { browserExports, consumerScript };
+  return { browserExports, consumerScript, coverageWorkers };
 };
 
 const importSpecifierPattern = /(?:\b(?:import|export)\s+(?:[^'";]*?\s+from\s*)?['"]([^'"]+)['"]|\bimport\s*\(\s*['"]([^'"]+)['"]\s*\))/gu;

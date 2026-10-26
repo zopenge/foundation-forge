@@ -10,6 +10,9 @@ import { verifyTargetedPackages } from './check-targeted-package.mjs';
 import { preparePackagesForPacking, verifyDocumentationLinks } from './package-consumer-runner.mjs';
 import { createPackageManagerInvocation } from './package-manager-command.mjs';
 import { discoverWorkspacePackageModel } from './workspace-packages.mjs';
+import { createTestRunContext } from './test-run-context.mjs';
+import { runWorkspaceCoverage } from './run-workspace-coverage.mjs';
+import { runScriptTestSuite } from './run-script-tests.mjs';
 
 const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
 const cacheRoot = resolve(repositoryRoot, '.tmp', 'check-cache');
@@ -77,12 +80,8 @@ export const runScriptTests = async ({
   persist = writeState,
 }) => {
   process.stdout.write('Script test check: reusing verified package outputs.\n');
-  const results = await Promise.allSettled([
-    run(['run', 'lint']),
-    run(['run', 'test:scripts']),
-  ]);
-  const failure = results.find((result) => result.status === 'rejected');
-  if (failure) throw failure.reason;
+  await run(['run', 'lint']);
+  await run(['run', 'test:scripts']);
   await docsValid(repositoryRoot);
   if (!await distValid(model, state, { kind: 'cached' })
     || await tarballsValid(model, state) === null) {
@@ -125,6 +124,11 @@ export const runPackages = async ({
   distValid = verifyDist,
   tarballsValid = verifyTarballs,
   persist = writeState,
+  createContext = createTestRunContext,
+  coverage = runWorkspaceCoverage,
+  scriptTests = runScriptTestSuite,
+  prepare = preparePackagesForPacking,
+  removeWorkRoot = directory => rm(directory, { recursive: true, force: true }),
 }) => {
   const names = new Set(packageNames);
   const packages = model.packages.filter(({ name }) => names.has(name));
@@ -135,37 +139,31 @@ export const runPackages = async ({
   const inside = relative(cacheRoot, workRoot);
   if (inside === '' || inside.startsWith('..') || resolve(cacheRoot, inside) !== workRoot)
     throw new Error('unsafe check cache cleanup path');
+  let testRun, cleanupAttempted = false;
+  const failures = [];
   try {
     process.stdout.write(`Targeted package group: ${packageNames.join(', ')}.\n`);
-    const lint = run(['run', 'lint']);
-    const build = preparePackagesForPacking({
+    await run(['run', 'lint']);
+    await prepare({
       model: { ...model, packages },
       build: async () => {
         for (const { name } of packages) await run(['--filter', name, 'run', 'build']);
       },
     });
-    const first = await Promise.allSettled([lint, build]);
-    const failedFirst = first.find((result) => result.status === 'rejected');
-    if (failedFirst) throw failedFirst.reason;
+    testRun = await createContext({ packages: model.packages });
     const reusedTarballs = new Map(Object.entries(tarballDigests)
       .filter(([name]) => !names.has(name))
       .map(([name, value]) => [name, resolve(tarballCacheRoot, value.filename)]));
-    const checks = [
-      run(['run', 'test:scripts']),
-      targetedVerify({ model, packageNames, verificationRoot: workRoot, reusedTarballs }),
-      ...packages.map(({ name }) => run(['--filter', name, 'run', 'typecheck'])),
-      ...packages.map(({ name, manifest }) => run(['--filter', name, 'run',
-        manifest.scripts?.['test:coverage:fast'] ? 'test:coverage:fast' : 'test:coverage'])),
-    ];
-    const second = await Promise.allSettled(checks);
-    const failedSecond = second.find((result) => result.status === 'rejected');
-    if (failedSecond) throw failedSecond.reason;
+    const verified = await targetedVerify({ model, packageNames, verificationRoot: workRoot, reusedTarballs, testRun });
+    for (const { name } of packages) await run(['--filter', name, 'run', 'typecheck']);
+    await scriptTests(testRun);
+    await coverage({ packages, context: testRun });
     await docsValid(repositoryRoot);
     if (!await distValid(model, state, { kind: 'packages', packageNames })
       || await tarballsValid(model, state) === null) {
       throw new Error('verified unaffected package outputs changed during targeted check');
     }
-    const targetTarballs = second[1].value.targetTarballs;
+    const targetTarballs = verified.targetTarballs;
     for (const name of packageNames) {
       const source = targetTarballs.get(name);
       if (!source || !tarballDigests[name]) throw new Error(`missing targeted tarball: ${name}`);
@@ -175,11 +173,23 @@ export const runPackages = async ({
     const currentTarballs = await collectTarballDigests(model.packages, tarballCacheRoot);
     const nextTarballs = { ...state.tarballDigests };
     for (const name of packageNames) nextTarballs[name] = currentTarballs[name];
+    const completedRun = testRun;
+    testRun = undefined;
+    await completedRun.finalize();
+    cleanupAttempted = true;
+    await removeWorkRoot(workRoot);
     await assertInputs(fingerprint);
     await persist(fingerprint, distDigests, nextTarballs);
+  } catch (error) {
+    failures.push(error);
+    try { testRun?.budget.stop(error); }
+    catch (stopError) { failures.push(stopError); }
   } finally {
-    await rm(workRoot, { recursive: true, force: true });
+    try { await testRun?.finalize(); } catch (error) { failures.push(error); }
+    if (!cleanupAttempted) try { await removeWorkRoot(workRoot); } catch (error) { failures.push(error); }
   }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) throw new AggregateError(failures, 'targeted check failed and cleanup failed', { cause: failures[0] });
 };
 
 export const runCheck = async () => {

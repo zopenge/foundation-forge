@@ -12,6 +12,7 @@ domain-neutral boundaries documented in
 4. Add a failing test for behavior changes, then implement the smallest complete change.
 5. Add a Changeset with `pnpm changeset` for every published-package change.
 6. Run `pnpm check` locally before opening a pull request. CI runs only when a maintainer manually dispatches it.
+   完整、定向包组和脚本复用检查按重阶段顺序运行，默认共享最多两个测试 worker；`pnpm check:serial` 额外将独立测试任务预算设为一。构建和打包工具保留既有并发配置。独立运行 `test:scripts` 或 `test:coverage` 前须先执行 `pnpm build`。
 
 ## Pull requests
 

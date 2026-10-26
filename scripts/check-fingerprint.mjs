@@ -37,6 +37,7 @@ export const collectWorkspaceFingerprint = async (repositoryRoot) => {
     pnpmHome: process.env.PNPM_HOME,
     ci: process.env.CI,
     vitestMaxWorkers: process.env.VITEST_MAX_WORKERS,
+    testWorkers: process.env.FORGE_CHECK_TEST_WORKERS,
     temp: process.env.TEMP,
     tmp: process.env.TMP,
     installedModules: await fileDigest(modulesPath),

@@ -1,1 +1,1 @@
-{ "browserExports": ["."] }
+{ "browserExports": ["."], "coverageWorkers": 2 }
