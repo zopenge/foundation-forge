@@ -10,9 +10,14 @@
 | 协调器崩溃后的远端观察与资源收尾 | [managed-recovery-worker.test.ts](managed-recovery-worker.test.ts) 保留真实子进程、pre/post-receive hook、远端拒绝/接受、协调器退出/强制终止、进程身份和后代清理 | [managed-component-worker.mjs](helpers/managed-component-worker.mjs) 运行原公共入口，仅在测试子进程内把只读查询切换为普通真实执行；变更、应用命令及未知指令不切换 |
 | 已停止 run 可被正常入口归档，失败安装可恢复 | [managed-resume.test.ts](managed-resume.test.ts) 的停止凭证仍由真实 worker 生成；真实 pnpm postinstall 首次失败、再次安装、原失败回执及 node_modules 标记保留 | closed/cancelled 入口归档在 checkout 后、安装前明确停止；完整成功安装不在这两个状态组合重复执行 |
 | OS 归属、PID/后代、权限/链接、持久化与关闭不能被伪造 | managed-process、managed-terminal、managed-state-transaction、retirement 等测试及 process-control-node 的平台测试 | 不用组件适配器替代这些测试中的受管进程、文件身份或故障注入；完整端到端继续验证只读查询也接入受管日志 |
+| 文件预算、链接解析、超限取消及元数据写入峰值 | [managed-budget.test.ts](managed-budget.test.ts) 保留全部真实文件计量、硬链接/junction、增长子进程及关闭断言；完整受管发布继续执行 Git 准入与同一预算监控 | [managed-budget-fixture.ts](helpers/managed-budget-fixture.ts) 直接准备测试自有目录、真实文件身份与互斥锁；锚点写入调用生产 `atomicJson`，保留元数据预留及可用空间检查。此夹具只准备预算组件输入，不生成发布成功回执或替代来源冻结验证 |
 
 [component-session.test.ts](component-session.test.ts) 单独验证 session 与 worker 适配器：只读查询走真实查询，push、fetch、写 config、未知 Git/stream 指令及应用命令仍交给原受管边界。只读指令白名单位于 [component-command-runtime.mjs](helpers/component-command-runtime.mjs)，未知指令默认保留原执行，不按名称假定新指令安全。
 
+managed-process、managed-terminal 与 managed-recovery 的组件准备使用 [committed-fixture-source.ts](helpers/committed-fixture-source.ts)：输入 SHA 来自测试自身刚创建的真实提交，每次重新读取提交配置、blob 标识与实际 remote，不跨用例缓存。随后仍执行原 `openManagedSlot`、状态存储、受管执行器、真实进程及故障恢复；只有准备阶段不重复来源冻结准入。[committed-fixture-source.test.ts](committed-fixture-source.test.ts) 对照原冻结结果并检查新提交不会复用旧配置。来源冻结、脏树、分支、remote 与继承 Git 环境的专门测试，以及完整 managed-release 和 tarball 消费者继续使用完整入口。
+
 worker 运行已构建的 `dist`，遵循仓库先 build、再测试/打包的标准顺序。所有 helper 随仓库维护，动态仓库、文件和进程在测试自有的 `.tmp/` 目录生成并清理；不能依赖历史缓存、手工输入或忽略目录中的诊断脚本。调试 hook 仅用于采样，不能成为测试通过的前提。
+
+[managed-budget-fixture.test.ts](managed-budget-fixture.test.ts) 验证预算组件在 Git 不可用时仍可创建真实资源、写入原子元数据，并核对夹具之间的隔离与清理边界。预算夹具每次从空目录生成，不复用旧 `.tmp/` 内容。
 
 tarball smoke 仍使用两个独立仓库和完整受管调用链：alpha 通过真实 Node 子进程验证成功路径、CRLF 源文件及已退出协调器的历史退役拒绝；beta 先由 Node API 触发真实 postinstall 失败，再由 CLI 验证同 slot/路径恢复、失败回执、缓存、内部 junction、锁文件及冻结命令环境。两者都核对源文件/分支不变、远端 refs 不变。该矩阵避免每个项目重复所有 Node/CLI 组合，不以减少真实消费者或替换安装包为源代码来提速。

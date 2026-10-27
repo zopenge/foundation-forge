@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createManagedSession } from '../src/node/managed-process.js';
-import { freezeManagedSource } from '../src/node/source.js';
+import { committedFixtureSource } from './helpers/committed-fixture-source.js';
 import { openManagedSlot } from '../src/node/managed-paths.js';
 import { managedFixture } from './helpers/managed-fixture.js';
 import { currentCoordinator, identityReader } from '../src/node/process-identities.js';
@@ -36,7 +36,7 @@ afterEach(async () => {
 });
 const fixture = async () => {
   const f = await managedFixture(); fixtures.push(f);
-  const source = await freezeManagedSource(f.cwd, 'release.config.json', f.execution);
+  const source = await committedFixtureSource(f, f.sha);
   const slot = await openManagedSlot(source, f.execution);
   await mkdir(slot.paths.checkoutRoot);
   const session = await createManagedSession(slot, 'check'); sessions.push(session);

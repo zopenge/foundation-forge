@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, expect, it } from 'vitest';
 import { classifyRemoteRef, inspectManagedRecovery, runManagedReceiptCommand, selectManagedPublication } from '../src/node/managed-recovery.js';
-import { freezeManagedSource } from '../src/node/source.js';
+import { committedFixtureSource } from './helpers/committed-fixture-source.js';
 import { openManagedSlot } from '../src/node/managed-paths.js';
 import { git, managedFixture } from './helpers/managed-fixture.js';
 import type { ManagedReceipt, ManagedState } from '../src/node/release-context.js';
@@ -19,8 +19,8 @@ const fixture = async () => {
   const declared = 'https://github.com/fixture/repository.git';
   git(f.cwd, 'config', `url.${f.remote.replaceAll('\\', '/')}.insteadOf`, declared);
   git(f.cwd, 'remote', 'set-url', 'origin', declared); Object.assign(f.config.git, { repository: 'github.com/fixture/repository' });
-  await writeFile(resolve(f.cwd, 'release.config.json'), JSON.stringify(f.config)); f.commit();
-  const source = await freezeManagedSource(f.cwd, 'release.config.json', f.execution), slot = await openManagedSlot(source, f.execution);
+  await writeFile(resolve(f.cwd, 'release.config.json'), JSON.stringify(f.config)); const sha = f.commit();
+  const source = await committedFixtureSource(f, sha), slot = await openManagedSlot(source, f.execution);
   const receipt: ManagedReceipt = { schemaVersion: 2, slotId: slot.slotId, source,
     report: { schemaVersion: 2, command: 'publish', runId: slot.runId, sourceRoot: source.root, configPath: source.configPath,
       executionRoot: slot.paths.checkoutRoot, slotId: slot.slotId, ok: false, candidateSha: source.sha, configSha256: source.configSha256,
