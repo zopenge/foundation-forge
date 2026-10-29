@@ -10,6 +10,12 @@ export const createWindowsTestJobDiagnostics = native => {
   const image = kernel.func('__stdcall', 'QueryFullProcessImageNameW', 'int32_t', ['void *', 'uint32_t', 'void *', native.inout(native.pointer('uint32_t'))]);
   const fileTime = native.struct({ low: 'uint32_t', high: 'uint32_t' });
   const times = kernel.func('__stdcall', 'GetProcessTimes', 'int32_t', ['void *', ...Array(4).fill(native.out(native.pointer(fileTime)))]);
+  const basic = native.struct({ reserved1: 'uintptr_t', pebBaseAddress: 'uintptr_t', reserved2a: 'uintptr_t',
+    reserved2b: 'uintptr_t', uniqueProcessId: 'uintptr_t', parentProcessId: 'uintptr_t' });
+  if (native.sizeof('void *') !== 8 || native.sizeof(basic) !== 48 || native.offsetof(basic, 'uniqueProcessId') !== 32
+    || native.offsetof(basic, 'parentProcessId') !== 40) throw new Error('TEST_JOB_DIAGNOSTICS_ABI');
+  const parent = original('ntdll.dll').func('__stdcall', 'NtQueryInformationProcess', 'int32_t', ['void *', 'uint32_t',
+    native.out(native.pointer(basic)), 'uint32_t', native.out(native.pointer('uint32_t'))]);
   const handles = new Map(), roots = new Map(), rows = new Map();
   native.load = (...args) => {
     const library = original(...args);
@@ -41,6 +47,12 @@ export const createWindowsTestJobDiagnostics = native => {
                   const created = { low: 0, high: 0 };
                   row.created = times(values[0], created, { low: 0, high: 0 }, { low: 0, high: 0 }, { low: 0, high: 0 })
                     ? String((BigInt(created.high) << 32n) + BigInt(created.low)) : null;
+                  // 同一已确认归属的成员句柄只读父 PID；不打开父进程或扩大查询范围。
+                  const info = { reserved1: 0, pebBaseAddress: 0, reserved2a: 0, reserved2b: 0, uniqueProcessId: 0, parentProcessId: 0 }, length = [0];
+                  if (Number(parent(values[0], 0, info, 48, length)) !== 0 || length[0] !== 48
+                    || Number(info.uniqueProcessId) !== row.pid || !Number.isSafeInteger(Number(info.parentProcessId))
+                    || Number(info.parentProcessId) < 0 || Number(info.parentProcessId) > 0xffffffff) throw new Error('TEST_JOB_DIAGNOSTICS_PARENT');
+                  row.parentPid = Number(info.parentProcessId);
                 } catch { row.observationFailed = true; }
               }
             }
@@ -49,7 +61,7 @@ export const createWindowsTestJobDiagnostics = native => {
             if (row?.sampled && row.belongs && row.rootPid) {
               const kept = rows.get(row.rootPid) ?? [];
               const observation = { pid: row.pid, rootPid: row.rootPid, belongs: row.belongs, wait: row.wait,
-                exitCode: row.exitCode, image: row.image, created: row.created, lastActiveAt: row.lastActiveAt,
+                exitCode: row.exitCode, image: row.image, created: row.created, parentPid: row.parentPid, lastActiveAt: row.lastActiveAt,
                 ...(row.observationFailed ? { observationFailed: true } : {}) };
               kept.push(observation); if (kept.length > 64) kept.shift(); rows.set(row.rootPid, kept);
             }

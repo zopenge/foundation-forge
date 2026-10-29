@@ -4,11 +4,11 @@ import { createWindowsTestJobDiagnostics } from '../../packages/process-control-
 
 test('Job 失败诊断只读取已确认归属的成员并按根身份隔离、取出后释放', async () => {
   let nextHandle = 10;
-  const imageReads = [], timeReads = [];
+  const imageReads = [], timeReads = [], parentReads = [], identities = new Map();
   const library = { func: (...declaration) => {
     const name = declaration.find(value => typeof value === 'string' && !value.includes('__stdcall'));
     return (...args) => {
-      if (name === 'OpenProcess') return ++nextHandle;
+      if (name === 'OpenProcess') { const handle = ++nextHandle; identities.set(handle, args[2]); return handle; }
       if (name === 'AssignProcessToJobObject') return 1;
       if (name === 'IsProcessInJob') { args[2][0] = args[1] === 3 ? 0 : 1; return 1; }
       if (name === 'WaitForSingleObject') return 258;
@@ -17,10 +17,15 @@ test('Job 失败诊断只读取已确认归属的成员并按根身份隔离、�
         imageReads.push(args[0]); args[2].write('C:\\private\\node.exe', 'utf16le'); args[3][0] = 19; return 1;
       }
       if (name === 'GetProcessTimes') { timeReads.push(args[0]); args[1].low = 123; args[1].high = 45; return 1; }
+      if (name === 'NtQueryInformationProcess') {
+        parentReads.push(args[0]); args[2].uniqueProcessId = identities.get(args[0]);
+        args[2].parentProcessId = identities.get(args[0]) - 1; args[4][0] = 48; return 0;
+      }
       return 1;
     };
   } };
-  const native = { load: () => library, struct: value => value, pointer: value => value, out: value => value, inout: value => value };
+  const native = { load: () => library, struct: value => value, pointer: value => value, out: value => value, inout: value => value,
+    sizeof: value => typeof value === 'string' ? 8 : 48, offsetof: (_type, field) => field === 'uniqueProcessId' ? 32 : 40 };
   const diagnostics = createWindowsTestJobDiagnostics(native), kernel = native.load('kernel32.dll');
   const fn = name => kernel.func('__stdcall', name);
   const root = fn('OpenProcess')(0x1101, 0, 100);
@@ -35,7 +40,8 @@ test('Job 失败诊断只读取已确认归属的成员并按根身份隔离、�
   const first = diagnostics.take(100);
   assert.equal(first.length, 1); assert.equal(first[0].pid, 101); assert.equal(first[0].belongs, true);
   assert.equal(first[0].image, 'node.exe'); assert.match(first[0].created, /^\d+$/u);
+  assert.equal(first[0].parentPid, 100);
   assert.equal(diagnostics.take(100).length, 0); assert.equal(diagnostics.take(200)[0].pid, 201);
-  assert.equal(imageReads.length, 2); assert.equal(timeReads.length, 2);
+  assert.equal(imageReads.length, 2); assert.equal(timeReads.length, 2); assert.equal(parentReads.length, 2);
   assert.doesNotMatch(JSON.stringify(first), /private/u);
 });

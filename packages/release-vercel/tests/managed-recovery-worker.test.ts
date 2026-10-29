@@ -7,12 +7,20 @@ import type { ReleaseReport, ReleaseTransport } from '../src/contracts.js';
 import type { RecordedIdentity } from '../src/node/release-context.js';
 import { Execution } from '../src/node/execution.js';
 import { identityReader, processControl } from '../src/node/process-identities.js';
+import { managedOwnedScopeProvider } from '../src/node/owned-command-runner.js';
 import { managedFixture, git } from './helpers/managed-fixture.js';
 import { gitRoutingParameters } from './helpers/git-routing.js';
 import { captureFixtureAncestry } from './helpers/close-fixture-process.js';
 
 const fixtures: Awaited<ReturnType<typeof managedFixture>>[] = [];
-const runner = createNodeCommandRunner({ platform: process.platform === 'win32' ? 'win32' : 'posix', processControl: processControl(),
+const control = processControl(), reader = identityReader();
+const runner = createNodeCommandRunner({ platform: process.platform === 'win32' ? 'win32' : 'posix', ownedScopeProvider: managedOwnedScopeProvider(),
+  processControl: { ...control, listProcesses: async request => {
+    const pid = request?.pids?.length === 1 ? request.pids[0] : undefined;
+    if (pid === undefined) return control.listProcesses(request);
+    const observed = await reader.readIdentity({ pid, ...(request?.signal ? { signal: request.signal } : {}) });
+    return observed.status === 'FOUND' ? [observed.identity] : [];
+  } },
   terminationPolicy: { mode: 'force' }, terminationTimeoutMs: 10_000, identityAcquisition: { timeoutMs: 10_000, pollIntervalMs: 20 } });
 type Worker = ReturnType<typeof runner.start>;
 const workers: Worker[] = [];
@@ -30,7 +38,8 @@ const fixture = async () => {
 };
 function start(cwd: string, command: string, sha?: string): Worker {
   const worker = runner.start({ command: process.execPath, args: [resolve(import.meta.dirname, 'helpers/managed-push-phase-worker.mjs'), cwd, command, ...(sha ? [sha] : [])],
-    cwd, environment: { mode: 'inherit' }, output: { mode: 'capture', maxBytesPerStream: 1_048_576, overflow: 'fail' }, timeoutMs: 600_000 });
+    cwd, environment: { mode: 'inherit' }, ownedScope: { start: 'automatic', binding: `fixture-${command}` },
+    output: { mode: 'capture', maxBytesPerStream: 1_048_576, overflow: 'fail' }, timeoutMs: 600_000 });
   workers.push(worker); return worker;
 }
 const emptyTransport: ReleaseTransport = { api: async path => path.startsWith('/v9/projects') ? { id: 'prj_fixture', accountId: 'team_fixture', link: { type: 'github', org: 'fixture', repo: 'repository', repoId: 101, productionBranch: 'main', gitCredentialId: 'fixture', deployHooks: [] } } : { deployments: [] }, buildInfo: async () => ({}) };
@@ -58,6 +67,7 @@ it('reconciles a real rejected main push after its coordinator exits without rep
   await writeFile(resolve(f.remote, 'hooks/pre-receive'), '#!/bin/sh\nwhile read old new ref; do\n  if [ "$ref" = "refs/heads/main" ]; then exit 1; fi\ndone\n', { mode: 0o755 });
   const worker = start(f.cwd, 'rejected-main', f.sha), result = await worker.result;
   expect(result.exitCode, new TextDecoder().decode(result.stderr)).toBe(1);
+  expect(result.ownedScope).toMatchObject({ status: 'closed', reason: 'normal', empty: true });
   const report = JSON.parse(new TextDecoder().decode(result.stdout)) as ReleaseReport;
   expect(report).toMatchObject({ fixtureBoundary: 'push-phase', fixturePushes: [`${f.sha}:refs/heads/dev`, `${f.sha}:refs/heads/main`] });
   expect(report, `${JSON.stringify(report.error)}\n${new TextDecoder().decode(result.stderr)}`).toMatchObject({ ok: false, error: { code: 'GIT_FAILED' }, effects: { developmentPush: 'pushed', releasePush: 'unknown' }, processes: { status: 'closed' } });
@@ -110,14 +120,27 @@ it('keeps an accepted remote push unknown after a real coordinator crash instead
     expect(pending.processes.at(-1)).toMatchObject({ name: 'git', status: 'identified', observationComplete: false,
       identity: { pid: expect.any(Number), startToken: expect.any(String) },
       scope: { scopeId: expect.any(String), binding: expect.any(String) } });
-    const owner = await worker.identity; if (!owner) throw new Error('fixture coordinator identity missing');
+    const container = await worker.identity; if (!container) throw new Error('fixture container identity missing');
+    const coordinator: unknown = pending.coordinator;
+    if (!coordinator || typeof coordinator !== 'object') throw new Error('fixture coordinator identity missing');
+    const coordinatorPid = Reflect.get(coordinator, 'pid'), coordinatorToken = Reflect.get(coordinator, 'startToken');
+    if (typeof coordinatorPid !== 'number' || !Number.isSafeInteger(coordinatorPid) || coordinatorPid <= 0
+      || typeof coordinatorToken !== 'string' || !coordinatorToken) throw new Error('fixture coordinator identity invalid');
+    // 容器 broker 只负责夹具收尾；崩溃仍针对其内部真实 coordinator 的新鲜身份。
+    const ownership = await captureFixtureAncestry(container, coordinatorPid);
+    const owner = ownership.find(identity => identity.pid === coordinatorPid);
+    if (!owner || owner.startToken !== coordinatorToken || owner.pid === container.pid) throw new Error('fixture coordinator identity unbound');
     if (hookPid === undefined) throw new Error('fixture hook PID missing');
     fixturePhase = 'capture-ancestry';
     known.push(...await captureFixtureAncestry(owner, hookPid));
     fixturePhase = 'terminate-coordinator';
     await processControl().terminateProcess({ process: owner, policy: { mode: 'force' }, signal: AbortSignal.timeout(10_000) });
     fixturePhase = 'drain-coordinator';
-    await writeFile(barrier, 'release'); await worker.result; await waitForOwnerExit(worker);
+    await writeFile(barrier, 'release');
+    const completed = await worker.result;
+    // 这只是夹具全体后代已回收的资源事实，不能改写下方真实发布的 UNKNOWN。
+    expect(completed.ownedScope?.empty).toBe(true);
+    await waitForOwnerExit(worker);
     fixturePhase = 'close-descendants';
     for (const identity of known) await stopFixtureDescendant(identity);
     const before = await readFile(resolve(f.cwd, '.tmp/release-slot/run.lock'));

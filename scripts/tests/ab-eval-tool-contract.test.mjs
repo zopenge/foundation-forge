@@ -7,7 +7,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import { resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import process from 'node:process';
-import test from 'node:test';
+import test, { after } from 'node:test';
 
 import { freezePack } from '../ab-eval/manifest.mjs';
 import { probeMcpTools } from '../ab-eval/tool-contract.mjs';
@@ -26,20 +26,9 @@ const expectedSchemaSha256=sha('{"additionalProperties":false,'
 const tool=(name,inputSchema=schema)=>({name,description:'Test tool',inputSchema});
 const writeJson=(path,value)=>writeFile(path,`${JSON.stringify(value)}\n`);
 
-const withPack=async({server='repository.context',pages,declared=['investigate','read','continue'],
-  allowed=declared.map(name=>`repository_context_${name}`),schemas={},
-  permissionOverride,trace},fn)=>{
-  trace?.('pack-start');
-  await mkdir(tempRoot,{recursive:true});
-  const root=await mkdtemp(resolve(tempRoot,'r48-01-contract-'));
-  try{
-    const pack=resolve(root,'pack');
-    await mkdir(resolve(pack,'fixture'),{recursive:true});
-    await writeFile(resolve(pack,'fixture/source.txt'),'before\n');
-    await writeFile(resolve(pack,'candidate.tgz'),makeTarballFixture());
-    await writeFile(resolve(pack,'verify.mjs'),'process.exit(0);\n');
-    await writeJson(resolve(pack,'pages.json'),pages);
-    await writeFile(resolve(pack,'mcp.mjs'),`import {createInterface} from 'node:readline';
+const writeMcpServer=async(root,pages)=>{
+  await writeJson(resolve(root,'pages.json'),pages);
+  await writeFile(resolve(root,'mcp.mjs'),`import {createInterface} from 'node:readline';
 import {readFileSync} from 'node:fs';
 const pages=JSON.parse(readFileSync(new URL('./pages.json',import.meta.url),'utf8'));
 if(pages===null)process.exit(7);
@@ -55,6 +44,43 @@ for await(const line of createInterface({input:process.stdin})){
   }
 }
 `);
+};
+
+// 四个串行探针复用自有目录；完整冻结及双臂准备由下方 doctor 用例验收。
+let probeFixtureRoot, probeFixtureReady;
+after(async()=>{
+  if(probeFixtureRoot)await rm(probeFixtureRoot,{recursive:true,force:true});
+},{timeout:15000});
+const withMcpFixture=async({pages,trace},fn)=>{
+  trace?.('probe-fixture-start');
+  probeFixtureReady??=(async()=>{
+    await mkdir(tempRoot,{recursive:true});
+    const root=await mkdtemp(resolve(tempRoot,'r48-01-probe-'));
+    probeFixtureRoot=root;
+    const cwd=resolve(root,'work');
+    await mkdir(cwd);
+    return {root,cwd};
+  })();
+  const {root,cwd}=await probeFixtureReady;
+  // 前一探针已确认真实 child close，随后才写入下一次独立输入。
+  await writeMcpServer(root,pages);
+  trace?.('probe-fixture-ready');
+  await fn({serverPath:resolve(root,'mcp.mjs'),cwd});
+};
+
+const withPack=async({server='repository.context',pages,declared=['investigate','read','continue'],
+  allowed=declared.map(name=>`repository_context_${name}`),schemas={},
+  permissionOverride,trace},fn)=>{
+  trace?.('pack-start');
+  await mkdir(tempRoot,{recursive:true});
+  const root=await mkdtemp(resolve(tempRoot,'r48-01-contract-'));
+  try{
+    const pack=resolve(root,'pack');
+    await mkdir(resolve(pack,'fixture'),{recursive:true});
+    await writeFile(resolve(pack,'fixture/source.txt'),'before\n');
+    await writeFile(resolve(pack,'candidate.tgz'),makeTarballFixture());
+    await writeFile(resolve(pack,'verify.mjs'),'process.exit(0);\n');
+    await writeMcpServer(pack,pages);
     const names=allowed;
     const permission=permissionOverride??Object.fromEntries([
       ['*','deny'],...names.map(name=>[name,'allow'])]);
@@ -174,12 +200,12 @@ const withObservedChildren=async({holdClose=false,trace},fn)=>{
 };
 
 test('MCP tool probe waits for the real child close before returning',
-  {timeout:15000},t=>withMcpTimeline(t,trace=>withPack({pages:fullPages,trace},({root,runDir})=>
+  {timeout:15000},t=>withMcpTimeline(t,trace=>withMcpFixture({pages:fullPages,trace},({serverPath,cwd})=>
     withObservedChildren({trace},async observed=>{
       trace('probe-start');
       const result=await probeMcpTools({server:'fixture',
-        config:{type:'local',command:[process.execPath,resolve(root,'pack/mcp.mjs')]},
-        invocation:{cwd:resolve(runDir,'arms/pair-1-C/work'),env:process.env}});
+        config:{type:'local',command:[process.execPath,serverPath]},
+        invocation:{cwd,env:process.env}});
       trace('probe-end');
       assert.equal(result.tools.length,3);
       assert.equal(observed.length,1);
@@ -188,13 +214,13 @@ test('MCP tool probe waits for the real child close before returning',
 
 for(const protocolFailure of [false,true])test(
   `MCP tool probe bounds a missing close event with protocolFailure=${protocolFailure}`,
-  {timeout:15000},t=>withMcpTimeline(t,trace=>withPack({pages:protocolFailure
-    ?{first:{tools:null}}:fullPages,trace},({root,runDir})=>
+  {timeout:15000},t=>withMcpTimeline(t,trace=>withMcpFixture({pages:protocolFailure
+    ?{first:{tools:null}}:fullPages,trace},({serverPath,cwd})=>
     withObservedChildren({holdClose:true,trace},async observed=>{
       trace('probe-start');
       await assert.rejects(()=>probeMcpTools({server:'fixture',
-        config:{type:'local',command:[process.execPath,resolve(root,'pack/mcp.mjs')]},
-        invocation:{cwd:resolve(runDir,'arms/pair-1-C/work'),env:process.env}}),error=>{
+        config:{type:'local',command:[process.execPath,serverPath]},
+        invocation:{cwd,env:process.env}}),error=>{
         assert.equal(error.code,protocolFailure?'MCP_TOOL_PROBE_PROTOCOL_INVALID'
           :'MCP_TOOL_PROBE_CLOSE_TIMEOUT');
         if(protocolFailure)assert.equal(error.cause?.code,'MCP_TOOL_PROBE_CLOSE_TIMEOUT');
@@ -205,13 +231,13 @@ for(const protocolFailure of [false,true])test(
     }))));
 
 test('MCP tool probe closes the real child after a request deadline',
-  {timeout:15000},t=>withMcpTimeline(t,trace=>withPack({pages:fullPages,trace},({runDir})=>
+  {timeout:15000},t=>withMcpTimeline(t,trace=>withMcpFixture({pages:fullPages,trace},({cwd})=>
     withObservedChildren({trace},async observed=>{
       trace('probe-start');
       await assert.rejects(()=>probeMcpTools({server:'fixture',timeoutMs:50,
         config:{type:'local',command:[process.execPath,'-e',
           'process.stdin.resume();setInterval(()=>{},1000)']},
-        invocation:{cwd:resolve(runDir,'arms/pair-1-C/work'),env:process.env}}),
+        invocation:{cwd,env:process.env}}),
       {code:'MCP_TOOL_PROBE_TIMEOUT'});
       trace('probe-end');
       assert.equal(observed.length,1);

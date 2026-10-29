@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { createServer } from 'node:http';
+import { Server } from 'node:http';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import test from 'node:test';
@@ -12,6 +12,7 @@ import { createPublicConsumerEnvironment } from '../release-environment.mjs';
 import { installRegistryConsumer, runInstallCommand } from '../release-install.mjs';
 import { createPropagationBudget } from '../release-propagation.mjs';
 import { verifyRegistryPackages } from '../release-registry.mjs';
+import { serveFetchRegistry } from './helpers/fetch-registry-server.mjs';
 import { captureReleaseOutput } from './helpers/release-output.mjs';
 import { discoverTestProcessSupervisor } from '../test-process-runner.mjs';
 import { discoverWorkspacePackageModel } from '../workspace-packages.mjs';
@@ -40,7 +41,7 @@ const servePackage = async (context, root, initialFailure = '404') => {
   const integrity = `sha512-${createHash('sha512').update(bytes).digest('base64')}`;
   const requests = [];
   let installRequests = 0;
-  const server = createServer((request, response) => {
+  const registry = await serveFetchRegistry(context, (request, response) => {
     const install = request.headers['user-agent']?.startsWith('pnpm/');
     requests.push({ url: request.url, accept: request.headers.accept, authorization: request.headers.authorization, install });
     if (request.url === '/package.tgz') { response.end(bytes); return; }
@@ -58,9 +59,6 @@ const servePackage = async (context, root, initialFailure = '404') => {
       ? 'application/vnd.npm.install-v1+json' : 'application/json');
     response.end(JSON.stringify(metadata));
   });
-  await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
-  context.after(async () => { server.closeAllConnections(); await new Promise((done) => server.close(done)); });
-  const registry = `http://127.0.0.1:${String(server.address().port)}`;
   await writeFile(resolve(root, '.npmrc'), `registry=${registry}/\n`);
   await writeFile(resolve(root, 'pnpm-workspace.yaml'), 'packages: []\nautoInstallPeers: false\n');
   await writeFile(resolve(source, 'package.verify.json'), '{"browserExports": []}\n');
@@ -71,6 +69,26 @@ const servePackage = async (context, root, initialFailure = '404') => {
     packageRoot: source, exports: [{ specifier: name, subpath: '.', importTarget: './index.js' }], bins: [], workspaceDependencies: [],
   } };
 };
+
+test('registry 夹具避开 Fetch 禁止端口后仍能读取真实元数据', { timeout: 45_000 }, async (context) => {
+  const root = await fixture(context);
+  const address = Server.prototype.address;
+  let firstAddress = true;
+  // 只控制系统分配地址的边界；实际监听继续使用端口 0，不占用固定端口。
+  context.mock.method(Server.prototype, 'address', function (...args) {
+    const actual = address.apply(this, args);
+    if (firstAddress && actual !== null) {
+      firstAddress = false;
+      return { ...actual, port: 10080 };
+    }
+    return actual;
+  });
+  const { name, registry } = await servePackage(context, root);
+  const response = await globalThis.fetch(`${registry}/${encodeURIComponent(name)}`);
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).name, name);
+  assert.notEqual(new URL(registry).port, '10080');
+});
 
 test('真实 pnpm 在元数据已通过后遇到首次 404，重试安装 tarball 并通过导入和 smoke', { timeout: 45_000 }, async (context) => {
   const root = await fixture(context);
