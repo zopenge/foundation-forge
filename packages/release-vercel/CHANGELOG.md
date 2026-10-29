@@ -1,5 +1,14 @@
 # @openge/forge-release-vercel
 
+## 0.3.2
+
+### Patch Changes
+
+- da5b896: 通过同一次受管 Git status 观察核对候选分支、HEAD 和脏状态，减少重复进程授权与日志持久化。元数据沿用有界 NUL 流协议，不占用应用输出捕获预算；缺失/重复元数据或进程关闭失败仍拒绝继续，诊断保留原脱敏规则。
+- 9141224: 合并受管发布路径的 HEAD/索引跟踪检查，减少重复 Git 进程启动；保持逐次重新检查、祖先路径、暂存删除及 Windows 大小写保护。
+- Updated dependencies [7949fbe]
+  - @openge/forge-process-control-node@0.5.0
+
 ## 0.3.1
 
 ### Patch Changes
