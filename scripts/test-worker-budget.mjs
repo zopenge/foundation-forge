@@ -1,6 +1,8 @@
+export const testWorkerTiers = Object.freeze([1, 2, 4, 8]);
+
 export const testWorkerLimit = (value = process.env.FORGE_CHECK_TEST_WORKERS ?? '2') => {
   const limit = Number(value);
-  if (!['1', '2'].includes(String(value)) || !Number.isSafeInteger(limit)) throw new Error('test worker budget must be 1 or 2');
+  if (!testWorkerTiers.some(tier => String(tier) === String(value))) throw new Error('test worker budget must be 1, 2, 4 or 8');
   return limit;
 };
 

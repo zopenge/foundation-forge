@@ -1,0 +1,2 @@
+@IF NOT DEFINED FORGE_CHECK_NODE EXIT /B 1
+@"%FORGE_CHECK_NODE%" "%~dp0pnpm.cjs" %*

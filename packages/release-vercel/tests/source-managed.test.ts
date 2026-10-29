@@ -91,7 +91,7 @@ it('rejects LFS pointer content instead of accepting an incomplete checkout', as
 it.each(['120000', '160000', 'newline'])('rejects unsupported committed tree entry %s', async mode => {
   const f = await fixture(); const source = await freezeManagedSource(f.cwd, 'release.config.json', f.execution);
   const oid = mode === '160000' ? f.sha : git(f.cwd, 'rev-parse', 'HEAD:source.txt');
-  const tree = spawnSync('git', ['hash-object', '-t', 'tree', '--stdin', '--literally', '-w'], { cwd: f.cwd, shell: false,
+  const tree = spawnSync('git', ['hash-object', '-t', 'tree', '--stdin', '--literally', '-w'], { cwd: f.cwd, shell: false, windowsHide: true,
     input: Buffer.concat([Buffer.from(`${mode === 'newline' ? '100644' : mode} ${mode === 'newline' ? 'bad\nname' : 'unsupported'}\0`), Buffer.from(oid, 'hex')]), encoding: 'utf8' });
   expect(tree.status, tree.stderr).toBe(0);
   const sha = git(f.cwd, 'commit-tree', tree.stdout.trim(), '-p', f.sha, '-m', 'synthetic tree');

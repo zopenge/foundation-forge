@@ -5,7 +5,7 @@ import { record, ReleaseError } from './errors.js';
 import { assertManagedPaths, assertManagementUntracked } from './managed-paths.js';
 import { fileIdentity, measureManagedUsage, pathExists, readBoundedJson, sameIdentity } from './managed-io.js';
 import { parseManagedState } from './managed-state.js';
-import { Execution } from './execution.js';
+import { createManagedExecution } from './managed-execution.js';
 import { hasManagedDisposition } from './managed-disposition.js';
 import { acquireRetirementLease } from './retirement-lease.js';
 import { readRetirementHost } from './retirement-host.js';
@@ -16,7 +16,7 @@ import { assertManagedHistory } from './managed-history.js';
 
 export async function claimManagedRecovery(paths: ManagedPaths, state: ManagedState, signal?: AbortSignal): Promise<{ readonly claim: OwnedLock; readonly oldLock?: OwnedLock }> {
   await assertManagedPaths(paths);
-  const management = new Execution(state.source.root, state.source.config, undefined, []);
+  const management = createManagedExecution(state.source.root, state.source.config, undefined, []);
   await assertManagementUntracked(state.source, management);
   const config = state.source.config.source;
   if (config.mode !== 'managed-commit') throw new ReleaseError('SOURCE_UNSUPPORTED');

@@ -8,6 +8,7 @@ import { hasVerifiedManagedClosure, hasVerifiedManagedStop } from './managed-clo
 import type { ManagedCommand } from './release-context.js';
 import { validRetirementHost } from './retirement-host.js';
 import { metadataReserveBytes } from './managed-metadata.js';
+import { checkoutObservationPlan } from './managed-observation.js';
 
 const uuid = /^[a-f0-9-]{36}$/u, sha = /^[a-f0-9]{40}$/u;
 function boundSource(value: unknown, source: FrozenSource): asserts value is FrozenSource {
@@ -31,7 +32,7 @@ function validateEffects(value: unknown): void {
   const item = record(value);
   if (![item.developmentPush, item.releasePush].every(effect => ['not-attempted', 'pushed', 'already-current', 'unknown', 'not-current'].includes(String(effect)))) throw new ReleaseError('SLOT_STATE', { reason: 'EFFECTS' });
 }
-export function parseManagedState(value: unknown, source: FrozenSource, slotId: string): ManagedState {
+export function parseManagedState(value: unknown, source: FrozenSource, slotId: string, embeddedObservation = false): ManagedState {
   const item = record(value), owner = record(item.coordinator);
   if ((item.schemaVersion !== 2 && item.schemaVersion !== 3) || item.slotId !== slotId || typeof item.runId !== 'string' || !uuid.test(item.runId)
     || !['check', 'publish', 'verify'].includes(String(item.command)) || !['running', 'closed', 'unknown'].includes(String(item.status))
@@ -53,6 +54,25 @@ export function parseManagedState(value: unknown, source: FrozenSource, slotId: 
     const command = record(value);
     if (typeof command.id !== 'string' || typeof command.name !== 'string' || !['intent', 'spawned', 'identified', 'closed', 'stopped', 'unknown'].includes(String(command.status))
       || typeof command.observationComplete !== 'boolean' || !Array.isArray(command.descendants)) throw new ReleaseError('SLOT_STATE', { reason: 'PROCESS' });
+    if (command.kind !== undefined) {
+      const observations = command.observations;
+      if (item.schemaVersion !== 3 || command.kind !== 'checkout-observation' || command.name !== 'checkout-frozen' || !uuid.test(command.id)
+        || command.identity !== undefined || command.scope !== undefined || command.pid !== undefined || command.closure !== undefined || command.descendants.length !== 0
+        || !Array.isArray(observations) || observations.length > 5 || !['intent', 'closed', 'stopped', 'unknown'].includes(String(command.status))
+        || JSON.stringify(command.plan) !== JSON.stringify(checkoutObservationPlan(item.source as FrozenSource))
+        || observations.some((entry, index) => {
+          const child = record(entry), plan = checkoutObservationPlan(item.source as FrozenSource)[index];
+          return child.kind !== undefined || child.plan !== undefined || child.observations !== undefined || child.terminalSha256 !== undefined
+            || typeof child.id !== 'string' || !uuid.test(child.id) || child.name !== plan?.name;
+        }) || new Set(observations.map(entry => record(entry).id)).size !== observations.length) throw new ReleaseError('SLOT_STATE', { reason: 'OBSERVATION_PLAN' });
+      // 子项沿用原身份、授权绑定与关闭见证校验；禁止嵌套批次。
+      parseManagedState({ ...item, processes: observations }, source, slotId, true);
+      const batch = value as ManagedCommand;
+      if (command.terminalSha256 !== undefined && (typeof command.terminalSha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(command.terminalSha256))) throw new ReleaseError('SLOT_STATE', { reason: 'TERMINAL_DIGEST' });
+      if (['closed', 'stopped'].includes(String(command.status)) && !hasVerifiedManagedStop(batch)) throw new ReleaseError('SLOT_STATE', { reason: 'OBSERVATION_STOP' });
+      continue;
+    }
+    if (command.plan !== undefined || command.observations !== undefined) throw new ReleaseError('SLOT_STATE', { reason: 'OBSERVATION_KIND' });
     for (const value of [command.identity, ...command.descendants].filter(value => value !== undefined)) {
       const identity = record(value);
       if (!Number.isSafeInteger(identity.pid) || Number(identity.pid) <= 0 || typeof identity.startToken !== 'string' || identity.startToken === '') throw new ReleaseError('SLOT_STATE', { reason: 'PROCESS_IDENTITY' });
@@ -77,7 +97,7 @@ export function parseManagedState(value: unknown, source: FrozenSource, slotId: 
         || !Number.isFinite(Date.parse(closure.observedAt)) || (closure.exitCode !== null && !Number.isSafeInteger(closure.exitCode))) throw new ReleaseError('SLOT_STATE', { reason: 'CLOSURE_WITNESS' });
       if ((command.scope !== undefined || owned !== undefined) && !hasVerifiedManagedClosure(value as ManagedCommand)) throw new ReleaseError('SLOT_STATE', { reason: 'SCOPE_CLOSURE_BINDING' });
     }
-    if (command.status === 'stopped' && (!command.terminalSha256 || !hasVerifiedManagedStop(value as ManagedCommand))) throw new ReleaseError('SLOT_STATE', { reason: 'STOP_WITNESS' });
+    if (command.status === 'stopped' && ((!embeddedObservation && !command.terminalSha256) || !hasVerifiedManagedStop(value as ManagedCommand))) throw new ReleaseError('SLOT_STATE', { reason: 'STOP_WITNESS' });
   }
   return value as ManagedState;
 }

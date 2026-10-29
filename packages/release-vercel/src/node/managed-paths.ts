@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, relative, resolve } from 'node:path';
 import { Execution } from './execution.js';
+import { createManagedExecution } from './managed-execution.js';
 import { record, ReleaseError } from './errors.js';
 import type { FrozenSource, ManagedPaths, ManagedSlot } from './release-context.js';
 import { assertPathChain, fileIdentity, measureManagedUsage, pathExists, readBoundedJson, sameIdentity, within } from './managed-io.js';
@@ -115,7 +116,7 @@ export async function openManagedSlot(source: FrozenSource, execution: Execution
   const admissionBytes = 1024 + metadataReserveBytes + (created ? Buffer.byteLength(ownerJson) : 0);
   if (Buffer.byteLength(ownerJson) > 65_536 || usage.bytes + admissionBytes > budget.maxBytes || usage.freeBytes - admissionBytes < budget.minFreeBytes) throw new ReleaseError('BUDGET_EXCEEDED', { reason: 'SLOT_ADMISSION' });
   const rawLock = await acquireLock(paths.lockPath, { runId, identity: coordinator });
-  const management = new Execution(source.root, source.config, undefined, []);
+  const management = createManagedExecution(source.root, source.config, undefined, []);
   const assertOwned = async () => { await assertManagedPaths(paths); await assertManagementUntracked(source, management); await rawLock.assertOwned(); };
   const lock = { assertOwned, release: async () => { await assertOwned(); await rawLock.release(); } };
   try {

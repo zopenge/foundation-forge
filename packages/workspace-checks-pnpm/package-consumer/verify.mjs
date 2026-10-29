@@ -30,7 +30,7 @@ const result = spawnSync(process.execPath, [
   cycle,
   '--check',
   'package-cycles',
-], { encoding: 'utf8', shell: false });
+], { encoding: 'utf8', shell: false, windowsHide: true });
 if (result.status !== 1 || result.stdout.length !== 0 || !result.stderr.includes('a -> b -> a')) {
   throw new Error('workspace checks cycle CLI consumer smoke failed');
 }

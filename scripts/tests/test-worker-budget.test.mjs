@@ -61,6 +61,20 @@ test('invalid limits and worker requests cannot start a task outside the approve
   assert.equal(started, false); assert.equal(budget.summary().activeWorkers, 0);
 });
 
+test('approved four and eight worker tiers retain weighted reservations until closure', async () => {
+  for (const limit of [4, 8]) {
+    const budget = create({ limit }), close = gate(), order = [];
+    const work = [0, 1, 2].map(index => budget.run({ name: `group-${index}`, workers: limit / 2 }, async () => {
+      order.push(index); await close.promise;
+    }));
+    await setImmediate();
+    assert.deepEqual(order, [0, 1]); assert.equal(budget.summary().activeWorkers, limit);
+    close.resolve(); await Promise.all(work);
+    assert.deepEqual(order, [0, 1, 2]); assert.equal(budget.summary().peakWorkers, limit);
+    assert.equal(budget.summary().activeWorkers, 0);
+  }
+});
+
 test('a non-Error rejection also stops the queued task', async () => {
   const budget = create({ limit: 1 }); let started = false;
   const first = budget.run({ name: 'non-error', workers: 1 }, () => Promise.reject(undefined));

@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { delimiter, dirname, resolve, win32 } from 'node:path';
 import { createNodeCommandRunner } from '@openge/forge-command-runner/node';
+import type { ProcessIdentityReader } from '@openge/forge-process-control';
 import { createPosixProcessControl, createPosixProcessIdentityReader, createWindowsProcessControl, createWindowsProcessIdentityReader } from '@openge/forge-process-control-node';
 import type { ReleaseCheck, ReleaseConfig, ReleaseErrorCode, ReleaseStep } from '../contracts.js';
 import { assertActive, redact, ReleaseError } from './errors.js';
@@ -10,7 +11,7 @@ import type { ExecutionLifecycle } from './release-context.js';
 import { managedOwnedScopeProvider } from './owned-command-runner.js';
 
 // 自动维护也属于本次 Git 命令；通过单次配置保持前台，不修改宿主或仓库设置。
-const foregroundGitArguments = ['-c', 'maintenance.autoDetach=false', '-c', 'gc.autoDetach=false'];
+export const foregroundGitArguments = ['-c', 'maintenance.autoDetach=false', '-c', 'gc.autoDetach=false'];
 
 export function resolveInvocation(command: string, args: readonly string[]): { command: string; args: readonly string[] } {
   if (command === 'node') return { command: process.execPath, args };
@@ -38,10 +39,13 @@ export function vercelInvocation(args: readonly string[]): { command: string; ar
 }
 export class Execution {
   private readonly runner: ReturnType<typeof createNodeCommandRunner>;
+  observeCheckout<T>(operation: () => Promise<T>): Promise<T> {
+    return this.lifecycle?.observeCheckout ? this.lifecycle.observeCheckout(operation) : operation();
+  }
   constructor(readonly cwd: string, readonly config: Pick<ReleaseConfig, 'limits'>, readonly signal: AbortSignal | undefined,
-    readonly steps: ReleaseStep[], private readonly lifecycle?: ExecutionLifecycle) {
+    readonly steps: ReleaseStep[], private readonly lifecycle?: ExecutionLifecycle, selectedReader?: ProcessIdentityReader) {
     const control = process.platform === 'win32' ? createWindowsProcessControl({ listenerBackend: 'netstat' }) : createPosixProcessControl({ listenerBackend: 'lsof' });
-    const reader = process.platform === 'win32' ? createWindowsProcessIdentityReader() : createPosixProcessIdentityReader();
+    const reader = selectedReader ?? (process.platform === 'win32' ? createWindowsProcessIdentityReader() : createPosixProcessIdentityReader());
     this.runner = createNodeCommandRunner({ platform: process.platform === 'win32' ? 'win32' : 'posix',
       ...(lifecycle ? { ownedScopeProvider: managedOwnedScopeProvider() } : {}),
       processControl: { ...control, listProcesses: async request => {

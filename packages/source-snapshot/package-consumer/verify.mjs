@@ -39,15 +39,15 @@ const base = await mkdtemp(join(process.cwd(), 'source-snapshot-consumer-'));
 const source = join(base, 'source'); const target = join(base, 'target'); const state = join(base, 'state');
 await Promise.all([mkdir(source), mkdir(target), mkdir(state)]);
 try {
-  execFileSync('git', ['init', '--quiet'], { cwd: source });
-  execFileSync('git', ['config', 'user.email', 'snapshot-test@example.invalid'], { cwd: source });
-  execFileSync('git', ['config', 'user.name', 'Snapshot Test'], { cwd: source });
+  execFileSync('git', ['init', '--quiet'], { cwd: source, windowsHide: true });
+  execFileSync('git', ['config', 'user.email', 'snapshot-test@example.invalid'], { cwd: source, windowsHide: true });
+  execFileSync('git', ['config', 'user.name', 'Snapshot Test'], { cwd: source, windowsHide: true });
   await writeFile(join(source, '.gitignore'), 'ignored/\n', 'utf8');
   await writeFile(join(source, 'tracked.ts'), 'export const tracked = 1\n', 'utf8');
   await writeFile(join(source, 'untracked.ts'), 'export const untracked = 1\n', 'utf8');
   await mkdir(join(source, 'ignored')); await writeFile(join(source, 'ignored', 'hidden.ts'), '', 'utf8');
-  execFileSync('git', ['add', '.gitignore', 'tracked.ts'], { cwd: source });
-  execFileSync('git', ['commit', '--quiet', '-m', 'baseline'], { cwd: source });
+  execFileSync('git', ['add', '.gitignore', 'tracked.ts'], { cwd: source, windowsHide: true });
+  execFileSync('git', ['commit', '--quiet', '-m', 'baseline'], { cwd: source, windowsHide: true });
   const inventory = await collectSourceInventory({ sourceRoot: source });
   assert.deepEqual(inventory.entries.map(value => value.projectPath), ['.gitignore', 'tracked.ts', 'untracked.ts']);
 

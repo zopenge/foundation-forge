@@ -7,15 +7,16 @@ import { managedFixture } from './helpers/managed-fixture.js';
 import { managedRuns } from './helpers/managed-runs.js';
 import type { ManagedSession } from '../src/node/release-context.js';
 import { ReleaseError } from '../src/node/errors.js';
-import { commandComponentSession, publicationComponentSession } from './helpers/component-session.js';
+import { commandComponentSession, protocolComponentSlot, publicationComponentSession } from './helpers/component-session.js';
 
 const component = vi.hoisted(() => ({ stopAfterCheckout: false }));
 // 协调器退出与停止凭证仍由真实 worker 生成；入口归档在 checkout 边界验证，不重复完整成功安装。
 // postinstall 失败/恢复仍实际执行 pnpm 和受管应用进程，不能以伪造回执代替。
+// 当前进程 session 使用真实路径/原始锁/存储的协议守卫；独立 worker、恢复入口及初始准入保持原样。
 vi.mock('../src/node/managed-process.js', async importOriginal => {
   const actual = await importOriginal<typeof import('../src/node/managed-process.js')>();
   return { ...actual, createManagedSession: async (...args: Parameters<typeof actual.createManagedSession>) =>
-    publicationComponentSession(await actual.createManagedSession(...args)) };
+    publicationComponentSession(await actual.createManagedSession(protocolComponentSlot(args[0]), args[1], args[2])) };
 });
 vi.mock('../src/node/managed-checkout.js', async importOriginal => {
   const actual = await importOriginal<typeof import('../src/node/managed-checkout.js')>();

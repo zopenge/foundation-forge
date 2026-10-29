@@ -5,7 +5,7 @@ import process from 'node:process';
 import { listRepositoryFiles } from '@openge/forge-repository-files';
 
 const runGit = (args) => {
-  const result = spawnSync('git', args, { encoding: 'utf8', shell: false });
+  const result = spawnSync('git', args, { encoding: 'utf8', shell: false, windowsHide: true });
   if (result.status !== 0) throw new Error(result.stderr || 'git consumer fixture failed');
 };
 runGit(['init', '--quiet']);

@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import type { ReleaseDeployment, ReleaseDiagnostic, ReleaseReport, ReleaseStage, RunReleaseOptions } from '../contracts.js';
 import type { FrozenSource, ManagedSession, ManagedSlot } from './release-context.js';
 import { assertActive, record, ReleaseError } from './errors.js';
-import { Execution } from './execution.js';
+import { createManagedExecution } from './managed-execution.js';
 import { assertSourceFrozen, freezeManagedSource, inspectCommitTree } from './source.js';
 import { openManagedSlot } from './managed-paths.js';
 import { createManagedSession } from './managed-process.js';
@@ -14,6 +14,7 @@ import { recoveryCommand } from './release-commands.js';
 import { settleManagedSlot } from './managed-recovery.js';
 import { archiveManagedDisposition } from './managed-disposition.js';
 import { assertManagedRemoteSettled } from './managed-remote-state.js';
+import { managedCommandIdentities } from './managed-observation.js';
 
 export async function runManagedRelease(options: RunReleaseOptions): Promise<ReleaseReport> {
   const startedAt = new Date().toISOString();
@@ -25,7 +26,7 @@ export async function runManagedRelease(options: RunReleaseOptions): Promise<Rel
     startedAt, finishedAt: new Date().toISOString(), steps: session?.steps ?? [], effects: session?.state.effects ?? emptyEffects,
     stage: session?.state.stage ?? stage, ...(source ? { sourceRoot: source.root, candidateSha: source.sha, configPath: source.configPath, configSha256: source.configSha256 } : {}),
     ...(slot ? { slotId: slot.slotId, runId: slot.runId, executionRoot: slot.paths.checkoutRoot } : {}),
-    ...(session ? { budget: session.budget.summary(), processes: { status: closed ? 'closed' : 'unknown', knownCount: new Set(session.state.processes.flatMap(command => [...command.descendants, ...(command.identity ? [command.identity] : [])]).map(identity => `${String(identity.pid)}:${identity.startToken}`)).size } } : {}),
+    ...(session ? { budget: session.budget.summary(), processes: { status: closed ? 'closed' : 'unknown', knownCount: new Set(session.state.processes.flatMap(managedCommandIdentities).map(identity => `${String(identity.pid)}:${identity.startToken}`)).size } } : {}),
     ...(result ? { deployment: result } : {}), ...(failure ? { error: failure } : {}),
     ...(slot && source ? { recovery: { candidateSha: source.sha, reportPath: resolve(slot.paths.slotRoot, options.command === 'publish' ? 'latest-publish.json' : 'latest-check.json'),
       nextCommand: recoveryCommand(retained || !closed || Object.values(session?.state.effects ?? emptyEffects).includes('unknown') ? 'recover' : options.command === 'publish' && ['pushed', 'already-current'].includes(session?.state.effects.releasePush ?? '') ? 'verify' : options.command, source) } } : {}) });
@@ -34,7 +35,7 @@ export async function runManagedRelease(options: RunReleaseOptions): Promise<Rel
     if (options.config !== undefined) throw new ReleaseError('SOURCE_UNSUPPORTED', { reason: 'COMMITTED_CONFIG_REQUIRED' });
     if (!['check', 'publish'].includes(options.command)) throw new ReleaseError('SOURCE_UNSUPPORTED', { reason: 'MANAGED_RECEIPT_REQUIRED' });
     const entry = await readConfig(resolve(options.cwd, options.configPath ?? 'release.config.json'));
-    const original = new Execution(options.cwd, entry, options.signal, []);
+    const original = createManagedExecution(options.cwd, entry, options.signal, []);
     source = await freezeManagedSource(options.cwd, options.configPath ?? 'release.config.json', original);
     await inspectCommitTree(source, original);
     stage = 'admission'; await settleManagedSlot(options); slot = await openManagedSlot(source, original);

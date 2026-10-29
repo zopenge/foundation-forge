@@ -1,1 +1,2 @@
-{ "browserExports": ["."], "coverageWorkers": 2 }
+{ "browserExports": ["."], "coverageWorkers": 8,
+  "quickTests": ["tests/config.test.ts", "tests/git.test.ts", "tests/retirement-cli.test.ts"] }

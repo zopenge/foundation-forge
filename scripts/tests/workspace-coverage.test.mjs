@@ -37,6 +37,7 @@ test('coverage publication installs every new report and its matching summary', 
     assert.equal(await readFile(resolve(report.logRoot, 'coverage/new.txt'), 'utf8'), ['a', 'b'][index]);
   }
   assert.deepEqual(JSON.parse(await readFile(resolve(fixture.root, 'coverage-summary.json'), 'utf8')), fixture.summary);
+  assert.equal((await readdir(fixture.root)).some(name => name.startsWith('coverage-publish-')), false);
 });
 
 test('coverage publication retains recovery data and reports both errors if rollback fails', async t => {
@@ -59,6 +60,7 @@ test('coverage publication preserves old reports when summary writing fails', as
   const fixture = await publicationFixture(t), failure = Object.assign(new Error('injected write failure'), { code: 'EIO' });
   await assert.rejects(publishCoverageReports({ ...fixture, write: async () => { throw failure; } }), error => error === failure);
   await assertOldPublication(fixture);
+  assert.equal((await readdir(fixture.root)).some(name => name.startsWith('coverage-publish-')), false);
 });
 
 test('coverage publication rolls every report back when the final summary replacement fails', async t => {
@@ -70,18 +72,29 @@ test('coverage publication rolls every report back when the final summary replac
     await rename(from, to);
   } }), error => error === failure);
   assert.equal(injected, true); await assertOldPublication(fixture);
+  assert.equal((await readdir(fixture.root)).some(name => name.startsWith('coverage-publish-')), false);
 });
 
-test('coverage publication keeps every old report when a later report cannot be copied', async () => {
+test('coverage publication keeps every old report when a later report cannot be copied', async t => {
   await mkdir(resolve('.tmp/tests'), { recursive: true });
   const root = await mkdtemp(resolve('.tmp/tests', 'coverage-publication-'));
+  const cliPath = resolve(root, 'pnpm.cjs'), previousExecPath = process.env.npm_execpath;
+  t.after(() => {
+    if (previousExecPath === undefined) {
+      if (!Reflect.deleteProperty(process.env, 'npm_execpath')) throw new TypeError('Cannot restore npm_execpath');
+    } else process.env.npm_execpath = previousExecPath;
+  });
   try {
+    // execute 已注入；命令组装只依赖自有占位入口，不能探测宿主安装或真实运行它。
+    await writeFile(cliPath, 'throw new Error("coverage command must stay injected");\n');
+    process.env.npm_execpath = cliPath;
     const packages = await Promise.all(['a', 'b'].map(async name => {
       const packageRoot = resolve(root, name); await mkdir(resolve(packageRoot, 'coverage'), { recursive: true });
       await writeFile(resolve(packageRoot, 'coverage/old.txt'), name);
       return { name, packageRoot, verification: { coverageWorkers: 1 }, manifest: { scripts: { 'test:coverage': 'vitest run --coverage' } } };
     }));
     const context = { root, budget: createTestWorkerBudget({ limit: 2 }), execute: async spec => {
+      if (process.platform === 'win32') { assert.equal(spec.command, process.execPath); assert.equal(spec.args[0], cliPath); }
       await mkdir(spec.logRoot, { recursive: true });
       await writeFile(resolve(spec.logRoot, 'results.json'), JSON.stringify({ success: true, numFailedTests: 0, numPassedTests: 1, numPendingTests: 0, testResults: [] }));
       if (spec.name === 'a') { await mkdir(resolve(spec.logRoot, 'coverage')); await writeFile(resolve(spec.logRoot, 'coverage/new.txt'), spec.name); }
@@ -90,6 +103,7 @@ test('coverage publication keeps every old report when a later report cannot be 
     await assert.rejects(runWorkspaceCoverage({ packages, context }), { code: 'ENOENT' });
     for (const value of packages) assert.equal(await readFile(resolve(value.packageRoot, 'coverage/old.txt'), 'utf8'), value.name);
     assert.equal(await readFile(resolve(root, 'coverage-summary.json'), 'utf8'), 'old summary');
+    assert.equal((await readdir(root)).some(name => name.startsWith('coverage-publish-')), false);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -122,14 +136,14 @@ test('coverage scheduling discovers test files and starts larger suites first', 
   }
 });
 
-test('ordinary coverage packages share two workers without adding another package pool', async () => {
+test('explicit single-worker packages share two workers without adding another package pool', async () => {
   await mkdir(resolve('.tmp/tests'), { recursive: true });
   const root = await mkdtemp(resolve('.tmp/tests', 'coverage-concurrency-'));
   try {
     const packages = await Promise.all(['one', 'two', 'three'].map(async (name) => {
       const packageRoot = resolve(root, name);
       await mkdir(packageRoot, { recursive: true });
-      await writeFile(resolve(packageRoot, 'package.verify.json'), '{"browserExports":[]}');
+      await writeFile(resolve(packageRoot, 'package.verify.json'), '{"browserExports":[],"coverageWorkers":1}');
       return { name, packageRoot, exports: [], bins: [],
         manifest: { scripts: { 'test:coverage': 'vitest run --coverage' } } };
     }));

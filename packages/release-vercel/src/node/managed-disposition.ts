@@ -6,6 +6,7 @@ import { record, ReleaseError } from './errors.js';
 import { assertPathChain, atomicJson, readBoundedJson, readBoundedText } from './managed-io.js';
 import { assertMetadataFile, assertMetadataPaths, inspectMetadataFile, metadataDigest, type MetadataFile } from './managed-metadata.js';
 import { hasVerifiedManagedStop } from './managed-closure.js';
+import { matchesObservationBinding } from './managed-observation.js';
 import { parseManagedReceipt, parseManagedState, summarizeReport } from './managed-state.js';
 
 const historyLimit = 8_388_608;
@@ -49,6 +50,7 @@ export function parseManagedDisposition(value: unknown): ManagedDisposition {
     if (!stopped || command.id !== stopped.id || command.name !== stopped.name) return false;
     if (index < original.processes.length - 1) return JSON.stringify(command) === JSON.stringify(stopped);
     return (command.scope === undefined || JSON.stringify(command.scope) === JSON.stringify(stopped.scope))
+      && matchesObservationBinding(command, stopped)
       && (command.identity === undefined || JSON.stringify(command.identity) === JSON.stringify(stopped.identity))
       && (command.terminalSha256 === undefined || command.terminalSha256 === stopped.terminalSha256)
       && JSON.stringify(command.descendants) === JSON.stringify(stopped.descendants);

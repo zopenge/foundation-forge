@@ -46,6 +46,7 @@ const createCheckWorkspace = async (context, scenario) => {
     await copyFile(new URL('../' + name, import.meta.url), resolve(root, 'scripts', name));
   }
   const fingerprintUrl = JSON.stringify(new URL('../check-fingerprint.mjs', import.meta.url).href);
+  await put('scripts/check-cancellation.mjs', `export { openCheckCancellation } from ${JSON.stringify(new URL('../check-cancellation.mjs', import.meta.url).href)};\n`);
   await put('scripts/test-run-context.mjs', `export { createTestRunContext } from ${JSON.stringify(new URL('../test-run-context.mjs', import.meta.url).href)};\n`);
   await put('packages/leaf/test-process-scope.mjs', `export { createTestProcessSupervisor } from ${JSON.stringify(new URL('../../packages/process-control-node/test-process-scope.mjs', import.meta.url).href)};\n`);
   await put('scripts/run-script-tests.mjs', [
@@ -108,6 +109,7 @@ const createCheckWorkspace = async (context, scenario) => {
     'import { resolve } from "node:path";',
     'const args = process.argv.slice(2);',
     'const scenario = JSON.parse(await readFile(".tmp/scenario.json", "utf8"));',
+    'if (args.at(-1) === "check:full:run" && scenario.kind === "failed-full") process.exit(1);',
     'if (args.at(-1) === "lint" && scenario.kind === "drift") {',
     '  await writeFile(resolve(scenario.path), "unverified output");',
     '}',
@@ -127,9 +129,9 @@ const createCheckWorkspace = async (context, scenario) => {
   const receiptPath = resolve(root, '.tmp/check-cache/state.json');
   const receipt = JSON.stringify(state);
   await writeFile(receiptPath, receipt);
-  const run = async () => {
+  const run = async (args = []) => {
     try {
-      return { ...await execute(process.execPath, [resolve(root, 'scripts/check-runner.mjs')],
+      return { ...await execute(process.execPath, [resolve(root, 'scripts/check-runner.mjs'), ...args],
         { cwd: root, windowsHide: true }), code: 0 };
     } catch (error) {
       return { code: error.code, stdout: error.stdout, stderr: error.stderr };
@@ -137,6 +139,16 @@ const createCheckWorkspace = async (context, scenario) => {
   };
   return { root, put, run, receipt, receiptPath };
 };
+test('显式 full CLI 运行完整边界并写 full 收据，未知参数不得复用成功', async context => {
+  const workspace = await createCheckWorkspace(context, { kind: 'none' });
+  const invalid = await workspace.run(['--unknown']); assert.equal(invalid.code, 1);
+  assert.equal(await readFile(workspace.receiptPath, 'utf8'), workspace.receipt);
+  const result = await workspace.run(['--full']); assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(JSON.parse(await readFile(workspace.receiptPath, 'utf8')).validation, { schemaVersion: 1, kind: 'full' });
+  const failing = await createCheckWorkspace(context, { kind: 'failed-full' });
+  assert.equal((await failing.run(['--full'])).code, 1);
+  assert.equal(await readFile(failing.receiptPath, 'utf8'), failing.receipt);
+});
 
 test('单包检查拒绝包 README 与同批文档中的断链，失败不更新收据', async (context) => {
   for (const documentation of ['packages/leaf/README.md', 'docs/change.md']) {

@@ -1,10 +1,9 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { afterEach, expect, it } from 'vitest';
 import { claimManagedRecovery } from '../src/node/managed-recovery-lock.js';
-import { freezeManagedSource } from '../src/node/source.js';
-import { openManagedSlot } from '../src/node/managed-paths.js';
 import { createManagedSession } from '../src/node/managed-process.js';
-import { managedFixture } from './helpers/managed-fixture.js';
+import { managedSessionFixture as managedFixture } from './helpers/managed-session-fixture.js';
+import { git } from './helpers/managed-fixture.js';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { resolve } from 'node:path';
@@ -13,7 +12,15 @@ const fixtures: Awaited<ReturnType<typeof managedFixture>>[] = [];
 afterEach(async () => { for (const f of fixtures.splice(0)) await f.dispose(); });
 const fixture = async () => {
   const f = await managedFixture(); fixtures.push(f);
-  const source = await freezeManagedSource(f.cwd, 'release.config.json', f.execution), slot = await openManagedSlot(source, f.execution);
+  // 父侧和真实child的索引守卫都查询自有空HEAD，禁止向上发现宿主仓库。
+  // state.source的SHA仍是组件输入；这里不声称冻结来源或准备完整发布仓库。
+  const emptyGitDefaults = resolve(f.root, 'git-defaults'); await mkdir(emptyGitDefaults);
+  git(f.cwd, 'init', `--template=${emptyGitDefaults}`, '-b', 'dev');
+  git(f.cwd, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false',
+    '-c', `core.hooksPath=${emptyGitDefaults}`, 'commit', '--allow-empty', '-m', 'protocol index');
+  expect(resolve(git(f.cwd, 'rev-parse', '--show-toplevel'))).toBe(f.cwd);
+  // 锁协议使用真实路径、原始锁与当前schema3；来源准入由state/恢复集成及tarball验证。
+  const slot = f.slot;
   const session = await createManagedSession(slot, 'check'); return { ...f, slot, session };
 };
 it('uses an independent recovery claim so two recovery callers cannot release one run', async () => {

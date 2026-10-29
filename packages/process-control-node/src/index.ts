@@ -13,3 +13,4 @@ export {
   createWindowsProcessIdentityReader,
 } from './provider.js';
 export { createWindowsOwnedProcessScopeProvider, createLinuxOwnedProcessScopeProvider } from './owned-process-scope.js';
+export { createWindowsNativeProcessIdentityReader } from './windows-native-identity.js';

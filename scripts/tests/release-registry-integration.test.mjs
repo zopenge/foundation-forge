@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -12,6 +13,8 @@ import { installRegistryConsumer, runInstallCommand } from '../release-install.m
 import { createPropagationBudget } from '../release-propagation.mjs';
 import { verifyRegistryPackages } from '../release-registry.mjs';
 import { captureReleaseOutput } from './helpers/release-output.mjs';
+import { discoverTestProcessSupervisor } from '../test-process-runner.mjs';
+import { discoverWorkspacePackageModel } from '../workspace-packages.mjs';
 
 const fixture = async (context) => {
   captureReleaseOutput(context);
@@ -103,13 +106,26 @@ test('真实 pnpm 包装的首次元数据断连会重试并成功安装', { tim
 
 test('安装阶段超时会回收实际子进程，耗尽预算后不再重试', { timeout: 10_000 }, async (context) => {
   const root = await fixture(context);
-  const pidPath = resolve(root, 'pid');
+  const model = await discoverWorkspacePackageModel({ repositoryRoot: resolve(import.meta.dirname, '../..') });
+  const { reader } = await discoverTestProcessSupervisor({ packages: model.packages });
+  let child, captured;
   await assert.rejects(runInstallCommand({ cwd: root, env: process.env, timeoutMilliseconds: 500,
-    invocation: { command: process.execPath, args: ['--input-type=module', '-e',
-      `import {writeFileSync} from 'node:fs';writeFileSync(${JSON.stringify(pidPath)},String(process.pid));setInterval(()=>{},1000);`] },
+    spawnCommand: (...args) => {
+      child = spawn(...args);
+      assert.ok(child.pid);
+      captured = reader.readIdentity({ pid: child.pid, signal: globalThis.AbortSignal.timeout(5_000) })
+        .then(value => ({ value }), error => ({ error }));
+      return child;
+    },
+    invocation: { command: process.execPath, args: ['--input-type=module', '-e', 'setInterval(()=>{},1000);'] },
   }), { code: 'CONSUMER_INSTALL_TIMEOUT' });
-  const pid = Number(await readFile(pidPath, 'utf8'));
-  assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+  assert.ok(child); const pid = child.pid;
+  assert.ok(child.exitCode !== null || child.signalCode !== null);
+  const observed = await captured;
+  assert.ifError(observed.error); assert.equal(observed.value.status, 'FOUND');
+  const after = await reader.readIdentity({ pid, signal: globalThis.AbortSignal.timeout(5_000) });
+  // 必须确认原实例退出；其他worker复用同一PID不能被误判为本次安装泄漏。
+  assert.ok(after.status === 'ABSENT' || after.identity.startToken !== observed.value.identity.startToken);
 });
 
 test('真实安装成功后的失败 smoke 不触发安装重试', { timeout: 45_000 }, async (context) => {

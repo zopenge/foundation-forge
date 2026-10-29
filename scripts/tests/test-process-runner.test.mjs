@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, writeFile, copyFile } from 'node:fs/promises';
+import { lstat, mkdtemp, mkdir, readFile, realpath, rm, rmdir, writeFile, copyFile } from 'node:fs/promises';
 import { resolve, relative, isAbsolute } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
@@ -15,9 +15,23 @@ async function native() {
   supervisor ??= module.discoverTestProcessSupervisor({ packages: (await discoverWorkspacePackageModel({ repositoryRoot })).packages });
   return supervisor;
 }
-async function fixture(t) {
+async function fixture(t, { fakeScope = false } = {}) {
   await mkdir(base, { recursive: true }); const root = await mkdtemp(resolve(base, 'test-process-'));
-  t.after(async () => { const path = relative(base, root); assert.ok(path && !path.startsWith('..') && !isAbsolute(path)); await rm(root, { recursive: true, force: true }); });
+  t.after(async () => {
+    if (fakeScope) {
+      // 此替身从未启动 OS 进程；收据只能授权移除本例创建且身份未变的空根。
+      const temporary = JSON.parse(await readFile(resolve(root, 'temporary.json'), 'utf8'));
+      const inside = relative(resolve(repositoryRoot, '.tmp/test-work'), temporary.path);
+      assert.ok(inside && !inside.startsWith('..') && !isAbsolute(inside));
+      const identity = await lstat(temporary.path, { bigint: true });
+      assert.equal(identity.isSymbolicLink(), false); assert.equal(identity.isDirectory(), true);
+      assert.equal(String(identity.dev), temporary.device); assert.equal(String(identity.ino), temporary.inode);
+      assert.equal(await realpath(temporary.path), temporary.realPath);
+      await rmdir(temporary.path);
+    }
+    const path = relative(base, root); assert.ok(path && !path.startsWith('..') && !isAbsolute(path));
+    await rm(root, { recursive: true, force: true });
+  });
   return root;
 }
 async function waitJson(path) {
@@ -52,12 +66,22 @@ test('scope setup failure records its phase and bounded structured cause without
 
 test('scope setup failure preserves a falsy rejection before a disposal error', async t => {
   for (const failure of [undefined, null, false, 0]) {
-    const root = await fixture(t);
-    await assert.rejects(module.runTestProcess({ name: 'falsy-setup-failure', command: 'not-executed', logRoot: root,
-      supervisor: { provider: { start: () => ({ rootPid: Promise.resolve(12345), dispose: async () => { throw new Error('later cleanup failure'); } }) },
-        reader: { readIdentity: async () => { throw failure; } } } }), error => {
-      assert.equal(error.cause, failure); assert.equal(error.result.error.phase, 'identity'); return true;
+    let temporary;
+    // 红测试失败时也只移除本例替身取得的空目录，禁止留下新的诊断残留。
+    t.after(async () => { if (temporary) await rmdir(temporary).catch(error => { if (error.code !== 'ENOENT') throw error; }); });
+    await t.test(String(failure), async nested => {
+      const root = await fixture(nested, { fakeScope: true });
+      await assert.rejects(module.runTestProcess({ name: 'falsy-setup-failure', command: 'not-executed', logRoot: root,
+        supervisor: { provider: { start: spec => {
+          temporary = spec.environment.FORGE_CHECK_JOB_TEMP;
+          return { rootPid: Promise.resolve(12345), dispose: async () => { throw new Error('later cleanup failure'); } };
+        } },
+          reader: { readIdentity: async () => { throw failure; } } } }), error => {
+        assert.equal(error.cause, failure); assert.equal(error.result.error.phase, 'identity');
+        assert.equal(error.result.temporary.status, 'retained'); return true;
+      });
     });
+    await assert.rejects(lstat(temporary), { code: 'ENOENT' });
   }
 });
 
@@ -96,6 +120,11 @@ test('a leftover detached descendant is terminated and cannot turn a failed scop
   const work = module.runTestProcess({ supervisor: control, name: 'leftover', logRoot: root, command: process.execPath, args: ['-e', parentCode, marker], cwd: root, signal: t.signal });
   const rejected = assert.rejects(work, error => error.result?.closure.status === 'unknown' && error.result.closure.empty === true);
   const child = await waitJson(marker); await rejected;
+  if (process.platform === 'win32') {
+    const result = JSON.parse(await readFile(resolve(root, 'process.json'), 'utf8'));
+    const member = result.members.find(value => value.pid === child.pid);
+    assert.equal(member.belongs, true); assert.match(member.created, /^\d+$/u); assert.equal(member.image, 'node.exe');
+  }
   assert.equal((await control.reader.readIdentity({ pid: child.pid })).status, 'ABSENT');
 });
 

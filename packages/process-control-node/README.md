@@ -10,6 +10,14 @@ without loading PowerShell cmdlet modules and preserves the existing CIM JSON-da
 start-token format. Posix retains `ps`. Permission failures are rejected without
 retries or fallback sources; full Windows process queries retain their existing backend.
 
+On Windows x64, explicitly choose `createWindowsNativeProcessIdentityReader()` to
+read a known PID through the installed Koffi prebuild and Win32 process handles.
+It preserves the millisecond start-token format, checks process liveness before
+and after reading creation time, and closes each query handle. It never enumerates
+processes or falls back to a command reader. Cancellation and access, loading, ABI,
+or cleanup failures remain errors; an unreadable identity is not absence. The
+existing command readers remain available without changing their behavior.
+
 Explicit `createWindowsOwnedProcessScopeProvider()` and
 `createLinuxOwnedProcessScopeProvider()` implement owned command scopes on
 Windows x64 (Job Objects) and Linux/glibc x64 (subreaper, wait/reap and pidfds).

@@ -5,7 +5,7 @@ import { TextDecoder } from 'node:util';
 import { spawnSync } from 'node:child_process';
 import { CommandRunnerError, normalizeCommandSpec } from '@openge/forge-command-runner';
 import { createNodeCommandRunner } from '@openge/forge-command-runner/node';
-import { createWindowsOwnedProcessScopeProvider, createLinuxOwnedProcessScopeProvider, createWindowsProcessIdentityReader, createPosixProcessIdentityReader } from '@openge/forge-process-control-node';
+import { createWindowsOwnedProcessScopeProvider, createLinuxOwnedProcessScopeProvider, createWindowsNativeProcessIdentityReader, createPosixProcessIdentityReader } from '@openge/forge-process-control-node';
 
 assert.throws(() => normalizeCommandSpec({ command: '' }), CommandRunnerError);
 assert.equal(Object.isFrozen(normalizeCommandSpec({ command: 'fixture', args: ['a'] }).args), true);
@@ -52,7 +52,7 @@ assert.equal(browserNode.status, 0, browserNode.stderr);
 // 真实安装制品装配的第二类消费者；不使用工作区源码、私有 helper 路径或假身份。
 if (!['win32', 'linux'].includes(process.platform) || process.arch !== 'x64') throw Error('owned consumer requires an admitted host');
 const windows = process.platform === 'win32';
-const reader = windows ? createWindowsProcessIdentityReader() : createPosixProcessIdentityReader();
+const reader = windows ? createWindowsNativeProcessIdentityReader() : createPosixProcessIdentityReader();
 const scoped = createNodeCommandRunner({ platform: windows ? 'win32' : 'posix',
   ownedScopeProvider: windows ? createWindowsOwnedProcessScopeProvider() : createLinuxOwnedProcessScopeProvider(),
   processControl: { ...provider, listProcesses: async request => {

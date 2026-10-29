@@ -23,12 +23,14 @@ it.each(['session', 'worker'])('keeps mutations, unknown Git commands and applic
     const run = vi.spyOn(session.execution, 'run').mockResolvedValue('fixture');
     const component = mode === 'session' ? publicationComponentSession(session) : session;
     if (mode === 'worker') restoreComponent = installReadQueryComponentExecution(Execution);
-    for (const args of [['rev-parse', 'HEAD'], ['config', '--get', 'remote.origin.url'], ['push'], ['fetch'], ['config', 'user.name', 'fixture'], ['future-command']]) {
-      await component.execution.git(args);
-    }
-    await component.execution.streamGit(['ls-tree', '-z', 'HEAD'], () => {});
-    await component.execution.streamGit(['future-stream'], () => {});
-    await component.execution.run('check', { command: 'node' }, 'CHECK_FAILED');
+    await component.execution.observeCheckout(async () => {
+      for (const args of [['rev-parse', 'HEAD'], ['config', '--get', 'remote.origin.url'], ['push'], ['fetch'], ['config', 'user.name', 'fixture'], ['future-command']]) {
+        await component.execution.git(args);
+      }
+      await component.execution.streamGit(['ls-tree', '-z', 'HEAD'], () => {});
+      await component.execution.streamGit(['future-stream'], () => {});
+      await component.execution.run('check', { command: 'node' }, 'CHECK_FAILED');
+    });
     expect(calls).toEqual([
       { kind: 'rev-parse', managed: false }, { kind: 'config', managed: false },
       { kind: 'push', managed: true }, { kind: 'fetch', managed: true },

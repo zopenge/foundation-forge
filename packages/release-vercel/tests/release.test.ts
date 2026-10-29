@@ -1,10 +1,11 @@
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { runRelease, validateReleaseConfig } from '../src/node.js';
 import type { ReleaseConfig, ReleaseTransport } from '../src/index.js';
+import { prepareManagedFixtureHistory } from './helpers/managed-fixture-git.js';
 
 const commandFailures = vi.hoisted((): { termination: string; identified: boolean; exitCode: number | null;
   durationMs: number; diagnostics: { code: string; stage?: string }[] }[] => []);
@@ -41,21 +42,13 @@ const fixture = async () => {
   roots.push(root);
   const remote = resolve(root, 'remote.git');
   const cwd = resolve(root, 'work');
-  git(root, 'init', '--bare', remote);
-  git(root, 'init', '-b', 'dev', cwd);
-  git(cwd, 'config', 'user.email', 'fixture@example.invalid');
-  git(cwd, 'config', 'user.name', 'Fixture');
+  await mkdir(cwd);
   await writeFile(resolve(cwd, '.gitignore'), '.tmp/\n');
   await writeFile(resolve(cwd, 'source.txt'), 'initial\n');
-  git(cwd, 'add', '.'); git(cwd, 'commit', '-m', 'initial');
+  const { initial, sha } = await prepareManagedFixtureHistory(root, cwd, remote);
   const declared = 'https://github.com/fixture/repository.git';
   git(cwd, 'config', `url.${remote.replaceAll('\\', '/')}.insteadOf`, declared);
-  git(cwd, 'remote', 'add', 'origin', declared);
-  git(cwd, 'push', 'origin', 'HEAD:dev', 'HEAD:main');
-  const initial = git(cwd, 'rev-parse', 'HEAD');
-  await writeFile(resolve(cwd, 'source.txt'), 'candidate\n');
-  git(cwd, 'add', '.'); git(cwd, 'commit', '-m', 'candidate');
-  const sha = git(cwd, 'rev-parse', 'HEAD');
+  git(cwd, 'remote', 'set-url', 'origin', declared);
   const config: ReleaseConfig = {
     schemaVersion: 2, source: { mode: 'workspace' },
     git: { remote: 'origin', repository: 'github.com/fixture/repository', developmentBranch: 'dev', releaseBranch: 'main' },
@@ -102,28 +95,26 @@ describe('strict configuration', () => {
 });
 
 describe('real Git release gates', () => {
-  it('checks without pushing or querying Vercel', async () => {
-    const f = await fixture(); const report = await f.run('check');
-    expect(report.ok).toBe(true); expect(f.ref('dev')).toBe(f.initial); expect(f.ref('main')).toBe(f.initial);
-    expect(f.queries()).toBe(0);
-  });
-  it.each(['dirty', 'branch', 'repository', 'diverged', 'check', 'candidate'])('stops before remote writes for %s failure', async (mode) => {
-    const f = await fixture();
-    const expected = { dirty: 'GIT_DIRTY', branch: 'GIT_BRANCH', repository: 'GIT_REPOSITORY', diverged: 'GIT_DIVERGED', check: 'CHECK_FAILED', candidate: 'CANDIDATE_CHANGED' }[mode];
-    if (mode === 'dirty') await writeFile(resolve(f.cwd, 'untracked.txt'), 'dirty');
-    if (mode === 'branch') git(f.cwd, 'checkout', '-b', 'other');
-    if (mode === 'repository') Object.assign(f.config.git, { repository: 'github.com/wrong/repo' });
-    if (mode === 'diverged') {
-      git(f.cwd, 'checkout', '-b', 'fork', f.initial);
-      await writeFile(resolve(f.cwd, 'fork.txt'), 'fork'); git(f.cwd, 'add', '.'); git(f.cwd, 'commit', '-m', 'fork');
-      git(f.cwd, 'push', 'origin', 'HEAD:main'); git(f.cwd, 'checkout', 'dev');
-    }
-    if (mode === 'check') Object.assign(f.config, { checks: [{ command: 'node', args: ['-e', 'process.exit(3)'] }] });
-    if (mode === 'candidate') Object.assign(f.config, { checks: [{ command: 'node', args: ['-e', 'require("node:fs").writeFileSync("source.txt","changed")'] }] });
-    const before = f.ref('main'); const report = await f.run();
-    expect(report.ok).toBe(false); expect(report.error?.code).toBe(expected);
-    expect(f.ref('dev')).toBe(f.initial); expect(f.ref('main')).toBe(before);
-    await expect(readFile(resolve(f.cwd, '.tmp/forge-vercel-release/publish.lock'))).rejects.toMatchObject({ code: 'ENOENT' });
+  // 发布决策的失败矩阵由 publication.test.ts 严格组件脚本覆盖；这里验证真实入口和Git服务器行为。
+  it('releases its own lock on entry failure and records recovery after post-push verification failure', async () => {
+    const f = await fixture(), lockPath = resolve(f.cwd, '.tmp/forge-vercel-release/publish.lock');
+    const untracked = resolve(f.cwd, 'untracked.txt'); await writeFile(untracked, 'dirty');
+    const refused = await f.run();
+    expect(refused).toMatchObject({ ok: false, error: { code: 'GIT_DIRTY' }, effects: { developmentPush: 'not-attempted', releasePush: 'not-attempted' } });
+    expect(f.queries()).toBe(0); expect(f.ref('dev')).toBe(f.initial); expect(f.ref('main')).toBe(f.initial);
+    await expect(readFile(lockPath)).rejects.toMatchObject({ code: 'ENOENT' }); await unlink(untracked);
+    const transport: ReleaseTransport = { ...f.transport, api: (path, signal) => path.startsWith('/v4/aliases')
+      ? Promise.resolve({ projectId: 'prj_fixture', deploymentId: 'dpl_other' }) : f.transport.api(path, signal) };
+    const failed = await f.run('publish', { transport });
+    expect(failed).toMatchObject({ ok: false, candidateSha: f.sha, error: { code: 'ALIAS_MISMATCH' },
+      effects: { developmentPush: 'pushed', releasePush: 'pushed' },
+      recovery: { candidateSha: f.sha, nextCommand: `forge-vercel-release verify --sha ${f.sha}` } });
+    expect(f.ref('dev')).toBe(f.sha); expect(f.ref('main')).toBe(f.sha);
+    await expect(readFile(lockPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    const saved = JSON.parse(await readFile(resolve(f.cwd, '.tmp/forge-vercel-release/latest-publish.json'), 'utf8'));
+    expect(saved).toMatchObject({ schemaVersion: failed.schemaVersion, command: failed.command, ok: false,
+      candidateSha: f.sha, error: failed.error, effects: failed.effects, recovery: failed.recovery });
+    expect(Number.isFinite(Date.parse(saved.finishedAt))).toBe(true);
   });
   it('publishes the fixed SHA and resumes idempotently without another remote update', async () => {
     const f = await fixture();
@@ -133,23 +124,6 @@ describe('real Git release gates', () => {
     await writeFile(hooks, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
     const second = await f.run(); expect(second.ok).toBe(true);
     expect(second.effects.developmentPush).toBe('already-current'); expect(second.effects.releasePush).toBe('already-current');
-  });
-  it.each(['project', 'sha', 'failed', 'timeout', 'alias', 'revision', 'acceptance'])('reports partial Git success on %s verification failure', async (mode) => {
-    const f = await fixture();
-    const expected = { project: 'DEPLOYMENT_SOURCE', sha: 'DEPLOYMENT_TIMEOUT', failed: 'DEPLOYMENT_FAILED', timeout: 'DEPLOYMENT_TIMEOUT', alias: 'ALIAS_MISMATCH', revision: 'BUILD_REVISION', acceptance: 'ACCEPTANCE_FAILED' }[mode];
-    if (mode === 'project') f.deployment.projectId = 'prj_wrong';
-    if (mode === 'sha') { f.deployment.gitSource.sha = f.initial; f.deployment.meta.githubCommitSha = f.initial; }
-    if (mode === 'failed') f.deployment.readyState = 'ERROR';
-    if (mode === 'timeout') f.deployment.readyState = 'BUILDING';
-    const transport: ReleaseTransport = { ...f.transport,
-      ...(mode === 'alias' ? { api: async (path: string, signal: AbortSignal) => path.startsWith('/v4/aliases') ? { projectId: 'prj_fixture', deploymentId: 'dpl_other' } : f.transport.api(path, signal) } : {}),
-      ...(mode === 'revision' ? { buildInfo: async () => ({ revision: f.initial }) } : {}),
-    };
-    if (mode === 'acceptance') Object.assign(f.config, { acceptance: [{ command: 'node', args: ['-e', 'process.exit(5)'] }] });
-    const report = await f.run('publish', { transport });
-    expect(report.ok).toBe(false); expect(report.error?.code).toBe(expected);
-    expect(f.ref('dev')).toBe(f.sha); expect(f.ref('main')).toBe(f.sha); expect(report.effects.releasePush).toBe('pushed');
-    expect(report.recovery?.candidateSha).toBe(f.sha);
   });
   it('status reads the explicit SHA and verify performs independent acceptance', async () => {
     const f = await fixture();
@@ -172,13 +146,6 @@ describe('real Git release gates', () => {
     expect(report.recovery?.nextCommand).toBe('forge-vercel-release publish');
     expect((await f.run('status')).candidateSha).toBe(f.sha);
   });
-  it('rejects a mismatched project before the first remote push', async () => {
-    const f = await fixture();
-    const transport: ReleaseTransport = { ...f.transport, api: async (path, signal) => path.startsWith('/v9/projects')
-      ? { id: 'prj_wrong' } : f.transport.api(path, signal) };
-    const report = await f.run('publish', { transport });
-    expect(report.error?.code).toBe('DEPLOYMENT_SOURCE'); expect(f.ref('dev')).toBe(f.initial); expect(f.ref('main')).toBe(f.initial);
-  });
   it('preserves a replaced lock owned by another publisher', async () => {
     const f = await fixture();
     const transport: ReleaseTransport = { ...f.transport, buildInfo: async () => {
@@ -188,19 +155,6 @@ describe('real Git release gates', () => {
     const report = await f.run('publish', { transport });
     expect(report.error?.code).toBe('LOCK_OWNERSHIP');
     expect(await readFile(resolve(f.cwd, '.tmp/forge-vercel-release/publish.lock'), 'utf8')).toBe('{"token":"other"}');
-  });
-  it('does not push either branch when a check replaces the lock', async () => {
-    const f = await fixture();
-    Object.assign(f.config, { checks: [{ command: 'node', args: ['-e', 'require("node:fs").writeFileSync(".tmp/forge-vercel-release/publish.lock","other")'] }] });
-    const report = await f.run();
-    expect(report.error?.code).toBe('LOCK_OWNERSHIP'); expect(f.ref('dev')).toBe(f.initial); expect(f.ref('main')).toBe(f.initial);
-  });
-  it('does not push main when the development push replaces the lock', async () => {
-    const f = await fixture();
-    const path = resolve(f.cwd, '.tmp/forge-vercel-release/publish.lock').replaceAll('\\', '/');
-    await writeFile(resolve(f.remote, 'hooks/update'), `#!/bin/sh\nif [ "$1" = "refs/heads/dev" ]; then printf other > "${path}"; fi\n`, { mode: 0o755 });
-    const report = await f.run();
-    expect(report.error?.code).toBe('LOCK_OWNERSHIP'); expect(f.ref('dev')).toBe(f.sha); expect(f.ref('main')).toBe(f.initial);
   });
   it('lets the Git server reject a remote advance after the final refs snapshot', async () => {
     const f = await fixture();
@@ -216,16 +170,6 @@ describe('real Git release gates', () => {
     const report = await f.run('publish', { transport });
     expect(report.error?.code).toBe('GIT_FAILED'); expect(report.effects.developmentPush).toBe('pushed');
     expect(f.ref('main')).toBe(future);
-  });
-  it.each(['repository', 'production-branch', 'source-repo', 'source-branch'])('rejects bound %s mismatch with actual Git effects', async mode => {
-    const f = await fixture();
-    if (mode === 'repository') f.project.link.repo = 'wrong';
-    if (mode === 'production-branch') f.project.link.productionBranch = 'dev';
-    if (mode === 'source-repo') f.deployment.gitSource.repoId = 999;
-    if (mode === 'source-branch') f.deployment.gitSource.ref = 'dev';
-    const report = await f.run(); expect(report.error?.code).toBe('DEPLOYMENT_SOURCE');
-    const expected = mode.startsWith('source-') ? f.sha : f.initial;
-    expect(f.ref('dev')).toBe(expected); expect(f.ref('main')).toBe(expected);
   });
   it('holds one lock and releases it after cancellation', async () => {
     const f = await fixture(); let entered!: () => void;

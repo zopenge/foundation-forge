@@ -99,7 +99,7 @@ test('keeps App credentials out of manual CI and preserves the supported matrix'
   ]);
   const steps = workflow.jobs.verify.steps;
   assert.ok(steps.some((step) => step.run === 'pnpm install --frozen-lockfile'));
-  assert.ok(steps.some((step) => step.run === 'pnpm check'));
+  assert.ok(steps.some((step) => step.run === 'pnpm check:full'));
   assert.doesNotMatch(source, /RELEASE_APP_|create-github-app-token|permission-contents|permission-pull-requests/u);
 });
 
@@ -179,7 +179,7 @@ test('documents and exposes the guarded new-package bootstrap command', async ()
 
   assert.equal(
     packageJson.scripts['release:bootstrap'],
-    'pnpm run check && node ./scripts/bootstrap-publish.mjs',
+    'pnpm run check:full && node ./scripts/bootstrap-publish.mjs',
   );
   assert.match(runbook, /pnpm release:bootstrap/u);
   assert.match(runbook, /spawn\('pnpm\.cmd'.*shell: false/u);
@@ -191,17 +191,17 @@ test('exposes guarded release automation entry points', async () => {
 
   assert.equal(
     packageJson.scripts['release:configure-trusted-publishers'],
-    'pnpm run check && node ./scripts/configure-trusted-publishers.mjs',
+    'pnpm run check:full && node ./scripts/configure-trusted-publishers.mjs',
   );
   assert.equal(
     packageJson.scripts['release:dispatch-next'],
-    'pnpm run check && node ./scripts/dispatch-release.mjs',
+    'pnpm run check:full && node ./scripts/dispatch-release.mjs',
   );
   assert.equal(packageJson.scripts['release:status'], 'node ./scripts/release-status.mjs');
   assert.equal(packageJson.scripts['release:verify'], 'node ./scripts/verify-release.mjs');
   assert.equal(
     packageJson.scripts['release:request-next'],
-    'pnpm run check && node ./scripts/request-next-release.mjs',
+    'pnpm run check:full && node ./scripts/request-next-release.mjs',
   );
 });
 

@@ -326,7 +326,7 @@ export const runCleanPackageConsumer = async ({
   const npmrc = await readFile(resolve(model.repositoryRoot, '.npmrc'), 'utf8');
   await writeFile(
     resolve(consumerRoot, '.npmrc'),
-    `${npmrc.trimEnd()}\nnode-linker=hoisted\npackage-import-method=copy\n`,
+    `${npmrc.trimEnd()}\nnode-linker=isolated\npackage-import-method=auto\n`,
     'utf8',
   );
   await writeFile(resolve(consumerRoot, 'verify.mjs'), createConsumerImportScript(model.packages), 'utf8');

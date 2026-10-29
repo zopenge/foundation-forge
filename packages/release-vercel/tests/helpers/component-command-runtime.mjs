@@ -8,11 +8,13 @@ export function readOnlyGit(args) {
 
 /** 仅在测试子进程内安装；真实公共入口不变，push/fetch/应用命令保留原执行器。 */
 export function installReadQueryComponentExecution(Execution) {
-  const git = Execution.prototype.git, streamGit = Execution.prototype.streamGit;
+  const git = Execution.prototype.git, streamGit = Execution.prototype.streamGit, observeCheckout = Execution.prototype.observeCheckout;
   const receiver = value => new Execution(value.cwd, value.config, value.signal, []);
   Execution.prototype.git = function (args) { return git.call(readOnlyGit(args) ? receiver(this) : this, args); };
   Execution.prototype.streamGit = function (args, consume, exitCodes) {
     return streamGit.call(readOnlyGit(args) ? receiver(this) : this, args, consume, exitCodes);
   };
-  return () => { Execution.prototype.git = git; Execution.prototype.streamGit = streamGit; };
+  // 组件只接入部分查询；其余查询仍逐命令受管，不声明完整生产批次。
+  Execution.prototype.observeCheckout = function (operation) { return operation(); };
+  return () => { Execution.prototype.git = git; Execution.prototype.streamGit = streamGit; Execution.prototype.observeCheckout = observeCheckout; };
 }

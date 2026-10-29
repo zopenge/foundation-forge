@@ -2,9 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createManagedSession } from '../src/node/managed-process.js';
-import { committedFixtureSource } from './helpers/committed-fixture-source.js';
-import { openManagedSlot } from '../src/node/managed-paths.js';
-import { managedFixture } from './helpers/managed-fixture.js';
+import { managedSessionFixture as managedFixture } from './helpers/managed-session-fixture.js';
 import { currentCoordinator, identityReader } from '../src/node/process-identities.js';
 import { closeFixtureIdentity } from './helpers/close-fixture-process.js';
 import type { ManagedSession } from '../src/node/release-context.js';
@@ -36,8 +34,7 @@ afterEach(async () => {
 });
 const fixture = async () => {
   const f = await managedFixture(); fixtures.push(f);
-  const source = await committedFixtureSource(f, f.sha);
-  const slot = await openManagedSlot(source, f.execution);
+  const slot = f.slot;
   await mkdir(slot.paths.checkoutRoot);
   const session = await createManagedSession(slot, 'check'); sessions.push(session);
   return { ...f, slot, session };
@@ -85,17 +82,21 @@ it.each(['journal-failure', 'lock-replaced'])('never authorizes the real job aft
     } });
   } else expect(f.session.state.processes[0]?.status).toBe('unknown');
 });
-it.each(['EBUSY', 'SECRETCODE'])('preserves only known lifecycle failure codes without exposing messages: %s', async code => {
+it.each(['EBUSY', 'EPERM', 'SECRETCODE'])('preserves only known lifecycle failure codes without exposing messages: %s', async code => {
   const f = await fixture(), write = f.slot.store.writeState.bind(f.slot.store);
   vi.spyOn(f.slot.store, 'writeState').mockImplementation(async (state, beforeCommit) => {
-    if (state.processes.some(command => command.status === 'closed')) throw Object.assign(new Error('token=fixture-private'), { code });
+    if (state.processes.some(command => command.status === 'closed')) throw Object.assign(new Error('token=fixture-private'), { code,
+      ...(code === 'EPERM' ? { syscall: 'rename', path: f.slot.paths.statePath } : {}) });
     await write(state, beforeCommit);
   });
   const observed = await f.session.execution.run('journal-code', { command: 'node', args: ['-e', 'process.stdout.write("done")'] }, 'CHECK_FAILED')
     .then(value => ({ value }), (error: unknown) => ({ error }));
-  expect(observed).toMatchObject({ error: { code: 'PROCESS_STATE_UNKNOWN', details: { reason: 'PROCESS_LIFECYCLE_FAILED', ...(code === 'EBUSY' ? { causeCode: code } : {}) } } });
+  expect(observed).toMatchObject({ error: { code: 'PROCESS_STATE_UNKNOWN', details: { reason: 'PROCESS_LIFECYCLE_FAILED',
+    ...(['EBUSY', 'EPERM'].includes(code) ? { causeCode: code } : {}),
+    ...(code === 'EPERM' ? { causePhase: 'closed-state', causeSyscall: 'rename', causeFile: 'state.json' } : {}) } } });
   expect(JSON.stringify(observed)).not.toContain('fixture-private');
-  if (code !== 'EBUSY') expect(JSON.stringify(observed)).not.toContain(code);
+  expect(JSON.stringify(observed)).not.toContain(f.root);
+  if (code === 'SECRETCODE') expect(JSON.stringify(observed)).not.toContain(code);
   expect(f.session.state.processes[0]?.status).toBe('closed');
   const terminal = await readFile(resolve(f.slot.paths.slotRoot, 'terminal.json'), 'utf8');
   expect(JSON.parse(terminal)).toMatchObject({ command: { status: 'closed', closure: { ownedScope: { status: 'closed', empty: true } } } });
