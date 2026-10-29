@@ -47,14 +47,14 @@
     "check:full:run": "node ./scripts/check-full.mjs"
   },
   "devDependencies": {
-    "@changesets/cli": "3.0.1",
+    "@changesets/cli": "3.0.3",
     "@eslint/js": "10.0.1",
-    "@types/node": "20.19.43",
+    "@types/node": "26.6.5",
     "@types/ws": "8.18.1",
     "@vitest/coverage-v8": "4.1.9",
-    "eslint": "10.0.1",
+    "eslint": "10.13.0",
     "typescript": "6.0.3",
-    "typescript-eslint": "8.61.1",
+    "typescript-eslint": "8.72.0",
     "vitest": "4.1.9",
     "yaml": "2.9.0"
   }
