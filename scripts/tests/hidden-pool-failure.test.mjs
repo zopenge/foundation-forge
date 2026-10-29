@@ -32,17 +32,17 @@ test('a pool drain failure rejects the CLI even when its descendant subsequently
   trace('context-start');
   const context = await createTestRunContext({ packages, workers: 1 });
   trace('context-end');
-  const release = resolve(root, 'release'), ready = resolve(root, 'ready'), logRoot = resolve(context.root, 'finite-pipe');
-  const childCode = 'const f=require("node:fs");f.writeFileSync(process.argv[1],"ready");const t=setInterval(()=>{if(f.existsSync(process.argv[2])){clearInterval(t)}},10)';
+  const release = resolve(root, 'release'), ready = resolve(root, 'ready'), drained = resolve(root, 'drained'), logRoot = resolve(context.root, 'finite-pipe');
+  const childCode = 'const f=require("node:fs");const startToken=process.platform==="linux"?f.readFileSync("/proc/self/stat","utf8").split(") ")[1].split(" ")[19]:"windows";f.writeFileSync(process.argv[1],JSON.stringify({pid:process.pid,startToken}));const t=setInterval(()=>{if(f.existsSync(process.argv[2])){clearInterval(t)}},10)';
   await writeFile(resolve(root, 'finite.test.mjs'), `import {it} from 'vitest';import {spawn} from 'node:child_process';import {readFile} from 'node:fs/promises';import {setTimeout as delay} from 'node:timers/promises';
     it('finite pipe holder',async()=>{const child=spawn(process.execPath,['-e',${JSON.stringify(childCode)},${JSON.stringify(ready)},${JSON.stringify(release)}],{detached:true,windowsHide:true,stdio:'inherit'});child.unref();const end=Date.now()+5000;while(Date.now()<end){try{await readFile(${JSON.stringify(ready)});return;}catch(error){if(error.code!=='ENOENT')throw error;}await delay(10);}throw new Error('readiness deadline');});`);
-  await writeFile(resolve(root, 'vitest.config.mjs'), 'export default {test:{include:["finite.test.mjs"],teardownTimeout:100}};');
+  await writeFile(resolve(root, 'vitest.config.mjs'), `export default {test:{include:["finite.test.mjs"],teardownTimeout:100,globalSetup:[${JSON.stringify(resolve(repositoryRoot, 'scripts/tests/helpers/finite-pipe-global-setup.mjs'))}]}};`);
   try {
     await context.budget.run({ name: 'expected-finite-pipe-failure', workers: 1 }, async lease => {
       trace('execute-start');
       const terminal = context.execute({ name: 'finite-pipe', command: process.execPath, cwd: root, logRoot, signal: t.signal,
         args: [resolve(repositoryRoot, 'node_modules/vitest/vitest.mjs'), 'run', '--config', resolve(repositoryRoot, 'scripts/vitest-budget-config.mjs')],
-        env: { ...process.env, FORGE_CHECK_PACKAGE_ROOT: root } }, lease).then(result => ({ result }), error => ({ error }));
+        env: { ...process.env, FORGE_CHECK_PACKAGE_ROOT: root, FORGE_FINITE_PIPE_READY: ready, FORGE_FINITE_PIPE_DRAINED: drained } }, lease).then(result => ({ result }), error => ({ error }));
       try {
         const deadline = Date.now() + 10_000; let reported = false;
         while (Date.now() < deadline) {
@@ -57,6 +57,7 @@ test('a pool drain failure rejects the CLI even when its descendant subsequently
       assert.ok(outcome.error, 'pool teardown failure must reject even with an empty normally closed Job');
       assert.ok(outcome.error.result.exitCode !== 0);
       assert.equal(outcome.error.result.closure.status, 'closed'); assert.equal(outcome.error.result.closure.empty, true);
+      if (process.platform === 'linux') assert.deepEqual(JSON.parse(await readFile(drained, 'utf8')), JSON.parse(await readFile(ready, 'utf8')));
       process.stdout.write(`FINITE_PIPE_PROOF ${JSON.stringify(outcome.error.result)}\n`);
     });
   } catch (error) { trace('test-failure', { atPhase: phase, errorCode: error?.code }); throw error;
