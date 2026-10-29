@@ -16,6 +16,24 @@ import * as packageRunner from '../package-consumer-runner.mjs';
 
 const { preparePackagesForPacking, runBounded, runCaptured, runConsumerChecks } = packageRunner;
 
+test('coverage worker metadata accepts only explicitly supported worker tiers', async context => {
+  const value = await createPackage(context);
+  const path = join(value.packageRoot, 'package.verify.json');
+  for (const coverageWorkers of [1, 2, 4, 8]) {
+    await writeFile(path, JSON.stringify({ browserExports: ['.'], coverageWorkers }));
+    assert.equal((await loadPackageVerification(value)).coverageWorkers, coverageWorkers);
+  }
+  for (const coverageWorkers of [0, 3, 16, 1.5, '2']) {
+    await writeFile(path, JSON.stringify({ browserExports: ['.'], coverageWorkers }));
+    await assert.rejects(loadPackageVerification(value), /coverageWorkers/u);
+  }
+});
+
+test('packages without a lower explicit cap can use the approved shared worker tier', async context => {
+  const value = await createPackage(context);
+  assert.equal((await loadPackageVerification(value)).coverageWorkers, 8);
+});
+
 test('documentation links reject missing local targets and accept present targets', async (context) => {
   assert.equal(typeof packageRunner.verifyDocumentationLinks, 'function');
   await mkdir(join('.tmp', 'tests'), { recursive: true });
@@ -34,7 +52,8 @@ const createPackage = async (context, {
   name = '@example/package',
   packageConsumer = false,
 } = {}) => {
-  const packageRoot = await mkdtemp(join(tmpdir(), 'foundation-forge-package-'));
+  const fixtureBase = resolve('.tmp/tests'); await mkdir(fixtureBase, { recursive: true });
+  const packageRoot = await mkdtemp(join(fixtureBase, 'foundation-forge-package-'));
   context.after(() => rm(packageRoot, { force: true, recursive: true }));
   for (const [relativePath, contents] of Object.entries(files)) {
     const path = join(packageRoot, relativePath);
@@ -161,6 +180,28 @@ test('preserves workspace policy while appending generated overrides', () => {
     '  "@example/core": "file:../core.tgz"',
     '',
   ].join('\n'));
+});
+
+test('clean consumer uses isolated links and safe store imports while retaining caller policy', async context => {
+  const value = await createPackage(context);
+  const root = value.packageRoot, consumerRoot = join(root, 'consumer');
+  await writeFile(join(root, '.npmrc'), 'verify-store-integrity=true\n');
+  await writeFile(join(root, 'pnpm-workspace.yaml'), 'packages: []\nallowBuilds:\n  native: false\n');
+  const env = { FIXTURE_INSTALL: 'explicit' };
+  let installed = false;
+  await packageRunner.runCleanPackageConsumer({ consumerRoot, model: { repositoryRoot: root, packages: [] },
+    references: new Map(), env,
+    testRun: { budget: { limit: 1 }, run: async () => ({ stdout: 'fixture imports' }) },
+    install: async request => {
+      installed = true; assert.equal(request.cwd, consumerRoot); assert.equal(request.env, env);
+      const npmrc = await readFile(join(consumerRoot, '.npmrc'), 'utf8');
+      assert.match(npmrc, /^verify-store-integrity=true$/mu);
+      assert.match(npmrc, /^node-linker=isolated$/mu);
+      assert.match(npmrc, /^package-import-method=auto$/mu);
+      assert.match(await readFile(join(consumerRoot, 'pnpm-workspace.yaml'), 'utf8'), /allowBuilds:\n {2}native: false/u);
+    },
+  });
+  assert.equal(installed, true);
 });
 
 test('removes stale build output before rebuilding packages for packing', async (context) => {

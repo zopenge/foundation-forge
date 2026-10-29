@@ -5,18 +5,28 @@ import { createNodeCommandRunner } from '@openge/forge-command-runner/node';
 import { runRelease } from '../src/node.js';
 import type { ReleaseReport, ReleaseTransport } from '../src/contracts.js';
 import type { RecordedIdentity } from '../src/node/release-context.js';
+import { Execution } from '../src/node/execution.js';
 import { identityReader, processControl } from '../src/node/process-identities.js';
+import { managedOwnedScopeProvider } from '../src/node/owned-command-runner.js';
 import { managedFixture, git } from './helpers/managed-fixture.js';
 import { gitRoutingParameters } from './helpers/git-routing.js';
+import { captureFixtureAncestry } from './helpers/close-fixture-process.js';
 
 const fixtures: Awaited<ReturnType<typeof managedFixture>>[] = [];
-const runner = createNodeCommandRunner({ platform: process.platform === 'win32' ? 'win32' : 'posix', processControl: processControl(),
+const control = processControl(), reader = identityReader();
+const runner = createNodeCommandRunner({ platform: process.platform === 'win32' ? 'win32' : 'posix', ownedScopeProvider: managedOwnedScopeProvider(),
+  processControl: { ...control, listProcesses: async request => {
+    const pid = request?.pids?.length === 1 ? request.pids[0] : undefined;
+    if (pid === undefined) return control.listProcesses(request);
+    const observed = await reader.readIdentity({ pid, ...(request?.signal ? { signal: request.signal } : {}) });
+    return observed.status === 'FOUND' ? [observed.identity] : [];
+  } },
   terminationPolicy: { mode: 'force' }, terminationTimeoutMs: 10_000, identityAcquisition: { timeoutMs: 10_000, pollIntervalMs: 20 } });
 type Worker = ReturnType<typeof runner.start>;
 const workers: Worker[] = [];
 afterEach(async () => {
   for (const worker of workers.splice(0)) { await worker.terminate(); await worker.result; }
-  vi.unstubAllEnvs(); for (const f of fixtures.splice(0)) await f.dispose();
+  vi.restoreAllMocks(); vi.unstubAllEnvs(); for (const f of fixtures.splice(0)) await f.dispose();
 });
 const fixture = async () => {
   const f = await managedFixture(); fixtures.push(f);
@@ -27,8 +37,9 @@ const fixture = async () => {
   return { ...f, sha };
 };
 function start(cwd: string, command: string, sha?: string): Worker {
-  const worker = runner.start({ command: process.execPath, args: [resolve(import.meta.dirname, 'helpers/managed-worker.mjs'), cwd, command, ...(sha ? [sha] : [])],
-    cwd, environment: { mode: 'inherit' }, output: { mode: 'capture', maxBytesPerStream: 1_048_576, overflow: 'fail' }, timeoutMs: 600_000 });
+  const worker = runner.start({ command: process.execPath, args: [resolve(import.meta.dirname, 'helpers/managed-push-phase-worker.mjs'), cwd, command, ...(sha ? [sha] : [])],
+    cwd, environment: { mode: 'inherit' }, ownedScope: { start: 'automatic', binding: `fixture-${command}` },
+    output: { mode: 'capture', maxBytesPerStream: 1_048_576, overflow: 'fail' }, timeoutMs: 600_000 });
   workers.push(worker); return worker;
 }
 const emptyTransport: ReleaseTransport = { api: async path => path.startsWith('/v9/projects') ? { id: 'prj_fixture', accountId: 'team_fixture', link: { type: 'github', org: 'fixture', repo: 'repository', repoId: 101, productionBranch: 'main', gitCredentialId: 'fixture', deployHooks: [] } } : { deployments: [] }, buildInfo: async () => ({}) };
@@ -54,14 +65,24 @@ async function stopFixtureDescendant(identity: RecordedIdentity): Promise<void> 
 it('reconciles a real rejected main push after its coordinator exits without replaying a push', { timeout: 720_000 }, async () => {
   const f = await fixture();
   await writeFile(resolve(f.remote, 'hooks/pre-receive'), '#!/bin/sh\nwhile read old new ref; do\n  if [ "$ref" = "refs/heads/main" ]; then exit 1; fi\ndone\n', { mode: 0o755 });
-  const worker = start(f.cwd, 'publish'), result = await worker.result;
+  const worker = start(f.cwd, 'rejected-main', f.sha), result = await worker.result;
   expect(result.exitCode, new TextDecoder().decode(result.stderr)).toBe(1);
+  expect(result.ownedScope).toMatchObject({ status: 'closed', reason: 'normal', empty: true });
   const report = JSON.parse(new TextDecoder().decode(result.stdout)) as ReleaseReport;
+  expect(report).toMatchObject({ fixtureBoundary: 'push-phase', fixturePushes: [`${f.sha}:refs/heads/dev`, `${f.sha}:refs/heads/main`] });
   expect(report, `${JSON.stringify(report.error)}\n${new TextDecoder().decode(result.stderr)}`).toMatchObject({ ok: false, error: { code: 'GIT_FAILED' }, effects: { developmentPush: 'pushed', releasePush: 'unknown' }, processes: { status: 'closed' } });
+  const phaseState = JSON.parse(await readFile(resolve(f.cwd, '.tmp/release-slot/state.json'), 'utf8'));
+  expect(phaseState).toMatchObject({ status: 'closed', pendingPush: 'releasePush' });
+  expect(phaseState.processes).toHaveLength(2);
+  for (const command of phaseState.processes) expect(command).toMatchObject({ name: 'git', status: 'closed',
+    observationComplete: true, closure: { ownedScope: { status: 'closed', empty: true } } });
   expect(f.ref('dev')).toBe(f.sha); expect(f.ref('main')).toBe(f.initial); await waitForOwnerExit(worker);
+  const gitCalls = vi.spyOn(Execution.prototype, 'git');
   const recovered = await runRelease({ cwd: f.cwd, command: 'recover', transport: emptyTransport });
   expect(recovered, JSON.stringify(recovered.error)).toMatchObject({ ok: true, effects: { developmentPush: 'pushed', releasePush: 'unknown' }, processes: { status: 'closed' }, recovery: { observation: { releaseRef: { sha: f.initial, relation: 'before' } } } });
   expect(f.ref('dev')).toBe(f.sha); expect(f.ref('main')).toBe(f.initial);
+  expect(gitCalls.mock.calls.filter(([args]) => args[0] === 'push')).toEqual([]);
+  gitCalls.mockRestore();
   await expect(readFile(resolve(f.cwd, '.tmp/release-slot/run.lock'))).rejects.toMatchObject({ code: 'ENOENT' });
   const saved = JSON.parse(await readFile(resolve(f.cwd, '.tmp/release-slot/latest-publish.json'), 'utf8')) as { report: ReleaseReport };
   expect(saved.report.effects.releasePush).toBe('unknown'); expect(saved.report.ok).toBe(false);
@@ -71,32 +92,71 @@ it('reconciles a real rejected main push after its coordinator exits without rep
 it('keeps an accepted remote push unknown after a real coordinator crash instead of replaying it', { timeout: 720_000 }, async () => {
   const f = await fixture(), marker = resolve(f.root, 'accepted'), barrier = resolve(f.root, 'release-hook');
   const hook = resolve(f.root, 'post-receive.mjs');
-  await writeFile(hook, `import fs from 'node:fs';let input='';for await(const chunk of process.stdin)input+=chunk;if(input.split('\\n').some(line=>line.endsWith(' refs/heads/main'))){fs.writeFileSync(${JSON.stringify(marker)},'accepted');const until=Date.now()+120000;while(!fs.existsSync(${JSON.stringify(barrier)})){if(Date.now()>until)process.exit(1);await new Promise(resolve=>setTimeout(resolve,100));}}`);
+  await writeFile(hook, `import fs from 'node:fs';let input='';for await(const chunk of process.stdin)input+=chunk;if(input.split('\\n').some(line=>line.endsWith(' refs/heads/main'))){fs.writeFileSync(${JSON.stringify(marker)},JSON.stringify({pid:process.pid}));const until=Date.now()+120000;while(!fs.existsSync(${JSON.stringify(barrier)})){if(Date.now()>until)process.exit(1);await new Promise(resolve=>setTimeout(resolve,100));}}`);
   await writeFile(resolve(f.remote, 'hooks/post-receive'), `#!/bin/sh\nexec node '${hook.replaceAll('\\', '/')}'\n`, { mode: 0o755 });
-  const worker = start(f.cwd, 'publish'), known: RecordedIdentity[] = [];
+  const worker = start(f.cwd, 'accepted-main-crash', f.sha), known: RecordedIdentity[] = [];
+  let fixturePhase = 'await-hook';
   try {
-    const deadline = Date.now() + 550_000;
+    const deadline = Date.now() + 550_000; let hookPid: number | undefined;
     for (;;) {
-      try { await readFile(marker); break; } catch { /* 等待服务端确认已更新 ref。 */ }
+      try {
+        const value: unknown = JSON.parse(await readFile(marker, 'utf8'));
+        const pid: unknown = value && typeof value === 'object' ? Reflect.get(value, 'pid') : undefined;
+        if (typeof pid !== 'number' || !Number.isSafeInteger(pid) || pid <= 0) throw new Error('invalid fixture hook identity');
+        hookPid = pid; break;
+      } catch (error) {
+        // 完整 JSON 才能声明自有 hook PID；尚未写完或未创建时继续原有等待。
+        if (!(error instanceof SyntaxError) && !(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+      }
       if (Date.now() > deadline) throw new Error('post-receive barrier timed out');
       const early = await Promise.race([worker.result.then(result => ({ result })), new Promise<undefined>(accept => setTimeout(accept, 250))]);
       if (early) throw new Error(`coordinator exited before barrier: ${new TextDecoder().decode(early.result.stdout)}`);
     }
     expect(f.ref('main')).toBe(f.sha);
-    const owner = await worker.identity; if (!owner) throw new Error('fixture coordinator identity missing');
-    const all = await processControl().listProcesses({ signal: AbortSignal.timeout(10_000) });
-    const pids = new Set([owner.pid]);
-    for (let changed = true; changed;) { changed = false; for (const item of all) if (item.parentPid && pids.has(item.parentPid) && !pids.has(item.pid)) { pids.add(item.pid); known.push(item); changed = true; } }
+    const pending = JSON.parse(await readFile(resolve(f.cwd, '.tmp/release-slot/state.json'), 'utf8'));
+    expect(pending).toMatchObject({ status: 'running', pendingPush: 'releasePush',
+      effects: { developmentPush: 'pushed', releasePush: 'unknown' } });
+    expect(pending.processes).toHaveLength(2);
+    expect(pending.processes.at(-1)).toMatchObject({ name: 'git', status: 'identified', observationComplete: false,
+      identity: { pid: expect.any(Number), startToken: expect.any(String) },
+      scope: { scopeId: expect.any(String), binding: expect.any(String) } });
+    const container = await worker.identity; if (!container) throw new Error('fixture container identity missing');
+    const coordinator: unknown = pending.coordinator;
+    if (!coordinator || typeof coordinator !== 'object') throw new Error('fixture coordinator identity missing');
+    const coordinatorPid = Reflect.get(coordinator, 'pid'), coordinatorToken = Reflect.get(coordinator, 'startToken');
+    if (typeof coordinatorPid !== 'number' || !Number.isSafeInteger(coordinatorPid) || coordinatorPid <= 0
+      || typeof coordinatorToken !== 'string' || !coordinatorToken) throw new Error('fixture coordinator identity invalid');
+    // 容器 broker 只负责夹具收尾；崩溃仍针对其内部真实 coordinator 的新鲜身份。
+    const ownership = await captureFixtureAncestry(container, coordinatorPid);
+    const owner = ownership.find(identity => identity.pid === coordinatorPid);
+    if (!owner || owner.startToken !== coordinatorToken || owner.pid === container.pid) throw new Error('fixture coordinator identity unbound');
+    if (hookPid === undefined) throw new Error('fixture hook PID missing');
+    fixturePhase = 'capture-ancestry';
+    known.push(...await captureFixtureAncestry(owner, hookPid));
+    fixturePhase = 'terminate-coordinator';
     await processControl().terminateProcess({ process: owner, policy: { mode: 'force' }, signal: AbortSignal.timeout(10_000) });
-    await writeFile(barrier, 'release'); await worker.result; await waitForOwnerExit(worker);
+    fixturePhase = 'drain-coordinator';
+    await writeFile(barrier, 'release');
+    const completed = await worker.result;
+    // 这只是夹具全体后代已回收的资源事实，不能改写下方真实发布的 UNKNOWN。
+    expect(completed.ownedScope?.empty).toBe(true);
+    await waitForOwnerExit(worker);
+    fixturePhase = 'close-descendants';
     for (const identity of known) await stopFixtureDescendant(identity);
     const before = await readFile(resolve(f.cwd, '.tmp/release-slot/run.lock'));
+    const beforeState = await readFile(resolve(f.cwd, '.tmp/release-slot/state.json'));
+    fixturePhase = 'recover';
+    const gitCalls = vi.spyOn(Execution.prototype, 'git');
     const recovered = await runRelease({ cwd: f.cwd, command: 'recover', transport: emptyTransport });
     expect(recovered, JSON.stringify(recovered)).toMatchObject({ ok: false, error: { code: 'PROCESS_STATE_UNKNOWN' }, effects: { releasePush: 'unknown' },
       recovery: { observation: { releaseRef: { sha: f.sha, relation: 'candidate' } } } });
     expect(await readFile(resolve(f.cwd, '.tmp/release-slot/run.lock'))).toEqual(before);
+    expect(await readFile(resolve(f.cwd, '.tmp/release-slot/state.json'))).toEqual(beforeState);
     expect(f.ref('main')).toBe(f.sha); expect(f.ref('dev')).toBe(f.sha);
-  } finally {
+    expect(gitCalls.mock.calls.filter(([args]) => args[0] === 'push')).toEqual([]);
+    gitCalls.mockRestore();
+  } catch (error) { throw new Error(`FIXTURE_ACCEPTED_PUSH_${fixturePhase}`, { cause: error }); }
+  finally {
     await writeFile(barrier, 'release');
     for (const identity of known) await stopFixtureDescendant(identity);
   }

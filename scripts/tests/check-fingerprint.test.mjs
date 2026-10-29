@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { delimiter, join, resolve } from 'node:path';
 import test from 'node:test';
 
 import { collectTarballDigests, collectWorkspaceFingerprint } from '../check-fingerprint.mjs';
@@ -32,11 +32,12 @@ test('cached tarballs bind package identity to bytes and reject escaped paths', 
 });
 
 test('changing the effective worker cap invalidates a cached workspace check', async (context) => {
+  for (const variable of ['VITEST_MAX_WORKERS', 'FORGE_CHECK_TEST_WORKERS', 'FORGE_CHECK_WORKER_CEILING']) {
   const root = await temporaryRoot('check-workers-');
-  const original = process.env.VITEST_MAX_WORKERS;
+  const original = process.env[variable];
   context.after(async () => {
-    if (original === undefined) delete process.env.VITEST_MAX_WORKERS;
-    else process.env.VITEST_MAX_WORKERS = original;
+    if (original === undefined) Reflect.deleteProperty(process.env, variable);
+    else process.env[variable] = original;
     await rm(root, { recursive: true, force: true });
   });
   const initialized = spawnSync('git', ['init', '--quiet', root], { encoding: 'utf8', windowsHide: true });
@@ -45,10 +46,31 @@ test('changing the effective worker cap invalidates a cached workspace check', a
   await writeFile(join(root, 'input.txt'), 'unchanged input\n');
   await mkdir(join(root, 'node_modules'));
   await writeFile(join(root, 'node_modules/.modules.yaml'), 'storeDir: fixture\n');
-  process.env.VITEST_MAX_WORKERS = '1';
+  process.env[variable] = '1';
   const before = await collectWorkspaceFingerprint(root);
-  process.env.VITEST_MAX_WORKERS = '2';
+  process.env[variable] = '2';
   const after = await collectWorkspaceFingerprint(root);
   assert.deepEqual(before.files, after.files);
   assert.deepEqual(selectCheckMode(before, after, []), { kind: 'full' });
+  }
+});
+
+test('嵌套 pnpm 重复 PATH 项保持收据有效，改变查找顺序仍使收据失效', async context => {
+  const root = await temporaryRoot('check-path-'), original = process.env.PATH;
+  context.after(async () => {
+    process.env.PATH = original;
+    await rm(root, { recursive: true, force: true });
+  });
+  assert.equal(spawnSync('git', ['init', '--quiet', root], { windowsHide: true }).status, 0);
+  await writeFile(join(root, '.gitignore'), 'node_modules/\n');
+  await writeFile(join(root, 'input.txt'), 'input\n');
+  await mkdir(join(root, 'node_modules'));
+  await writeFile(join(root, 'node_modules/.modules.yaml'), 'storeDir: fixture\n');
+  const first = resolve(root, 'one'), second = resolve(root, 'two');
+  process.env.PATH = [first, second, original].join(delimiter);
+  const before = await collectWorkspaceFingerprint(root);
+  process.env.PATH = [first, second, first, second, original].join(delimiter);
+  assert.deepEqual(await collectWorkspaceFingerprint(root), before);
+  process.env.PATH = [second, first, original].join(delimiter);
+  assert.notEqual((await collectWorkspaceFingerprint(root)).environmentDigest, before.environmentDigest);
 });

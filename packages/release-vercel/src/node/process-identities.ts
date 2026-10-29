@@ -1,9 +1,9 @@
-import { createPosixProcessControl, createPosixProcessIdentityReader, createWindowsProcessControl, createWindowsProcessIdentityReader } from '@openge/forge-process-control-node';
+import { createPosixProcessControl, createPosixProcessIdentityReader, createWindowsProcessControl, createWindowsNativeProcessIdentityReader } from '@openge/forge-process-control-node';
 import type { RecordedIdentity } from './release-context.js';
 import { assertActive, ReleaseError } from './errors.js';
 
 export const processControl = () => process.platform === 'win32' ? createWindowsProcessControl({ listenerBackend: 'netstat' }) : createPosixProcessControl({ listenerBackend: 'lsof' });
-export const identityReader = () => process.platform === 'win32' ? createWindowsProcessIdentityReader() : createPosixProcessIdentityReader();
+export const identityReader = () => process.platform === 'win32' ? createWindowsNativeProcessIdentityReader() : createPosixProcessIdentityReader();
 export async function currentCoordinator(signal?: AbortSignal): Promise<RecordedIdentity> {
   assertActive(signal);
   const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 10_000);

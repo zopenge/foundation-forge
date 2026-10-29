@@ -1,5 +1,6 @@
 import { access, readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
+import { testWorkerTiers } from './test-worker-budget.mjs';
 
 const consumerScriptName = 'package-consumer/verify.mjs';
 
@@ -37,11 +38,20 @@ export const loadPackageVerification = async (packageValue) => {
     }
   }
   const candidate = resolve(packageValue.packageRoot, consumerScriptName);
+  const coverageWorkers = configuration.coverageWorkers ?? testWorkerTiers.at(-1);
+  if (!testWorkerTiers.includes(coverageWorkers)) {
+    throw new Error(`${packageValue.name} coverageWorkers must be 1, 2, 4 or 8`);
+  }
   const consumerScript = await exists(candidate) ? candidate : undefined;
+  const quickTests = configuration.quickTests;
+  if (quickTests !== undefined && (!Array.isArray(quickTests) || quickTests.length === 0
+    || new Set(quickTests).size !== quickTests.length || quickTests.some(path => typeof path !== 'string'
+      || !/^tests\/.+\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(path) || path.includes('\\') || path.split('/').includes('..'))))
+    throw new Error(`${packageValue.name} package.verify.json has invalid quickTests`);
   if (packageValue.bins.length > 0 && consumerScript === undefined) {
     throw new Error(`${packageValue.name} exposes a binary and requires a consumer smoke`);
   }
-  return { browserExports, consumerScript };
+  return { browserExports, consumerScript, coverageWorkers, ...(quickTests ? { quickTests } : {}) };
 };
 
 const importSpecifierPattern = /(?:\b(?:import|export)\s+(?:[^'";]*?\s+from\s*)?['"]([^'"]+)['"]|\bimport\s*\(\s*['"]([^'"]+)['"]\s*\))/gu;

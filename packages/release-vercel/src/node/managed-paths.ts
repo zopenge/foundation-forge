@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, relative, resolve } from 'node:path';
 import { Execution } from './execution.js';
+import { createManagedExecution } from './managed-execution.js';
 import { record, ReleaseError } from './errors.js';
 import type { FrozenSource, ManagedPaths, ManagedSlot } from './release-context.js';
 import { assertPathChain, fileIdentity, measureManagedUsage, pathExists, readBoundedJson, sameIdentity, within } from './managed-io.js';
@@ -19,37 +20,18 @@ import { assertManagedHistory } from './managed-history.js';
 export async function assertManagementUntracked(source: FrozenSource, execution: Execution): Promise<void> {
   assertNoGitContext();
   if (source.config.source.mode !== 'managed-commit') throw new ReleaseError('SOURCE_UNSUPPORTED');
+  const managementPaths = [source.config.source.slotPath, '.tmp/forge-vercel-release'];
+  const compare = (path: string) => process.platform === 'win32' ? path.toLowerCase() : path;
+  const protectedPaths = managementPaths.map(compare);
+  const roots = [...new Set(managementPaths.flatMap(path => path.split('/').slice(0, 1)))];
   const pathspec = (path: string) => process.platform === 'win32' ? `:(icase,literal)${path}` : `:(literal)${path}`;
-  const managementPaths = [source.config.source.slotPath, '.tmp/forge-vercel-release'], paths = managementPaths.map(pathspec);
   let tracked = false;
-  await gitRecords(execution, ['ls-files', '-z', '--', ...paths], () => { tracked = true; });
-  // ls-tree 的旧版本不支持 icase magic；逐层核对真实 tree 名称，不遗漏大小写路径。
-  const cache = new Map<string, { name: string; type: string; oid: string }[]>();
-  const entries = async (tree: string) => {
-    let values = cache.get(tree);
-    if (!values) {
-      values = [];
-      await gitRecords(execution, ['ls-tree', '-z', tree], record => {
-        const match = /^\d{6} (blob|tree|commit) ([a-f0-9]{40})\t([\s\S]+)$/u.exec(record);
-        if (!match?.[1] || !match[2] || !match[3]) throw new ReleaseError('SLOT_PATH', { reason: 'HEAD_TREE' });
-        values?.push({ type: match[1], oid: match[2], name: match[3] });
-      });
-      cache.set(tree, values);
-    }
-    return values;
-  };
-  for (const path of managementPaths) {
-    let trees = ['HEAD']; const parts = path.split('/');
-    for (const [index, part] of parts.entries()) {
-      const next: string[] = [];
-      for (const tree of trees) for (const entry of await entries(tree)) {
-        if ((process.platform === 'win32' ? entry.name.toLowerCase() : entry.name) !== (process.platform === 'win32' ? part.toLowerCase() : part)) continue;
-        if (index === parts.length - 1 || entry.type !== 'tree') tracked = true;
-        else next.push(entry.oid);
-      }
-      trees = next;
-    }
-  }
+  // HEAD 与索引取并集；包含祖先路径以捕获文件/gitlink 阻塞，逐条筛选而不误拒绝兄弟路径。
+  // 每次 guard 都重新查询，禁止跨检查缓存 HEAD 或索引；暂存删除不能隐藏 HEAD 中的受管路径。
+  await gitRecords(execution, ['ls-files', '--cached', '--with-tree=HEAD', '-z', '--', ...roots.map(pathspec)], value => {
+    const path = compare(value);
+    if (protectedPaths.some(target => path === target || path.startsWith(`${target}/`) || target.startsWith(`${path}/`))) tracked = true;
+  });
   if (tracked) throw new ReleaseError('SLOT_PATH', { reason: 'TRACKED_MANAGEMENT_PATH' });
 }
 
@@ -134,7 +116,7 @@ export async function openManagedSlot(source: FrozenSource, execution: Execution
   const admissionBytes = 1024 + metadataReserveBytes + (created ? Buffer.byteLength(ownerJson) : 0);
   if (Buffer.byteLength(ownerJson) > 65_536 || usage.bytes + admissionBytes > budget.maxBytes || usage.freeBytes - admissionBytes < budget.minFreeBytes) throw new ReleaseError('BUDGET_EXCEEDED', { reason: 'SLOT_ADMISSION' });
   const rawLock = await acquireLock(paths.lockPath, { runId, identity: coordinator });
-  const management = new Execution(source.root, source.config, undefined, []);
+  const management = createManagedExecution(source.root, source.config, undefined, []);
   const assertOwned = async () => { await assertManagedPaths(paths); await assertManagementUntracked(source, management); await rawLock.assertOwned(); };
   const lock = { assertOwned, release: async () => { await assertOwned(); await rawLock.release(); } };
   try {

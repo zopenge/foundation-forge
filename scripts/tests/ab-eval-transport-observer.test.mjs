@@ -150,8 +150,10 @@ test('transport observer records safe SSE error evidence without changing bytes'
     try{
       const response=await globalThis.fetch(`${observer.baseURL}/chat/completions`,{
         method:'POST',body:'{}'});
-      assert.deepEqual(Buffer.from(await response.arrayBuffer()),body);
+      const bytes=Buffer.from(await response.arrayBuffer());
       const [row]=await observer.close();
+      assert.equal(response.status,200,JSON.stringify(row));
+      assert.deepEqual(bytes,body,JSON.stringify(row));
       assert.equal(row.responseStatus,200);
       assert.equal(row.responseBytes,body.length);
       assert.equal(row.sseErrorCode??null,isError?'UPSTREAM_SSE_ERROR':null);
@@ -200,6 +202,8 @@ test('transport observer separates an interrupted upstream stream from connect f
     interruptStream();
     await assert.rejects(async()=>{
       while(!(await reader.read()).done){ /* 排空已收到的片段，直到中断到达。 */ }
+    }).catch(async error=>{
+      const [row]=await observer.close();error.message+=` ${JSON.stringify(row)}`;throw error;
     });
     const [row]=await observer.close();
     assert.equal(row.terminalEvent,'UPSTREAM_STREAM_ERROR');

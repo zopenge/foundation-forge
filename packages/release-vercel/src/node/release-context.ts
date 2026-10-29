@@ -27,6 +27,9 @@ export interface ManagedPaths {
 export interface RecordedIdentity { readonly pid: number; readonly startToken: string }
 export interface ManagedCommand {
   readonly id: string; readonly name: string;
+  readonly kind?: 'checkout-observation';
+  readonly plan?: readonly { readonly name: string; readonly args: readonly string[] }[];
+  observations?: ManagedCommand[];
   status: 'intent' | 'spawned' | 'identified' | 'closed' | 'stopped' | 'unknown';
   pid?: number; identity?: RecordedIdentity;
   descendants: RecordedIdentity[];
@@ -67,6 +70,7 @@ export interface ManagedSlot {
 }
 export interface ExecutionLifecycle {
   execute(runner: CommandRunner, name: string, spec: CommandSpec, observer?: CommandObserver): Promise<CommandResult>;
+  observeCheckout?<T>(operation: () => Promise<T>): Promise<T>;
 }
 export interface ManagedSession {
   readonly slot: ManagedSlot;

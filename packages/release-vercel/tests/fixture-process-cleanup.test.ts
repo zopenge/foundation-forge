@@ -1,9 +1,9 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { expect, it, vi } from 'vitest';
-import type { ReadProcessIdentityResult } from '@openge/forge-process-control';
+import type { ProcessDescriptor, ReadProcessIdentityResult } from '@openge/forge-process-control';
 import { identityReader, processControl } from '../src/node/process-identities.js';
-import { closeFixtureIdentity } from './helpers/close-fixture-process.js';
+import { captureFixtureAncestry, closeFixtureIdentity } from './helpers/close-fixture-process.js';
 
 it('confirms absence when a real fixture exits between observation and termination', async () => {
   const child = spawn(process.execPath, ['--input-type=commonjs', '-e',
@@ -72,4 +72,44 @@ it.each(['PROCESS_IDENTITY_CHANGED', 'COMMAND_FAILED', 'OPERATION_ABORTED'])('do
     control: { terminateProcessTree: async () => { throw error; } },
   })).rejects.toBe(error);
   expect(readIdentity).not.toHaveBeenCalled();
+});
+
+const owner = { pid: 10, startToken: 'owner' };
+const ancestry = (): Record<number, ProcessDescriptor> => ({
+  10: owner, 20: { pid: 20, startToken: 'parent', parentPid: 10 },
+  30: { pid: 30, startToken: 'leaf', parentPid: 20, commandLine: 'private fixture argv' },
+});
+
+it('captures only an identity-bound fixture ancestry using exact PID requests', async () => {
+  expect(captureFixtureAncestry).toBeTypeOf('function');
+  const rows = ancestry(), listProcesses = vi.fn(async ({ pids }: { pids?: readonly number[] }) => {
+    expect(pids?.length).toBeGreaterThan(0);
+    return (pids ?? []).flatMap(pid => rows[pid] ? [{ ...rows[pid] }] : []);
+  });
+  expect(await captureFixtureAncestry(owner, 30, { control: { listProcesses } })).toEqual([
+    { pid: 30, startToken: 'leaf' }, { pid: 20, startToken: 'parent' },
+  ]);
+  expect(new Set(listProcesses.mock.calls.map(([request]) => request.pids?.[0]))).toEqual(new Set([10, 20, 30]));
+  expect(listProcesses.mock.calls.length).toBeLessThanOrEqual(3);
+});
+
+it.each(['owner-replaced', 'leaf-absent', 'unrelated', 'cycle', 'identity-changed', 'parent-changed'] as const)('rejects an unbound fixture ancestry: %s', async mode => {
+  const rows = ancestry(); let leafReads = 0;
+  if (mode === 'owner-replaced') rows[10] = { ...owner, startToken: 'replacement' };
+  if (mode === 'leaf-absent') delete rows[30];
+  if (mode === 'unrelated') rows[20] = { pid: 20, startToken: 'parent', parentPid: 40 };
+  if (mode === 'cycle') rows[20] = { pid: 20, startToken: 'parent', parentPid: 30 };
+  const listProcesses = vi.fn(async ({ pids }: { pids?: readonly number[] }) => {
+    expect(pids?.length).toBeGreaterThan(0);
+    return (pids ?? []).flatMap(pid => {
+      const row = rows[pid]; if (!row) return [];
+      if (pid === 30 && ++leafReads > 1) {
+        if (mode === 'identity-changed') return [{ ...row, startToken: 'replacement' }];
+        if (mode === 'parent-changed') return [{ ...row, parentPid: 40 }];
+      }
+      return [{ ...row }];
+    });
+  });
+  await expect(captureFixtureAncestry(owner, 30, { control: { listProcesses } })).rejects.toThrow('FIXTURE_ANCESTRY');
+  expect(listProcesses.mock.calls.length).toBeLessThan(10);
 });

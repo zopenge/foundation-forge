@@ -20,6 +20,7 @@ import { loadReleasePolicy } from './release-policy.mjs';
 import { createNpmEnvironment } from './release-environment.mjs';
 import { npmAuthenticationArguments } from './release-authentication.mjs';
 import { discoverWorkspacePackageModel } from './workspace-packages.mjs';
+import { assertFullCheckReceipt } from './check-release-gate.mjs';
 
 export const publishIfNeeded = async ({ tag, bootstrap = false, model, policy,
   environment = process.env, onPublishState, expectedNames, authMode = 'otp',
@@ -27,6 +28,7 @@ export const publishIfNeeded = async ({ tag, bootstrap = false, model, policy,
   const authenticationArguments = npmAuthenticationArguments(authMode);
   if (authMode === 'web' && !bootstrap) throw new Error('WEB_AUTH_BOOTSTRAP_ONLY');
   const repositoryRoot = model?.repositoryRoot ?? fileURLToPath(new URL('../', import.meta.url));
+  await assertFullCheckReceipt(repositoryRoot);
   const packDirectory = resolve(repositoryRoot, '.tmp', 'release-packs');
 
   async function publishedVersions(packageName, registry) {
@@ -95,6 +97,7 @@ export const publishIfNeeded = async ({ tag, bootstrap = false, model, policy,
   }
 
   async function packPackage(release) {
+    await assertFullCheckReceipt(repositoryRoot);
     const before = new Set(await readdir(packDirectory));
     await runPackageManager('pnpm', [
       '--filter',
@@ -111,6 +114,7 @@ export const publishIfNeeded = async ({ tag, bootstrap = false, model, policy,
   }
 
   async function publishTarball(tarball, tag) {
+    await assertFullCheckReceipt(repositoryRoot);
     const args = createNpmPublishArguments(tarball, {
       provenance: !bootstrap,
       tag,

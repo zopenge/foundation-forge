@@ -42,7 +42,7 @@ assert.notEqual(reference.root.sha256,catalog.root.sha256);
 assert.deepEqual(manifest.objects,renamed.manifest.objects);
 const work=join(process.cwd(),'.tmp'); await mkdir(work,{recursive:true});
 const base=await mkdtemp(join(work,'reading-api-')); const sourceRoot=join(base,'source'); await mkdir(sourceRoot);
-const git=args=>execFileSync('git',['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','-C',sourceRoot,...args],{stdio:'pipe'});
+const git=args=>execFileSync('git',['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','-C',sourceRoot,...args],{stdio:'pipe',windowsHide:true});
 let captured;
 try {
   git(['init','--quiet']); await writeFile(join(sourceRoot,'entry.ts'),'export const entry=1;\n'); git(['add','entry.ts']); git(['commit','--quiet','-m','fixture']);

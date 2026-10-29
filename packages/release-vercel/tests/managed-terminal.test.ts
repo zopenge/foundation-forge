@@ -3,9 +3,7 @@ import * as filesystem from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createManagedSession } from '../src/node/managed-process.js';
-import { freezeManagedSource } from '../src/node/source.js';
-import { openManagedSlot } from '../src/node/managed-paths.js';
-import { managedFixture } from './helpers/managed-fixture.js';
+import { managedSessionFixture as managedFixture } from './helpers/managed-session-fixture.js';
 import { identityReader } from '../src/node/process-identities.js';
 import { closeFixtureIdentity } from './helpers/close-fixture-process.js';
 import type { ManagedSession } from '../src/node/release-context.js';
@@ -28,12 +26,8 @@ afterEach(async () => {
   for (const fixture of fixtures.splice(0)) await fixture.dispose();
 });
 async function fixture() {
-  const f = await managedFixture(); fixtures.push(f);
-  if (f.config.source.mode !== 'managed-commit') throw new Error('managed fixture required');
-  Object.assign(f.config.source, { sampleIntervalMs: 5000 });
-  await writeFile(resolve(f.cwd, 'release.config.json'), JSON.stringify(f.config)); f.commit();
-  const source = await freezeManagedSource(f.cwd, 'release.config.json', f.execution);
-  const slot = await openManagedSlot(source, f.execution); await mkdir(slot.paths.checkoutRoot);
+  const f = await managedFixture({ sampleIntervalMs: 5000 }); fixtures.push(f);
+  const slot = f.slot; await mkdir(slot.paths.checkoutRoot);
   const session = await createManagedSession(slot, 'check'); sessions.push(session);
   return { ...f, slot, session, terminalPath: resolve(slot.paths.slotRoot, 'terminal.json') };
 }

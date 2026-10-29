@@ -51,12 +51,14 @@ Requirements:
 
 ```sh
 pnpm install --frozen-lockfile
-pnpm check
+pnpm check:full
 ```
 
 Run these commands in a normal terminal after cloning the repository. Development and release commands do not require Codex or files from a previous checkout. Build outputs, test fixtures, and validation caches are created by the repository commands when needed.
 
-`pnpm check` stores successful validation evidence and verified tarballs in the ignored `.tmp/check-cache/` directory. Exact repeats reuse that evidence; documentation, evaluation tools, script tests, and affected package groups select the relevant checks while verifying unchanged inputs and outputs. See [validation modes](docs/maintenance/validation.md) for the scope of each check. Use `pnpm check:full` to run every check from a clean package build regardless of the cache.
+`pnpm check:full` stores full validation evidence and verified tarballs in ignored `.tmp/check-cache/`. Daily `pnpm check` selects affected packages and fast regressions without updating that receipt. Unknown impact, missing baseline, or stale dependencies requires full validation. Full testing shares at most two workers; quick uses one. Run `pnpm build` before independent script or coverage tests.
+
+Daily validation runs locally with `pnpm check`. The CI workflow accepts only `workflow_dispatch`; maintainers manually run its complete Linux/Windows and Node.js matrix before a release and verify that the successful run's `headSha` matches the exact candidate commit. See the [manual acceptance procedure](docs/maintenance/validation.md#手动-ci-验收). This policy takes effect on the default branch once the workflow change reaches it. The Release workflow retains its existing main-push automation.
 
 ## Versioning and releases
 
@@ -77,3 +79,7 @@ See [SECURITY.md](SECURITY.md) for private vulnerability reporting guidance.
 ## License
 
 Licensed under the [Apache License 2.0](LICENSE).
+
+### Validation tiers
+
+Use `pnpm check` (or `pnpm check:quick`) for affected-package feedback and fast regressions. Unknown impact or a missing baseline requires `pnpm check:full`. Quick reports the exact selected files and what was not run; it never creates a full release receipt. `pnpm check:full` retains the complete suite, coverage, and real tarball consumers. Publishing independently requires a matching full receipt.

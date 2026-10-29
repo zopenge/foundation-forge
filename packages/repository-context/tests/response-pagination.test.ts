@@ -18,18 +18,25 @@ const run = async (args: readonly string[]) => {
   };
 };
 
-const createPagedRepository = async () => {
+const createPagedRepository = async ({
+  leafCount = 0,
+  oversizedText = false,
+}: { leafCount?: number; oversizedText?: false | 'ascii' | 'unicode' } = {}) => {
   const repository = await createTemporaryRepository();
   repositories.push(repository);
   await writeFile(join(repository.rootDir, 'src', 'hub.ts'), 'export function hub(): string { return "hub"; }\n', 'utf8');
-  await Promise.all(Array.from({ length: 40 }, (_, index) => writeFile(
+  await Promise.all(Array.from({ length: leafCount }, (_, index) => writeFile(
     join(repository.rootDir, 'src', `leaf-${index}.ts`),
     `import { hub } from './hub.js';\nexport const leaf${index} = hub();\n`, 'utf8',
   )));
-  await writeFile(join(repository.rootDir, 'src', 'long.ts'),
-    `export const giant = "${'x'.repeat(128 * 1024)}";\n`, 'utf8');
-  await writeFile(join(repository.rootDir, 'src', 'unicode.ts'),
-    `export const emojiToken = "${'🙂'.repeat(10_000)}";\n`, 'utf8');
+  if (oversizedText === 'ascii') {
+    await writeFile(join(repository.rootDir, 'src', 'long.ts'),
+      `export const giant = "${'x'.repeat(128 * 1024)}";\n`, 'utf8');
+  }
+  if (oversizedText === 'unicode') {
+    await writeFile(join(repository.rootDir, 'src', 'unicode.ts'),
+      `export const emojiToken = "${'🙂'.repeat(10_000)}";\n`, 'utf8');
+  }
   const built = await buildRepositoryCorpus({
     rootDir: repository.rootDir,
     indexRoot: repository.indexRoot,
@@ -43,7 +50,7 @@ const createPagedRepository = async () => {
 };
 
 test('investigate pages high-indegree relations within the requested byte budget', async () => {
-  const repository = await createPagedRepository();
+  const repository = await createPagedRepository({ leafCount: 40 });
   const base = [
     'investigate', '--root', repository.rootDir, '--index', repository.indexRoot,
     '--query', 'hub', '--scope', 'src/', '--view', 'relations', '--max-bytes', '4096',
@@ -68,7 +75,7 @@ test('investigate pages high-indegree relations within the requested byte budget
   expect(pageCount).toBeGreaterThan(1);
 });
 test('investigate trims an oversized single-line excerpt without claiming completeness', async () => {
-  const repository = await createPagedRepository();
+  const repository = await createPagedRepository({ oversizedText: 'ascii' });
   const page = await run([
     'investigate', '--root', repository.rootDir, '--index', repository.indexRoot,
     '--query', 'giant', '--scope', 'src/', '--view', 'evidence', '--max-bytes', '4096',
@@ -87,7 +94,7 @@ test('investigate trims an oversized single-line excerpt without claiming comple
 });
 
 test('UTF-8 多字节巨大单行仍遵守完整 stdout 字节上限', async () => {
-  const repository = await createPagedRepository();
+  const repository = await createPagedRepository({ oversizedText: 'unicode' });
   const page = await run([
     'investigate', '--root', repository.rootDir, '--index', repository.indexRoot,
     '--query', 'emojiToken', '--scope', 'src/unicode.ts', '--view', 'evidence', '--max-bytes', '4096',
@@ -98,7 +105,7 @@ test('UTF-8 多字节巨大单行仍遵守完整 stdout 字节上限', async () 
   expect(evidence[0]?.complete).toBe(false);
   expect(evidence[0]?.deliveredRange).toBeNull();
   expect(page.parsed.internallyTruncated).not.toBe(false);
-  expect(evidence[0]?.text).not.toContain('�');
+  expect(evidence[0]?.text).not.toContain('\uFFFD');
 });
 
 test('investigate explicitly identifies a complete small source file', async () => {
@@ -117,13 +124,16 @@ test('investigate explicitly identifies a complete small source file', async () 
 });
 
 test('continuation cursor is bound to the original investigation request', async () => {
-  const repository = await createPagedRepository();
+  const repository = await createPagedRepository({ leafCount: 16 });
   const first = await run([
     'investigate', '--root', repository.rootDir, '--index', repository.indexRoot,
     '--query', 'hub', '--scope', 'src/', '--view', 'relations', '--max-bytes', '4096',
   ]);
+  expect(first.exitCode, JSON.stringify(first.parsed)).toBe(0);
   const cursor = first.parsed.nextCursor as string;
   expect(cursor).toBeTruthy();
+  expect(cursor).toEqual(expect.any(String));
+  expect(cursor.length).toBeGreaterThan(0);
   const mismatch = await run([
     'investigate', '--root', repository.rootDir, '--index', repository.indexRoot,
     '--query', 'different', '--scope', 'src/', '--view', 'relations', '--max-bytes', '4096', '--cursor', cursor,
@@ -212,12 +222,15 @@ test('rejects an invalid response budget before index I/O', async () => {
   expect((result.parsed.diagnostics as Array<{ code: string }>)[0]?.code).toBe('INVALID_ARGUMENT');
 });
 test('rejects a cursor whose offset was modified without a matching checksum', async () => {
-  const repository = await createPagedRepository();
+  const repository = await createPagedRepository({ leafCount: 16 });
   const first = await run([
     'investigate', '--root', repository.rootDir, '--index', repository.indexRoot,
     '--query', 'hub', '--scope', 'src/', '--view', 'relations', '--max-bytes', '4096',
   ]);
+  expect(first.exitCode, JSON.stringify(first.parsed)).toBe(0);
   const cursor = first.parsed.nextCursor as string;
+  expect(cursor).toEqual(expect.any(String));
+  expect(cursor.length).toBeGreaterThan(0);
   const dot = cursor.indexOf('.');
   const prefix = cursor.slice(0, dot);
   const envelope = JSON.parse(Buffer.from(cursor.slice(dot + 1), 'base64url').toString('utf8')) as {
@@ -233,12 +246,16 @@ test('rejects a cursor whose offset was modified without a matching checksum', a
   expect((result.parsed.diagnostics as Array<{ code: string }>)[0]?.code).toBe('CURSOR_MISMATCH');
 });
 test('rejects a continuation cursor after the current generation changes', async () => {
-  const repository = await createPagedRepository();
+  // 此例只证明真实跨代 cursor 拒绝；高入度、巨大文本和 UTF-8 截断由本文件其他用例覆盖。
+  const repository = await createPagedRepository({ leafCount: 16, oversizedText: false });
   const first = await run([
     'investigate', '--root', repository.rootDir, '--index', repository.indexRoot,
     '--query', 'hub', '--scope', 'src/', '--view', 'relations', '--max-bytes', '4096',
   ]);
+  expect(first.exitCode, JSON.stringify(first.parsed)).toBe(0);
+  expect(first.parsed.nextCursor).toEqual(expect.any(String));
   const cursor = first.parsed.nextCursor as string;
+  expect(cursor.length).toBeGreaterThan(0);
   await writeFile(join(repository.rootDir, 'src', 'leaf-0.ts'),
     "import { hub } from './hub.js';\nexport const leaf0Changed = hub();\n", 'utf8');
   const rebuilt = await buildRepositoryCorpus({

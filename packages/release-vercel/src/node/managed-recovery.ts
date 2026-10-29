@@ -7,6 +7,7 @@ import { assertManagedPaths } from './managed-paths.js';
 import { parseManagedReceipt, parseManagedState } from './managed-state.js';
 import { validateReleaseConfig } from './config.js';
 import { Execution } from './execution.js';
+import { createManagedExecution } from './managed-execution.js';
 import { assertRepository, normalizeRepository, remoteRefs } from './git.js';
 import { configDigest, readCommittedConfig, relativeConfigPath } from './source.js';
 import { identityReader } from './process-identities.js';
@@ -21,6 +22,7 @@ import { createManagedSession } from './managed-process.js';
 import { assertCheckoutFrozen } from './managed-checkout.js';
 import { publishCandidate } from './publication.js';
 import { hasVerifiedManagedStop } from './managed-closure.js';
+import { managedCommandIdentities } from './managed-observation.js';
 import { discardPreparedState, restoreManagedTerminal } from './managed-terminal.js';
 import { archiveManagedDisposition, assertDispositionSnapshot, hasManagedDisposition, readManagedDisposition } from './managed-disposition.js';
 import { hasFinalizedRetirement } from './retirement-record.js';
@@ -85,7 +87,7 @@ async function recoverManagedPublication(options: RunReleaseOptions): Promise<Re
     refs = { owner: observation.owner, processes: observation.processes, observedAt: new Date().toISOString() };
     if (source.config.source.mode !== 'managed-commit') throw new ReleaseError('SOURCE_UNSUPPORTED');
     budget = new BudgetMonitor(location.paths, source.config.source); await budget.sample();
-    const execution = new Execution(source.root, source.config, options.signal, []);
+    const execution = createManagedExecution(source.root, source.config, options.signal, []);
     refs = await observeRefsForDisposition(execution, source, observation);
     if (observation.owner !== 'inactive') throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'OWNER_NOT_INACTIVE', owner: observation.owner });
     if (observation.processes !== 'closed') throw new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'CLOSURE_UNPROVEN', processes: observation.processes });
@@ -125,14 +127,14 @@ async function runManagedVerification(options: RunReleaseOptions): Promise<Relea
   let failure: ReleaseDiagnostic | undefined, deployment: ReleaseDeployment | undefined, closed = true;
   const report = () => receiptReport(options, { startedAt, stage: session?.state.stage ?? 'source', steps: session?.steps ?? [], effects: session?.state.effects ?? { developmentPush: 'not-attempted', releasePush: 'not-attempted' },
     ...(selected ? { source: selected.receipt.source, location: selected.location, ...(session ? { runId: session.state.runId } : {}) } : {}),
-    ...(session ? { observation: { owner: closed ? 'inactive' : 'unknown', processes: closed ? 'closed' : 'unknown', knownCount: new Set(session.state.processes.flatMap(command => [...command.descendants, ...(command.identity ? [command.identity] : [])]).map(identity => `${String(identity.pid)}:${identity.startToken}`)).size }, budget: session.budget.summary() } : {}),
+    ...(session ? { observation: { owner: closed ? 'inactive' : 'unknown', processes: closed ? 'closed' : 'unknown', knownCount: new Set(session.state.processes.flatMap(managedCommandIdentities).map(identity => `${String(identity.pid)}:${identity.startToken}`)).size }, budget: session.budget.summary() } : {}),
     ...(deployment ? { deployment } : {}), ...(failure ? { failure } : {}), next: closed ? 'verify' : 'recover' });
   try {
     if (options.config !== undefined) throw new ReleaseError('SOURCE_UNSUPPORTED', { reason: 'COMMITTED_CONFIG_REQUIRED' });
     selected = await loadManagedPublication(options.cwd, options.configPath ?? 'release.config.json', options.sha, options.signal);
     const { source } = selected.receipt;
     if (!await pathExists(resolve(selected.location.paths.checkoutRoot, '.git'))) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'CHECKOUT_MISSING' });
-    const original = new Execution(source.root, source.config, options.signal, []);
+    const original = createManagedExecution(source.root, source.config, options.signal, []);
     await settleManagedSlot(options); slot = await openManagedSlot(source, original); session = await createManagedSession(slot, 'verify', options.signal);
     const current = session;
     const assertFrozen = async () => { await assertHistoricalSource(source, options.signal); await assertCheckoutFrozen(current); };
@@ -182,7 +184,7 @@ export async function runManagedReceiptCommand(options: RunReleaseOptions): Prom
     observation = await inspectManagedRecovery(restored.state, location.paths, options.signal);
     const locallyReady = await hasManagedDisposition(location.paths, state);
     needsRecovery = observation.owner !== 'inactive' || observation.processes !== 'closed' || (state.status !== 'closed' && !locallyReady);
-    const execution = new Execution(source.root, source.config, options.signal, []);
+    const execution = createManagedExecution(source.root, source.config, options.signal, []);
     refs = await observeRefs(execution, source, observation);
     const published = receipt.report.runId ? await readManagedDisposition(location.paths, receipt.report.runId) : undefined;
     for (const [effect, current] of [['developmentPush', refs.developmentRef], ['releasePush', refs.releaseRef]] as const) {
@@ -213,9 +215,9 @@ export async function inspectManagedRecovery(state: ManagedState, paths: Managed
   assertActive(signal); await assertManagedPaths(paths);
   const controller = new AbortController(), timer = setTimeout(() => controller.abort(), Math.min(30_000, state.source.config.limits.commandMs));
   const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
-  const identities = new Map(state.processes.flatMap(command => [...command.descendants, ...(command.identity ? [command.identity] : [])]).map(value => [`${String(value.pid)}:${value.startToken}`, value]));
+  const identities = new Map(state.processes.flatMap(managedCommandIdentities).map(value => [`${String(value.pid)}:${value.startToken}`, value]));
   const unresolved = state.processes.filter(command => !hasVerifiedManagedStop(command));
-  const pendingIdentities = new Map(unresolved.flatMap(command => [...command.descendants, ...(command.identity ? [command.identity] : [])]).map(value => [`${String(value.pid)}:${value.startToken}`, value]));
+  const pendingIdentities = new Map(unresolved.flatMap(managedCommandIdentities).map(value => [`${String(value.pid)}:${value.startToken}`, value]));
   let owner: RecoveryObservation['owner'] = 'unknown';
   let unknown = unresolved.length > 0, running = false;
   try {
@@ -278,7 +280,7 @@ export function frozenSource(value: unknown, location: ManagedLocation): FrozenS
   return { root: location.root, configPath: location.configPath, sha: item.sha, config, configBlobOid: item.configBlobOid, configSha256: item.configSha256, fetchUrl: item.fetchUrl };
 }
 export async function assertHistoricalSource(source: FrozenSource, signal?: AbortSignal): Promise<void> {
-  const execution = new Execution(source.root, source.config, signal, []);
+  const execution = createManagedExecution(source.root, source.config, signal, []);
   try { await assertRepository(execution, source.config); }
   catch { assertActive(signal); throw new ReleaseError('SOURCE_CHANGED', { reason: 'REPOSITORY_IDENTITY' }); }
   const committed = await readCommittedConfig(execution, source.sha, source.configPath);

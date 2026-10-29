@@ -18,7 +18,7 @@ export const planTargetPackages = (model, packageNames) => {
   return { packages, smokePackageNames: new Set(packageNames) };
 };
 
-export const verifyTargetedPackages = async ({ model, packageNames, verificationRoot, reusedTarballs }) => {
+export const verifyTargetedPackages = async ({ model, packageNames, verificationRoot, reusedTarballs, testRun }) => {
   const { packages, smokePackageNames } = planTargetPackages(model, packageNames);
   const subset = { ...model, packages };
   for (const packageValue of packages) await verifyManifest(packageValue, model.rootManifest);
@@ -28,6 +28,6 @@ export const verifyTargetedPackages = async ({ model, packageNames, verification
   const references = new Map(packages.map(({ name }) => [name,
     `file:${relative(consumerRoot, tarballs.get(name)).replaceAll('\\', '/')}`]));
   await runCleanPackageConsumer({ consumerRoot, model: subset, references,
-    smokePackageNames });
+    smokePackageNames, testRun });
   return { targetTarballs: new Map(packageNames.map((name) => [name, tarballs.get(name)])) };
 };

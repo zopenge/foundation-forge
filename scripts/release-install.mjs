@@ -47,8 +47,8 @@ export const isRetryableInstallError = (error, confirmedNames) => {
   return isTransientRegistryError(error);
 };
 
-export const runInstallCommand = ({ invocation, cwd, env, timeoutMilliseconds }) => new Promise((resolve, reject) => {
-  const child = spawn(invocation.command, invocation.args, {
+export const runInstallCommand = ({ invocation, cwd, env, timeoutMilliseconds, spawnCommand = spawn }) => new Promise((resolve, reject) => {
+  const child = spawnCommand(invocation.command, invocation.args, {
     cwd, env, shell: false, windowsHide: true,
     detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'],
   });

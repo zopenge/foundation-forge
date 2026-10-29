@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { ProcessIdentityReader, ReadProcessIdentityRequest, ReadProcessIdentityResult } from '@openge/forge-process-control';
-import { Execution } from '../src/node/execution.js';
+import { createManagedExecution } from '../src/node/managed-execution.js';
 
 const probe = vi.hoisted((): { read?: ProcessIdentityReader['readIdentity'] } => ({}));
 // 只控制身份观测边界；命令执行、退出事件及直接子进程清理均使用真实 Node 进程。
@@ -12,7 +12,7 @@ vi.mock('@openge/forge-process-control-node', async importOriginal => {
     if (!probe.read) throw new Error('identity probe was not installed');
     return probe.read(request);
   } });
-  return { ...actual, createWindowsProcessIdentityReader: reader, createPosixProcessIdentityReader: reader };
+  return { ...actual, createWindowsProcessIdentityReader: reader, createWindowsNativeProcessIdentityReader: reader, createPosixProcessIdentityReader: reader };
 });
 
 function deferred<T>() {
@@ -30,7 +30,7 @@ async function controlledCommand() {
   const ready = deferred<undefined>(), controller = new AbortController();
   probe.read = request => { observed.resolve(request); return identity.promise; };
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-  const execution = new Execution(root, { limits: { commandMs: 15_000, deploymentMs: 1000, pollMs: 20, requestMs: 1000, maxOutputBytes: 4096 } }, controller.signal, []);
+  const execution = createManagedExecution(root, { limits: { commandMs: 15_000, deploymentMs: 1000, pollMs: 20, requestMs: 1000, maxOutputBytes: 4096 } }, controller.signal, []);
   const result = execution.run('identity-budget', { command: 'node', args: ['-e',
     'const fs=require("node:fs");process.stdout.write("ready\\n");setInterval(()=>{if(fs.existsSync(process.argv[1]))process.exit(0)},10);setTimeout(()=>process.exit(91),20000)', marker] }, 'CHECK_FAILED', undefined, undefined, true,
   text => { if (text.includes('ready')) ready.resolve(undefined); })

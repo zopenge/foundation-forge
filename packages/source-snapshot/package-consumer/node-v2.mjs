@@ -17,14 +17,14 @@ const base = await mkdtemp(join(tmpdir(), 'source-snapshot-neutral-consumer-'));
 const source = join(base, 'source'); const target = join(base, 'target'); const state = join(base, 'state');
 await Promise.all([mkdir(source), mkdir(target), mkdir(state)]);
 try {
-  execFileSync('git', ['init', '--quiet'], { cwd: source });
-  execFileSync('git', ['config', 'user.email', 'neutral@example.invalid'], { cwd: source });
-  execFileSync('git', ['config', 'user.name', 'Neutral Consumer'], { cwd: source });
+  execFileSync('git', ['init', '--quiet'], { cwd: source, windowsHide: true });
+  execFileSync('git', ['config', 'user.email', 'neutral@example.invalid'], { cwd: source, windowsHide: true });
+  execFileSync('git', ['config', 'user.name', 'Neutral Consumer'], { cwd: source, windowsHide: true });
   await writeFile(join(source, '.gitignore'), 'ignored/\n', 'utf8');
   await mkdir(join(source, 'src'));
   await writeFile(join(source, 'src', 'value.ts'), 'export const value = 2\r\n', 'utf8');
-  execFileSync('git', ['add', '.gitignore', 'src/value.ts'], { cwd: source });
-  execFileSync('git', ['commit', '--quiet', '-m', 'baseline'], { cwd: source });
+  execFileSync('git', ['add', '.gitignore', 'src/value.ts'], { cwd: source, windowsHide: true });
+  execFileSync('git', ['commit', '--quiet', '-m', 'baseline'], { cwd: source, windowsHide: true });
   const lockPath = join(state, 'snapshot.lock');
   const config = join(base, 'source-snapshot.config.mjs');
   await writeFile(config, `export default ${JSON.stringify({

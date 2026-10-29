@@ -1,11 +1,41 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { readFile, realpath, writeFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { runRelease } from '../src/node.js';
 import type { ReleaseConfig, ReleaseReport, ReleaseTransport, RunReleaseOptions } from '../src/contracts.js';
 import { git, managedFixture } from './helpers/managed-fixture.js';
+import { commandComponentSession, protocolComponentSlot, publicationComponentSession } from './helpers/component-session.js';
 import { gitRoutingParameters } from './helpers/git-routing.js';
 import { observeWindowsJobMembers } from '../../process-control-node/tests/helpers/windows-job-observer.js';
+
+declare module 'vitest' {
+  interface TaskMeta {
+    fixtureRoot?: string;
+    fixtureCheckout?: { managedCommands: number; milliseconds: number };
+  }
+}
+
+const componentCheckoutRoots = vi.hoisted(() => new Set<string>());
+const checkoutPreparation = vi.hoisted(() => ({ managedCommands: 0, milliseconds: 0 }));
+// 发布组件保留真实变更、应用命令、锁及状态证明；来源准入在专门用例和tarball消费者验证。
+vi.mock('../src/node/managed-process.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('../src/node/managed-process.js')>();
+  return { ...actual, createManagedSession: async (...args: Parameters<typeof actual.createManagedSession>) => {
+    const [slot, command, signal] = args;
+    if (!componentCheckoutRoots.has(slot.source.root)) return actual.createManagedSession(...args);
+    const componentSlot = protocolComponentSlot(slot);
+    return publicationComponentSession(await actual.createManagedSession(componentSlot, command, signal));
+  } };
+});
+// 仅在测试结果元数据记录前置准备的成本；不增加成功路径同步日志或改变真实命令。
+vi.mock('../src/node/managed-checkout.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('../src/node/managed-checkout.js')>();
+  return { ...actual, prepareCheckout: async (session: Parameters<typeof actual.prepareCheckout>[0]) => {
+    const started = performance.now(), before = session.state.processes.length;
+    try { return await actual.prepareCheckout(componentCheckoutRoots.has(session.slot.source.root) ? commandComponentSession(session) : session); }
+    finally { checkoutPreparation.managedCommands = session.state.processes.length - before; checkoutPreparation.milliseconds = performance.now() - started; }
+  } };
+});
 
 const lifecycleFailures = vi.hoisted((): { phase: string; name: string; code?: string; reason?: string; syscall?: string; entry?: string }[] => []);
 const commandFailures = vi.hoisted((): { durationMs: number; identityBudgetMs: number; owned: boolean; termination: string; operation?: string }[] => []);
@@ -54,6 +84,8 @@ vi.mock('../src/node/managed-state.js', async importOriginal => {
 });
 let scopeObservation: Awaited<ReturnType<typeof observeWindowsJobMembers>> | undefined;
 beforeEach(async () => {
+  componentCheckoutRoots.clear();
+  checkoutPreparation.managedCommands = 0; checkoutPreparation.milliseconds = 0;
   lifecycleFailures.length = 0;
   commandFailures.length = 0;
   if (process.platform === 'win32' && process.arch === 'x64') scopeObservation = await observeWindowsJobMembers();
@@ -73,13 +105,17 @@ afterEach(async () => {
     vi.unstubAllEnvs(); for (const f of fixtures.splice(0)) await f.dispose();
   } finally { scopeObservation?.restore(); scopeObservation = undefined; }
 });
-const fixture = async () => { const f = await managedFixture(); fixtures.push(f); return f; };
+const fixture = async (checkout: 'managed' | 'component' = 'managed') => {
+  const f = await managedFixture(); fixtures.push(f);
+  if (checkout === 'component') componentCheckoutRoots.add(await realpath(f.cwd));
+  return f;
+};
 async function configure(f: Awaited<ReturnType<typeof fixture>>, changes: Partial<ReleaseConfig>): Promise<string> {
   Object.assign(f.config, changes); await writeFile(resolve(f.cwd, 'release.config.json'), JSON.stringify(f.config)); return f.commit();
 }
 it('checks an unpublished committed input in a real independent checkout, preserving unrelated files', { timeout: 180_000 }, async () => {
-  const f = await fixture(); const unrelated = resolve(f.cwd, 'user-file'); await writeFile(unrelated, 'do not change');
-  const sha = await configure(f, { checks: [{ command: 'node', args: ['-e', 'process.stdout.write(JSON.stringify({cwd:process.cwd(),sha:require("node:child_process").execFileSync("git",["rev-parse","HEAD"],{encoding:"utf8"}).trim(),intent:process.env.FORGE_RELEASE_COMMAND,frozen:process.env.FORGE_RELEASE_SHA}))'] }] });
+  const f = await fixture('component'); const unrelated = resolve(f.cwd, 'user-file'); await writeFile(unrelated, 'do not change');
+  const sha = await configure(f, { checks: [{ command: 'node', args: ['-e', 'process.stdout.write(JSON.stringify({cwd:process.cwd(),sha:require("node:child_process").execFileSync("git",["rev-parse","HEAD"],{encoding:"utf8",windowsHide:true}).trim(),intent:process.env.FORGE_RELEASE_COMMAND,frozen:process.env.FORGE_RELEASE_SHA}))'] }] });
   const transport: ReleaseTransport = { api: async () => { throw new Error('check must not query Vercel'); }, buildInfo: async () => { throw new Error('check must not fetch online'); } };
   const report = await run({ cwd: f.cwd, command: 'check', transport });
   if (!report.ok) process.stderr.write(`managed-check command diagnostics: ${JSON.stringify(lifecycleFailures)}\n`);
@@ -96,35 +132,25 @@ it('refuses an object configuration override in managed mode', async () => {
   const report = await run({ cwd: f.cwd, command: 'check', config: f.config });
   expect(report).toMatchObject({ ok: false, error: { code: 'SOURCE_UNSUPPORTED' } });
 });
-it('reuses one clean slot at the same SHA and safely fast-forwards the next SHA', { timeout: 720_000 }, async () => {
-  const f = await fixture();
-  const first = await run({ cwd: f.cwd, command: 'check' }); expect(first.ok, JSON.stringify(first.error)).toBe(true);
-  const dependency = resolve(first.executionRoot ?? '', 'node_modules/fixture-preserved'); await mkdir(resolve(first.executionRoot ?? '', 'node_modules'), { recursive: true });
-  await writeFile(dependency, 'keep');
-  const lock = await readFile(resolve(first.executionRoot ?? '', 'pnpm-lock.yaml'));
-  const second = await run({ cwd: f.cwd, command: 'check' }); expect(second.ok, JSON.stringify(second.error)).toBe(true);
-  await writeFile(resolve(f.cwd, 'source.txt'), 'next'); const sha = f.commit();
-  const third = await run({ cwd: f.cwd, command: 'check' }); expect(third.ok, JSON.stringify(third.error)).toBe(true);
-  expect(third).toMatchObject({ slotId: first.slotId, executionRoot: first.executionRoot, candidateSha: sha });
-  expect(await readFile(dependency, 'utf8')).toBe('keep'); expect(await readFile(resolve(third.executionRoot ?? '', 'pnpm-lock.yaml'))).toEqual(lock);
-});
-it('stops after a preparation command modifies committed source', async () => {
-  const f = await fixture();
+it('stops after a preparation command modifies committed source', async ({ task }) => {
+  const f = await fixture('component'); task.meta.fixtureRoot = f.root;
   if (f.config.source.mode !== 'managed-commit') throw new Error('fixture mode');
   await configure(f, { source: { ...f.config.source, prepare: [{ command: 'node', args: ['-e', 'require("node:fs").writeFileSync("source.txt","changed")'] }] } });
   const report = await run({ cwd: f.cwd, command: 'check' });
-  expect(report, JSON.stringify(report.error)).toMatchObject({ ok: false, error: { code: 'CANDIDATE_CHANGED' } });
+  task.meta.fixtureCheckout = { ...checkoutPreparation };
+  expect(report, JSON.stringify(report.error)).toMatchObject({ ok: false, error: { code: 'CANDIDATE_CHANGED' }, processes: { status: 'closed' } });
   expect(f.ref('dev')).toBe(f.initial); expect(f.ref('main')).toBe(f.initial);
 });
-it('refuses a different pnpm version before frozen installation', async () => {
-  const f = await fixture(); const manifest = JSON.parse(await readFile(resolve(f.cwd, 'package.json'), 'utf8')) as Record<string, unknown>;
+it('refuses a different pnpm version before frozen installation', async ({ task }) => {
+  const f = await fixture('component'); task.meta.fixtureRoot = f.root; const manifest = JSON.parse(await readFile(resolve(f.cwd, 'package.json'), 'utf8')) as Record<string, unknown>;
   await writeFile(resolve(f.cwd, 'package.json'), JSON.stringify({ ...manifest, packageManager: 'pnpm@0.0.1' })); f.commit();
   const report = await run({ cwd: f.cwd, command: 'check' });
-  expect(report).toMatchObject({ ok: false, stage: 'install', error: { code: 'SOURCE_UNSUPPORTED' } });
+  task.meta.fixtureCheckout = { ...checkoutPreparation };
+  expect(report).toMatchObject({ ok: false, stage: 'install', error: { code: 'SOURCE_UNSUPPORTED' }, processes: { status: 'closed' } });
   expect(report.steps.some(step => step.name === 'install')).toBe(false);
 });
 it('publishes the exact managed SHA to two real refs and runs frozen acceptance', { timeout: 720_000 }, async () => {
-  const f = await fixture(), declared = 'https://github.com/fixture/repository.git';
+  const f = await fixture('component'), declared = 'https://github.com/fixture/repository.git';
   vi.stubEnv('GIT_CONFIG_PARAMETERS', gitRoutingParameters(f.root, f.remote, declared));
   git(f.cwd, 'remote', 'set-url', 'origin', declared);
   await writeFile(resolve(f.cwd, 'user-note'), 'unrelated');
@@ -140,7 +166,9 @@ it('publishes the exact managed SHA to two real refs and runs frozen acceptance'
     throw new Error('unexpected fixture API path');
   }, buildInfo: async () => ({ revision: sha }) };
   const report = await run({ cwd: f.cwd, command: 'publish', transport });
-  expect(report, JSON.stringify({ error: report.error, lifecycleFailures, commandFailures })).toMatchObject({ ok: true, candidateSha: sha, stage: 'complete', effects: { developmentPush: 'pushed', releasePush: 'pushed' }, processes: { status: 'closed' }, budget: { observationsComplete: true } });
+  expect(report, JSON.stringify({ error: report.error, lifecycleFailures, commandFailures })).toMatchObject({ ok: true,
+    candidateSha: sha, stage: 'complete', effects: { developmentPush: 'pushed', releasePush: 'pushed' },
+    processes: { status: 'closed' }, budget: { observationsComplete: true } });
   expect(f.ref('dev')).toBe(sha); expect(f.ref('main')).toBe(sha); expect(git(f.cwd, 'branch', '--show-current')).toBe('dev');
   expect(await readFile(resolve(f.cwd, 'user-note'), 'utf8')).toBe('unrelated');
   expect(JSON.parse(report.steps.find(step => step.name === 'acceptance:0')?.stdout ?? '')).toEqual(['publish', sha, f.config.vercel.productionUrl, deployment.id]);

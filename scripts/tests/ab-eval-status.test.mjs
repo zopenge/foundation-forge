@@ -66,7 +66,7 @@ test('status summarizes in-flight arms and known A/B issues without writing file
     assert.deepEqual(finished.inFlightArmIds,[]);
     assert.deepEqual(finished.unsettledArmIds,['pair-2-A']);
     const cli=spawnSync(process.execPath,[resolve(import.meta.dirname,'../ab-eval.mjs'),
-      'status','--run-dir',root],{encoding:'utf8'});
+      'status','--run-dir',root],{encoding:'utf8',windowsHide:true});
     assert.equal(cli.status,0);
     assert.equal(JSON.parse(cli.stdout).state,'blocked');
   }finally{await rm(root,{recursive:true,force:true});}

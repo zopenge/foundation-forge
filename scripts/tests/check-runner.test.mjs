@@ -30,12 +30,13 @@ const createCheckWorkspace = async (context, scenario) => {
   await put('.tmp/scenario.json', JSON.stringify(scenario));
   const packages = ['leaf', 'other', 'third'].map((name) => ({
     name, directory: 'packages/' + name, packageRoot: resolve(root, 'packages', name),
-    manifest: { scripts: {} }, workspaceDependencies: [],
+    manifest: { scripts: { 'test:coverage': 'vitest run --coverage' } }, workspaceDependencies: [], exports: [], bins: [],
   }));
   for (const { directory, name } of packages) {
     await put(directory + '/src/index.js', 'export const value = 1;\n');
     await put(directory + '/dist/index.js', 'export const value = 1;\n');
     await put(directory + '/README.md', '# Package\n');
+    await put(directory + '/package.verify.json', '{"browserExports":[]}');
     await put('.tmp/check-cache/packs/' + name + '.tgz', 'verified ' + name);
   }
   await put('.tmp/check-cache/packs/tarballs.json',
@@ -45,6 +46,18 @@ const createCheckWorkspace = async (context, scenario) => {
     await copyFile(new URL('../' + name, import.meta.url), resolve(root, 'scripts', name));
   }
   const fingerprintUrl = JSON.stringify(new URL('../check-fingerprint.mjs', import.meta.url).href);
+  await put('scripts/check-cancellation.mjs', `export { openCheckCancellation } from ${JSON.stringify(new URL('../check-cancellation.mjs', import.meta.url).href)};\n`);
+  await put('scripts/test-run-context.mjs', `export { createTestRunContext } from ${JSON.stringify(new URL('../test-run-context.mjs', import.meta.url).href)};\n`);
+  await put('packages/leaf/test-process-scope.mjs', `export { createTestProcessSupervisor } from ${JSON.stringify(new URL('../../packages/process-control-node/test-process-scope.mjs', import.meta.url).href)};\n`);
+  await put('scripts/run-script-tests.mjs', [
+    'import { createPackageManagerInvocation } from "./package-manager-command.mjs";',
+    'export const runScriptTestSuite = context => context.run({name:"test:scripts",workers:context.budget.limit,nestedWorkerLimit:1,...createPackageManagerInvocation("pnpm",["run","test:scripts"]),cwd:process.cwd()});',
+  ].join('\n'));
+  await put('scripts/run-workspace-coverage.mjs', [
+    `import { runWorkspaceCoverage as real } from ${JSON.stringify(new URL('../run-workspace-coverage.mjs', import.meta.url).href)};`,
+    'import { createPackageManagerInvocation } from "./package-manager-command.mjs";',
+    'export const runWorkspaceCoverage = ({packages,context}) => real({packages,context,run:(value,lease)=>context.execute({name:value.name,...createPackageManagerInvocation("pnpm",["--filter",value.name,"run","test:coverage"]),cwd:process.cwd()},lease)});',
+  ].join('\n'));
   await put('scripts/check-fingerprint.mjs', [
     'import { readFile, writeFile } from "node:fs/promises";',
     'import { resolve } from "node:path";',
@@ -96,6 +109,7 @@ const createCheckWorkspace = async (context, scenario) => {
     'import { resolve } from "node:path";',
     'const args = process.argv.slice(2);',
     'const scenario = JSON.parse(await readFile(".tmp/scenario.json", "utf8"));',
+    'if (args.at(-1) === "check:full:run" && scenario.kind === "failed-full") process.exit(1);',
     'if (args.at(-1) === "lint" && scenario.kind === "drift") {',
     '  await writeFile(resolve(scenario.path), "unverified output");',
     '}',
@@ -115,9 +129,9 @@ const createCheckWorkspace = async (context, scenario) => {
   const receiptPath = resolve(root, '.tmp/check-cache/state.json');
   const receipt = JSON.stringify(state);
   await writeFile(receiptPath, receipt);
-  const run = async () => {
+  const run = async (args = []) => {
     try {
-      return { ...await execute(process.execPath, [resolve(root, 'scripts/check-runner.mjs')],
+      return { ...await execute(process.execPath, [resolve(root, 'scripts/check-runner.mjs'), ...args],
         { cwd: root, windowsHide: true }), code: 0 };
     } catch (error) {
       return { code: error.code, stdout: error.stdout, stderr: error.stderr };
@@ -125,6 +139,16 @@ const createCheckWorkspace = async (context, scenario) => {
   };
   return { root, put, run, receipt, receiptPath };
 };
+test('显式 full CLI 运行完整边界并写 full 收据，未知参数不得复用成功', async context => {
+  const workspace = await createCheckWorkspace(context, { kind: 'none' });
+  const invalid = await workspace.run(['--unknown']); assert.equal(invalid.code, 1);
+  assert.equal(await readFile(workspace.receiptPath, 'utf8'), workspace.receipt);
+  const result = await workspace.run(['--full']); assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(JSON.parse(await readFile(workspace.receiptPath, 'utf8')).validation, { schemaVersion: 1, kind: 'full' });
+  const failing = await createCheckWorkspace(context, { kind: 'failed-full' });
+  assert.equal((await failing.run(['--full'])).code, 1);
+  assert.equal(await readFile(failing.receiptPath, 'utf8'), failing.receipt);
+});
 
 test('单包检查拒绝包 README 与同批文档中的断链，失败不更新收据', async (context) => {
   for (const documentation of ['packages/leaf/README.md', 'docs/change.md']) {
@@ -249,6 +273,9 @@ test('a package group drains failed checks and never writes a success receipt', 
         if (args.join(' ') === 'run test:scripts') await scripts;
         if (args.join(' ') === '--filter leaf run test:coverage') throw new Error('coverage failed');
       },
+      createContext: async () => ({ budget: { limit: 2, stop() {} }, finalize: async () => {} }),
+      scriptTests: async () => { calls.push('run test:scripts'); await scripts; },
+      coverage: async () => { throw new Error('coverage failed'); },
       targetedVerify: async () => ({ targetTarballs: new Map() }),
       persist: async () => { persisted = true; },
     });
@@ -289,15 +316,14 @@ test('script test receipt runs both checks and verifies unchanged inputs and out
   assert.deepEqual(calls, ['run lint', 'run test:scripts', 'docs', 'dist', 'tarballs', 'inputs', 'persist']);
 });
 
-test('script test receipt drains active checks and rejects stale package outputs', async () => {
-  let finishTests;
-  const tests = new Promise((resolve) => { finishTests = resolve; });
+test('script test receipt stops after lint failure and rejects stale package outputs', async () => {
+  const calls = [];
   let persisted = false;
   const work = runScriptTests({
     fingerprint: {}, model: {}, state: {},
     run: async (args) => {
+      calls.push(args[1]);
       if (args[1] === 'lint') throw new Error('lint failed');
-      await tests;
     },
     assertInputs: async () => {},
     distValid: async () => true,
@@ -307,9 +333,9 @@ test('script test receipt drains active checks and rejects stale package outputs
   let settled = false;
   work.catch(() => { settled = true; });
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(settled, false);
-  finishTests();
+  assert.equal(settled, true);
   await assert.rejects(work, /lint failed/u);
+  assert.deepEqual(calls, ['lint']);
   assert.equal(persisted, false);
 
   await assert.rejects(runScriptTests({
@@ -344,4 +370,17 @@ test('script test receipt drains active checks and rejects stale package outputs
     persist: async () => { persisted = true; },
   }), /broken local link/u);
   assert.equal(persisted, false);
+});
+
+test('script test receipt heavy stages wait for lint before starting tests', async () => {
+  let finishLint;
+  const lint = new Promise(accept => { finishLint = accept; }), calls = [];
+  const work = runScriptTests({ fingerprint: {}, model: {}, state: {},
+    run: async args => { calls.push(args[1]); if (args[1] === 'lint') await lint; },
+    docsValid: async () => {}, distValid: async () => true, tarballsValid: async () => ({}),
+    assertInputs: async () => {}, persist: async () => {},
+  });
+  try { await new Promise(accept => setImmediate(accept)); assert.deepEqual(calls, ['lint']); }
+  finally { finishLint(); await work; }
+  assert.deepEqual(calls, ['lint', 'test:scripts']);
 });

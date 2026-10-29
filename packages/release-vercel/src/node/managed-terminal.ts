@@ -4,7 +4,8 @@ import type { ManagedCommand, ManagedPaths, ManagedSlot, ManagedState } from './
 import { record, ReleaseError } from './errors.js';
 import { assertMetadataFile, assertMetadataPaths, inspectMetadataFile, metadataDigest, sameMetadataFile, terminalLimit, writeReservedMetadata, type MetadataFile } from './managed-metadata.js';
 import { readRetirementHost, validRetirementHost, type RetirementHost } from './retirement-host.js';
-import { hasVerifiedManagedStop } from './managed-closure.js';
+import { hasObservationStopWitness, hasVerifiedManagedStop } from './managed-closure.js';
+import { matchesObservationBinding } from './managed-observation.js';
 import { pathExists, readBoundedJson } from './managed-io.js';
 import { parseManagedState } from './managed-state.js';
 
@@ -73,6 +74,7 @@ export async function restoreManagedTerminal(paths: ManagedPaths, state: Managed
   if (last && command.id !== last.id && !last.terminalSha256
     && state.processes.some(previous => previous.id === command.id && previous.terminalSha256 === proofSha256)) return { state };
   if (!last || command.id !== last.id || command.name !== last.name || state.processes.filter(item => item.id === command.id).length !== 1
+    || !matchesObservationBinding(last, terminal.command)
     || (last.terminalSha256 !== undefined && last.terminalSha256 !== proofSha256)
     || (last.scope !== undefined && JSON.stringify(last.scope) !== JSON.stringify(command.scope))
     || (last.identity !== undefined && JSON.stringify(last.identity) !== JSON.stringify(command.identity))
@@ -134,7 +136,9 @@ export async function createTerminalWriter(slot: ManagedSlot, state: ManagedStat
     await assertOwned();
     const currentHost = await readRetirementHost();
     if (currentHost.hostId !== host.hostId || currentHost.platform !== host.platform) throw new ReleaseError('SLOT_STATE', { reason: 'TERMINAL_HOST_CHANGED' });
-    if (!hasVerifiedManagedStop(command) || command.scope?.binding.startsWith(`${state.runId}:${command.id}:`) !== true) throw new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'TERMINAL_STOP_UNPROVEN' });
+    const batch = command.kind === 'checkout-observation';
+    if (batch ? !hasObservationStopWitness(command) || command.observations?.some(item => item.scope?.binding.startsWith(`${state.runId}:${item.id}:`) !== true)
+      : !hasVerifiedManagedStop(command) || command.scope?.binding.startsWith(`${state.runId}:${command.id}:`) !== true) throw new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'TERMINAL_STOP_UNPROVEN' });
     const copy = structuredClone(command); delete copy.terminalSha256;
     const body = { schemaVersion: 1 as const, kind: 'managed-terminal' as const, runId: state.runId, slotId: state.slotId,
       sourceSha: state.source.sha, configSha256: state.source.configSha256, host, files: { ...files }, command: copy };

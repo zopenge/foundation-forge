@@ -12,9 +12,10 @@ import { acquireRetirementLease } from './retirement-lease.js';
 import { assertRetirementSnapshot, captureRetirementSnapshot, hasFinalizedRetirement, readRetirementRecord, retirementArchivePath, retirementDigest, sealRetirementRecord, writeRetirementJson, type RetirementRecord } from './retirement-record.js';
 import { claimRetirement } from './retirement-claim.js';
 import { diagnostic } from './workspace-release.js';
-import { Execution } from './execution.js';
+import { createManagedExecution } from './managed-execution.js';
 import { recoveryCommand } from './release-commands.js';
 import { identityReader } from './process-identities.js';
+import { managedCommandIdentities } from './managed-observation.js';
 
 /** 宿主 reader 是内部 OS 观测边界；公开 API 不接受调用方注入关闭/开机证明。 */
 export async function runManagedRetirement(options: RunReleaseOptions, hostReader: (signal?: AbortSignal) => Promise<RetirementHost> = readRetirementHost): Promise<ReleaseReport> {
@@ -34,7 +35,7 @@ export async function runManagedRetirement(options: RunReleaseOptions, hostReade
     if (!validRetirementHost(host)) throw new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'HOST_OBSERVATION_UNKNOWN' });
     if (state.host && state.host.hostId !== host.hostId) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'RETIREMENT_HOST_CHANGED' });
     lease = await acquireRetirementLease(location.paths, host, options.signal);
-    const paths = location.paths, current = state, execution = new Execution(source.root, source.config, options.signal, []);
+    const paths = location.paths, current = state, execution = createManagedExecution(source.root, source.config, options.signal, []);
     archivePath = retirementArchivePath(paths, state.runId);
     const finalized = await readRetirementRecord(archivePath, paths);
     let hasOldLock = await pathExists(paths.lockPath);
@@ -112,7 +113,7 @@ export async function runManagedRetirement(options: RunReleaseOptions, hostReade
   if (reportPath) { try { reportExists = await pathExists(reportPath); } catch (error) { failure ??= diagnostic(error); } }
   return { schemaVersion: 2, command: options.command, ok: failure === undefined, startedAt, finishedAt: new Date().toISOString(), stage: failure ? 'retire' : 'complete', steps: [],
     effects: state?.effects ?? { developmentPush: 'not-attempted', releasePush: 'not-attempted' },
-    ...(state ? { runId: state.runId, slotId: state.slotId, processes: { status: 'unknown' as const, knownCount: new Set(state.processes.flatMap(command => [...command.descendants, ...(command.identity ? [command.identity] : [])]).map(identity => `${identity.pid}:${identity.startToken}`)).size } } : {}),
+    ...(state ? { runId: state.runId, slotId: state.slotId, processes: { status: 'unknown' as const, knownCount: new Set(state.processes.flatMap(managedCommandIdentities).map(identity => `${identity.pid}:${identity.startToken}`)).size } } : {}),
     ...(source && location && state ? { candidateSha: source.sha, configSha256: source.configSha256, configPath: source.configPath, sourceRoot: source.root, executionRoot: location.paths.checkoutRoot,
       recovery: { candidateSha: source.sha, reportPath: reportPath ?? resolve(location.paths.slotRoot, 'retirement.json'), ...(reportExists === undefined ? {} : { reportExists }),
         nextCommand: recoveryCommand(retirement?.status === 'retired' ? 'publish' : `retire --run-id ${state.runId}`, source) } } : {}),

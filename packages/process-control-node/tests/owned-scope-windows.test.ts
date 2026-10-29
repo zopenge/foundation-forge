@@ -1,10 +1,11 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { execFileSync } from 'node:child_process';
+import { once } from 'node:events';
 import { resolve } from 'node:path';
 import { afterEach, expect, test } from 'vitest';
 import type { OwnedProcessScope } from '@openge/forge-process-control';
-import { createWindowsOwnedProcessScopeProvider, createWindowsProcessIdentityReader, createWindowsProcessControl } from '../dist/index.js';
+import { createWindowsOwnedProcessScopeProvider, createWindowsProcessIdentityReader, createWindowsNativeProcessIdentityReader } from '../dist/index.js';
 
 const scopes: OwnedProcessScope[] = [], roots: string[] = [];
 afterEach(async () => { for (const scope of scopes.splice(0)) await scope.dispose(); for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
@@ -61,17 +62,23 @@ test.runIf(supported)('does not execute supervisor preloads but preserves the de
 });
 test.runIf(supported)('rejects a mismatched identity and leaves an unrelated process alive', async () => {
   const external = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { shell: false, windowsHide: true, stdio: 'ignore' });
-  const reader = createWindowsProcessIdentityReader();
-  if (!external.pid) throw new Error('fixture did not spawn');
-  const independent = await reader.readIdentity({ pid: external.pid });
-  if (independent.status !== 'FOUND') throw new Error('fixture independent identity missing');
+  const closed = once(external, 'close').then(() => ({}), (error: unknown) => ({ error }));
+  const reader = createWindowsNativeProcessIdentityReader();
   try {
+    await once(external, 'spawn');
+    if (!external.pid) throw new Error('fixture did not spawn');
+    const independent = await reader.readIdentity({ pid: external.pid });
+    if (independent.status !== 'FOUND') throw new Error('fixture independent identity missing');
     const scope = await start(['-e', 'process.exit(0)']);
     await expect(scope.bind({ pid: await scope.rootPid, startToken: 'wrong-instance' })).rejects.toMatchObject({ code: 'PROCESS_SCOPE_BINDING' });
     await expect(scope.authorize()).rejects.toThrow();
     await scope.dispose();
     expect(await reader.readIdentity({ pid: independent.identity.pid })).toEqual(independent);
-  } finally { await createWindowsProcessControl({ listenerBackend: 'netstat' }).terminateProcessTree({ process: independent.identity, policy: { mode: 'force' } }); }
+  } finally {
+    // 误杀哨兵只创建一个进程；通过持有的实例清理并等待关闭，不附带进程树查询。
+    if (external.exitCode === null && external.signalCode === null) expect(external.kill('SIGKILL')).toBe(true);
+    expect(await closed).not.toHaveProperty('error');
+  }
 });
 test.runIf(supported)('does not reuse the boot deadline as the authorized job lifetime', async () => {
   const scope = createWindowsOwnedProcessScopeProvider().start({ command: process.execPath, args: ['-e', 'setTimeout(()=>process.exit(0),3200)'], environment: process.env,

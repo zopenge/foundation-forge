@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { ManagedSession } from './release-context.js';
-import { Execution } from './execution.js';
+import { createManagedExecution } from './managed-execution.js';
 import { assertCandidate, assertRepository } from './git.js';
 import { assertSourceFrozen, readCommittedConfig } from './source.js';
 import { assertManagedPaths } from './managed-paths.js';
@@ -12,13 +12,15 @@ import { record, ReleaseError } from './errors.js';
 export async function assertCheckoutFrozen(session: ManagedSession): Promise<void> {
   const { slot, execution } = session;
   await assertManagedPaths(slot.paths); await slot.lock.assertOwned();
-  await assertRepository(execution, slot.source.config); await assertCandidate(execution, slot.source.config, slot.source.sha);
-  const committed = await readCommittedConfig(execution, slot.source.sha, slot.source.configPath);
-  if (committed.oid !== slot.source.configBlobOid || !(await readFile(resolve(slot.paths.checkoutRoot, slot.source.configPath))).equals(committed.bytes)) throw new ReleaseError('CANDIDATE_CHANGED', { reason: 'CHECKOUT_CONFIG' });
+  await execution.observeCheckout(async () => {
+    await assertRepository(execution, slot.source.config); await assertCandidate(execution, slot.source.config, slot.source.sha);
+    const committed = await readCommittedConfig(execution, slot.source.sha, slot.source.configPath);
+    if (committed.oid !== slot.source.configBlobOid || !(await readFile(resolve(slot.paths.checkoutRoot, slot.source.configPath))).equals(committed.bytes)) throw new ReleaseError('CANDIDATE_CHANGED', { reason: 'CHECKOUT_CONFIG' });
+  });
 }
 export async function prepareCheckout(session: ManagedSession): Promise<void> {
   const { slot, execution } = session, { source, paths } = slot;
-  const original = new Execution(source.root, source.config, undefined, []);
+  const original = createManagedExecution(source.root, source.config, undefined, []);
   session.state.stage = 'checkout'; await session.persist();
   await assertSourceFrozen(source, original); await assertManagedPaths(paths);
   const exists = await pathExists(paths.checkoutRoot);

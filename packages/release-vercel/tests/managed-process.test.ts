@@ -2,9 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createManagedSession } from '../src/node/managed-process.js';
-import { freezeManagedSource } from '../src/node/source.js';
-import { openManagedSlot } from '../src/node/managed-paths.js';
-import { managedFixture } from './helpers/managed-fixture.js';
+import { managedSessionFixture as managedFixture } from './helpers/managed-session-fixture.js';
 import { currentCoordinator, identityReader } from '../src/node/process-identities.js';
 import { closeFixtureIdentity } from './helpers/close-fixture-process.js';
 import type { ManagedSession } from '../src/node/release-context.js';
@@ -36,8 +34,7 @@ afterEach(async () => {
 });
 const fixture = async () => {
   const f = await managedFixture(); fixtures.push(f);
-  const source = await freezeManagedSource(f.cwd, 'release.config.json', f.execution);
-  const slot = await openManagedSlot(source, f.execution);
+  const slot = f.slot;
   await mkdir(slot.paths.checkoutRoot);
   const session = await createManagedSession(slot, 'check'); sessions.push(session);
   return { ...f, slot, session };
@@ -85,17 +82,21 @@ it.each(['journal-failure', 'lock-replaced'])('never authorizes the real job aft
     } });
   } else expect(f.session.state.processes[0]?.status).toBe('unknown');
 });
-it.each(['EBUSY', 'SECRETCODE'])('preserves only known lifecycle failure codes without exposing messages: %s', async code => {
+it.each(['EBUSY', 'EPERM', 'SECRETCODE'])('preserves only known lifecycle failure codes without exposing messages: %s', async code => {
   const f = await fixture(), write = f.slot.store.writeState.bind(f.slot.store);
   vi.spyOn(f.slot.store, 'writeState').mockImplementation(async (state, beforeCommit) => {
-    if (state.processes.some(command => command.status === 'closed')) throw Object.assign(new Error('token=fixture-private'), { code });
+    if (state.processes.some(command => command.status === 'closed')) throw Object.assign(new Error('token=fixture-private'), { code,
+      ...(code === 'EPERM' ? { syscall: 'rename', path: f.slot.paths.statePath } : {}) });
     await write(state, beforeCommit);
   });
   const observed = await f.session.execution.run('journal-code', { command: 'node', args: ['-e', 'process.stdout.write("done")'] }, 'CHECK_FAILED')
     .then(value => ({ value }), (error: unknown) => ({ error }));
-  expect(observed).toMatchObject({ error: { code: 'PROCESS_STATE_UNKNOWN', details: { reason: 'PROCESS_LIFECYCLE_FAILED', ...(code === 'EBUSY' ? { causeCode: code } : {}) } } });
+  expect(observed).toMatchObject({ error: { code: 'PROCESS_STATE_UNKNOWN', details: { reason: 'PROCESS_LIFECYCLE_FAILED',
+    ...(['EBUSY', 'EPERM'].includes(code) ? { causeCode: code } : {}),
+    ...(code === 'EPERM' ? { causePhase: 'closed-state', causeSyscall: 'rename', causeFile: 'state.json' } : {}) } } });
   expect(JSON.stringify(observed)).not.toContain('fixture-private');
-  if (code !== 'EBUSY') expect(JSON.stringify(observed)).not.toContain(code);
+  expect(JSON.stringify(observed)).not.toContain(f.root);
+  if (code === 'SECRETCODE') expect(JSON.stringify(observed)).not.toContain(code);
   expect(f.session.state.processes[0]?.status).toBe('closed');
   const terminal = await readFile(resolve(f.slot.paths.slotRoot, 'terminal.json'), 'utf8');
   expect(JSON.parse(terminal)).toMatchObject({ command: { status: 'closed', closure: { ownedScope: { status: 'closed', empty: true } } } });
@@ -121,7 +122,7 @@ it('keeps the queued first failure when a retained atomic file blocks later jour
 it('does not treat an exited parent as proof that its writer child closed', async () => {
   const f = await fixture(), path = resolve(f.slot.paths.slotRoot, 'child-writes');
   const writer = 'setInterval(()=>require("node:fs").appendFileSync(process.argv[1],"x"),100)';
-  const parent = `const child=require("node:child_process").spawn(process.execPath,["-e",${JSON.stringify(writer)},process.argv[1]],{stdio:"ignore",detached:true});child.unref();setTimeout(()=>process.exit(0),2500)`;
+  const parent = `const child=require("node:child_process").spawn(process.execPath,["-e",${JSON.stringify(writer)},process.argv[1]],{stdio:"ignore",detached:true,windowsHide:true});child.unref();setTimeout(()=>process.exit(0),2500)`;
   const result = await f.session.execution.run('parent-child', { command: 'node', args: ['-e', parent, path] }, 'CHECK_FAILED').then(value => ({ value }), (error: unknown) => ({ error }));
   expect(result, JSON.stringify(f.session.state.processes)).toMatchObject({ error: { code: 'PROCESS_STATE_UNKNOWN' } });
   expect(f.session.state.processes[0]?.closure?.ownedScope).toMatchObject({ status: 'unknown', reason: 'descendants-remained', empty: true });
@@ -168,7 +169,7 @@ it('reuses a completed command closure witness while still observing the current
 it('does not claim closure for a detached writer whose parent exits immediately', async () => {
   const f = await fixture(), marker = resolve(f.slot.paths.slotRoot, 'fast-child-pid'), output = resolve(f.slot.paths.slotRoot, 'fast-child-writes');
   const writer = 'const fs=require("node:fs");fs.writeFileSync(process.argv[1],String(process.pid));setInterval(()=>fs.appendFileSync(process.argv[2],"x"),50)';
-  const parent = `const child=require("node:child_process").spawn(process.execPath,["-e",${JSON.stringify(writer)},process.argv[1],process.argv[2]],{stdio:"ignore",detached:true});child.unref();`;
+  const parent = `const child=require("node:child_process").spawn(process.execPath,["-e",${JSON.stringify(writer)},process.argv[1],process.argv[2]],{stdio:"ignore",detached:true,windowsHide:true});child.unref();`;
   try {
     const result = await f.session.execution.run('fast-detached-child', { command: 'node', args: ['-e', parent, marker, output] }, 'CHECK_FAILED').then(value => ({ value }), (error: unknown) => ({ error }));
     expect(result).toMatchObject({ error: { code: 'PROCESS_STATE_UNKNOWN' } });

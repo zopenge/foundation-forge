@@ -79,7 +79,7 @@ const run = (args, input) => spawnSync(
     cwd: fixture,
     encoding: 'utf8',
     input,
-    shell: false,
+    shell: false, windowsHide: true,
   },
 );
 const check = run([
