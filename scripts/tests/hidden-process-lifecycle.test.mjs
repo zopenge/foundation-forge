@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 import { capturePnpmOutput, discoverWorkspacePackageModel } from '../workspace-packages.mjs';
@@ -8,6 +9,59 @@ import { runCapturedSync } from '../package-consumer-runner.mjs';
 import { discoverTestProcessSupervisor, runTestProcess } from '../test-process-runner.mjs';
 
 const repositoryRoot = resolve(import.meta.dirname, '../..');
+const waitForDescendantAbsent = async (reader, identity, { deadline, now = () => performance.now(), pause = delay, signal } = {}) => {
+  for (;;) {
+    signal?.throwIfAborted();
+    const remaining = deadline - now();
+    assert.ok(remaining > 0, `DESCENDANT_ABSENCE_DEADLINE ${JSON.stringify(identity)}`);
+    const result = await reader.readIdentity({ pid: identity.pid,
+      signal: signal ? globalThis.AbortSignal.any([signal, globalThis.AbortSignal.timeout(Math.ceil(remaining))]) : globalThis.AbortSignal.timeout(Math.ceil(remaining)) });
+    signal?.throwIfAborted();
+    assert.ok(now() < deadline, `DESCENDANT_ABSENCE_DEADLINE ${JSON.stringify({ identity, result })}`);
+    if (result.status === 'ABSENT') return result;
+    assert.ok(result.status === 'FOUND' && result.identity.pid === identity.pid && result.identity.startToken === identity.startToken,
+      `DESCENDANT_IDENTITY_CHANGED ${JSON.stringify({ identity, result })}`);
+    await pause(Math.min(10, deadline - now()), undefined, { signal });
+  }
+};
+
+test('descendant absence waits for the same instance to become absent', async () => {
+  const identity = { pid: 42, startToken: 'original' }, values = [
+    { status: 'FOUND', identity }, { status: 'FOUND', identity }, { status: 'ABSENT' },
+  ];
+  let clock = 0, reads = 0;
+  const result = await waitForDescendantAbsent({ readIdentity: async () => { reads++; return values.shift(); } }, identity,
+    { deadline: 100, now: () => clock, pause: async milliseconds => { clock += milliseconds; } });
+  assert.equal(result.status, 'ABSENT'); assert.equal(reads, 3); assert.equal(clock, 20);
+});
+test('descendant absence uses only the remainder of the original cleanup budget', async () => {
+  const identity = { pid: 42, startToken: 'original' }; let clock = 9_998, reads = 0;
+  await assert.rejects(waitForDescendantAbsent({ readIdentity: async () => { reads++; return { status: 'FOUND', identity }; } }, identity,
+    { deadline: 10_000, now: () => clock, pause: async milliseconds => { clock += milliseconds; } }), /DESCENDANT_ABSENCE_DEADLINE/u);
+  assert.equal(clock, 10_000); assert.equal(reads, 1);
+});
+test('descendant absence rejects PID reuse immediately instead of reporting absence', async () => {
+  let reads = 0;
+  await assert.rejects(waitForDescendantAbsent({ readIdentity: async () => {
+    reads++; return { status: 'FOUND', identity: { pid: 42, startToken: 'replacement' } };
+  } }, { pid: 42, startToken: 'original' }, { deadline: 100, now: () => 0,
+    pause: async () => assert.fail('identity change must not wait') }), /DESCENDANT_IDENTITY_CHANGED/u);
+  assert.equal(reads, 1);
+});
+test('descendant absence preserves query failure without retry', async () => {
+  const failure = new Error('native query failure'); let reads = 0;
+  await assert.rejects(waitForDescendantAbsent({ readIdentity: async () => { reads++; throw failure; } }, { pid: 42, startToken: 'original' },
+    { deadline: 100, now: () => 0 }), error => error === failure);
+  assert.equal(reads, 1);
+});
+test('descendant absence rejects a late successful result and a pre-cancelled read', async () => {
+  let clock = 0;
+  await assert.rejects(waitForDescendantAbsent({ readIdentity: async () => { clock = 101; return { status: 'ABSENT' }; } },
+    { pid: 42, startToken: 'original' }, { deadline: 100, now: () => clock }), /DESCENDANT_ABSENCE_DEADLINE/u);
+  const reason = new Error('cancelled');
+  await assert.rejects(waitForDescendantAbsent({ readIdentity: async () => assert.fail('cancelled query must not start') },
+    { pid: 42, startToken: 'original' }, { deadline: 100, now: () => 0, signal: globalThis.AbortSignal.abort(reason) }), error => error === reason);
+});
 const consoleProbe = `
   const koffi = require('koffi');
   const handle = koffi.load('kernel32.dll').func('void * __stdcall GetConsoleWindow()')();
@@ -53,7 +107,7 @@ test('hidden native supervision captures output, cancels and closes its own desc
   const task = runTestProcess({ supervisor, name: 'hidden-cancel', logRoot: resolve(root, 'cancel'), command: process.execPath,
     args: ['-e', parentCode, marker], cwd: root, signal: controller.signal });
   const closed = assert.rejects(task, error => error.result?.closure.empty === true);
-  let identity;
+  let identity, descendantIdentity, cleanupDeadline;
   try {
     const deadline = Date.now() + 10_000;
     while (Date.now() < deadline) {
@@ -62,11 +116,17 @@ test('hidden native supervision captures output, cancels and closes its own desc
       await delay(10);
     }
     assert.ok(identity);
-  } finally { controller.abort(); await closed; }
-  assert.equal((await supervisor.reader.readIdentity({ pid: identity.pid })).status, 'ABSENT');
+    const before = await supervisor.reader.readIdentity({ pid: identity.pid, signal: t.signal });
+    assert.equal(before.status, 'FOUND'); descendantIdentity = before.identity;
+  } finally { cleanupDeadline = performance.now() + 10_000; controller.abort(); await closed; }
+  const proof = JSON.parse(await readFile(resolve(root, 'cancel/process.json'), 'utf8'));
+  process.stdout.write(`${JSON.stringify({ cancellation: proof, descendantIdentity })}\n`);
+  // Job退出码与进程对象完成信号可能先后到达；只等待同一实例，沿用取消前建立的总收尾截止点。
+  const descendant = await waitForDescendantAbsent(supervisor.reader, descendantIdentity, { deadline: cleanupDeadline, signal: t.signal });
+  process.stdout.write(`${JSON.stringify({ cancellation: proof, descendantPid: identity.pid, descendant })}\n`);
+  assert.equal(descendant.status, 'ABSENT');
   assert.equal(await readFile(resolve(root, 'cancel/stdout.log'), 'utf8'), 'ready-output');
   assert.equal(await readFile(resolve(root, 'cancel/stderr.log'), 'utf8'), 'ready-error');
-  const proof = JSON.parse(await readFile(resolve(root, 'cancel/process.json'), 'utf8'));
   process.stdout.write(`${JSON.stringify({ cancellation: proof, descendantPid: identity.pid, descendantStatus: 'ABSENT' })}\n`);
   assert.equal(proof.closure.empty, true); assert.equal(proof.closure.status, 'unknown');
 });

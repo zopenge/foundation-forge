@@ -152,6 +152,7 @@ const captureGit = (args, repositoryRoot) => {
     cwd: repositoryRoot,
     encoding: 'utf8',
     shell: false,
+    windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   if (result.status !== 0) throw new Error(result.stderr || `git ${args.join(' ')} failed`);

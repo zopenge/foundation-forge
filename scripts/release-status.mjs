@@ -20,6 +20,7 @@ const headSha = argumentsValue.sha ?? (() => {
     cwd: repositoryRoot,
     encoding: 'utf8',
     shell: false,
+    windowsHide: true,
   });
   if (result.status !== 0) throw new Error(result.stderr || 'unable to resolve HEAD');
   return result.stdout.trim();

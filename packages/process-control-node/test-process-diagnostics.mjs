@@ -16,7 +16,8 @@ export const createWindowsTestJobDiagnostics = native => {
     || native.offsetof(basic, 'parentProcessId') !== 40) throw new Error('TEST_JOB_DIAGNOSTICS_ABI');
   const parent = original('ntdll.dll').func('__stdcall', 'NtQueryInformationProcess', 'int32_t', ['void *', 'uint32_t',
     native.out(native.pointer(basic)), 'uint32_t', native.out(native.pointer('uint32_t'))]);
-  const handles = new Map(), roots = new Map(), rows = new Map();
+  const handles = new Map(), roots = new Map(), rows = new Map(), listeners = new Set(), createdJobs = new Map();
+  let creationSerial = 0;
   native.load = (...args) => {
     const library = original(...args);
     if (args[0] !== 'kernel32.dll') return library;
@@ -26,9 +27,22 @@ export const createWindowsTestJobDiagnostics = native => {
         const fn = Reflect.apply(target.func, target, declaration);
         const named = name => declaration.some(value => typeof value === 'string' && value.includes(name));
         return (...values) => {
+          if (named('CloseHandle') && roots.has(values[0])) {
+            for (const listener of listeners) listener({ type: 'closing', job: values[0], rootPid: roots.get(values[0]) });
+          }
           const result = fn(...values);
+          // NULL名称保证创建新的Job；具名Create可能打开既有对象，不能作本轮来源证明。
+          if (named('CreateJobObjectW') && result) {
+            if (values[1] === null) createdJobs.set(result, { at: Date.now(), serial: ++creationSerial });
+            else createdJobs.delete(result);
+          }
           if (named('OpenProcess') && result) handles.set(result, { pid: values[2], member: values[0] === 0x101000 });
-          if (named('AssignProcessToJobObject') && result) roots.set(values[0], handles.get(values[1])?.pid);
+          if (named('AssignProcessToJobObject') && result) {
+            roots.set(values[0], handles.get(values[1])?.pid);
+            const creation = createdJobs.get(values[0]);
+            for (const listener of listeners) listener({ type: 'assigned', job: values[0], rootPid: roots.get(values[0]),
+              jobCreatedAt: creation?.at, jobCreationSerial: creation?.serial });
+          }
           const row = handles.get(values[0]);
           if (row?.member && named('IsProcessInJob')) {
             row.belongs = Boolean(result && values[2][0] === 1);
@@ -65,13 +79,19 @@ export const createWindowsTestJobDiagnostics = native => {
                 ...(row.observationFailed ? { observationFailed: true } : {}) };
               kept.push(observation); if (kept.length > 64) kept.shift(); rows.set(row.rootPid, kept);
             }
-            handles.delete(values[0]); roots.delete(values[0]);
+            handles.delete(values[0]); roots.delete(values[0]); createdJobs.delete(values[0]);
           }
           return result;
         };
       };
     } });
   };
-  const observer = { take: rootPid => { const result = rows.get(rootPid) ?? []; rows.delete(rootPid); return result; } };
+  const observer = { take: rootPid => { const result = rows.get(rootPid) ?? []; rows.delete(rootPid); return result; },
+    observeJobs: listener => {
+      // 以事件顺序定义本轮，不能用UTC时钟相同或回拨让旧Job重新取得新建资格。
+      const cutoff = creationSerial;
+      const observed = event => listener(event.type === 'assigned' ? { ...event, jobCreatedAfterSubscription: event.jobCreationSerial > cutoff } : event);
+      listeners.add(observed); return () => listeners.delete(observed);
+    } };
   observers.set(native, observer); return observer;
 };

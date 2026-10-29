@@ -39,6 +39,25 @@ vi.mock('../src/node/managed-checkout.js', async importOriginal => {
 
 const lifecycleFailures = vi.hoisted((): { phase: string; name: string; code?: string; reason?: string; syscall?: string; entry?: string }[] => []);
 const commandFailures = vi.hoisted((): { durationMs: number; identityBudgetMs: number; owned: boolean; termination: string; operation?: string }[] => []);
+const backendFailures = vi.hoisted((): { method: string; rootExited?: boolean; remainingMs?: number; code?: string; stage?: string; nativeCode?: number }[] => []);
+const backendInjection = vi.hoisted(() => ({ armed: false }));
+vi.mock('../../process-control-node/dist/owned-scope/windows-job.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('../../process-control-node/dist/owned-scope/windows-job.js')>();
+  const { wrapWindowsJobBackend } = await import('../../process-control-node/tests/helpers/windows-job-backend-observer.mjs');
+  return { ...actual, createWindowsJob: async () => {
+    const backend = await actual.createWindowsJob();
+    return wrapWindowsJobBackend({ ...backend, empty: async (...parameters: Parameters<typeof backend.empty>) => {
+      const result = await backend.empty(...parameters);
+      if (backendInjection.armed) {
+        backendInjection.armed = false;
+        throw Object.assign(new Error('controlled diagnostic injection'), {
+          code: 'PROCESS_SCOPE_UNKNOWN', details: { stage: 'FIXTURE_BACKEND_REJECTION', nativeCode: 1234 },
+        });
+      }
+      return result;
+    } }, backendFailures);
+  } };
+});
 function recordLifecycleFailure(phase: string, error: unknown): void {
   if (!error || typeof error !== 'object') { lifecycleFailures.push({ phase, name: typeof error }); return; }
   const code: unknown = Reflect.get(error, 'code'), details: unknown = Reflect.get(error, 'details');
@@ -88,6 +107,8 @@ beforeEach(async () => {
   checkoutPreparation.managedCommands = 0; checkoutPreparation.milliseconds = 0;
   lifecycleFailures.length = 0;
   commandFailures.length = 0;
+  backendFailures.length = 0;
+  backendInjection.armed = false;
   if (process.platform === 'win32' && process.arch === 'x64') scopeObservation = await observeWindowsJobMembers();
 });
 
@@ -113,13 +134,29 @@ const fixture = async (checkout: 'managed' | 'component' = 'managed') => {
 async function configure(f: Awaited<ReturnType<typeof fixture>>, changes: Partial<ReleaseConfig>): Promise<string> {
   Object.assign(f.config, changes); await writeFile(resolve(f.cwd, 'release.config.json'), JSON.stringify(f.config)); return f.commit();
 }
-it('checks an unpublished committed input in a real independent checkout, preserving unrelated files', { timeout: 180_000 }, async () => {
+it.runIf(process.platform === 'win32' && process.arch === 'x64')('records a controlled backend rejection through the real provider and supervisor', async () => {
+  const { createWindowsOwnedProcessScopeProvider, createWindowsNativeProcessIdentityReader } = await import('@openge/forge-process-control-node');
+  backendInjection.armed = true;
+  const scope = createWindowsOwnedProcessScopeProvider().start({ command: process.execPath, args: ['-e', 'process.stdout.write("probe")'],
+    environment: process.env, binding: 'backend-observer-fixture', startupTimeoutMs: 2000, terminationTimeoutMs: 1000 });
+  try {
+    const identity = await createWindowsNativeProcessIdentityReader().readIdentity({ pid: await scope.rootPid });
+    if (identity.status !== 'FOUND') throw new Error('fixture root absent');
+    await scope.bind(identity.identity); await scope.authorize();
+    expect(await scope.completion).toMatchObject({ exitCode: 0, closure: { status: 'unknown', reason: 'provider-failed', empty: true } });
+    expect(backendFailures).toMatchObject([{ method: 'empty', rootExited: false, code: 'PROCESS_SCOPE_UNKNOWN', stage: 'FIXTURE_BACKEND_REJECTION', nativeCode: 1234 }]);
+    expect(backendFailures).toHaveLength(1);
+  } finally { backendInjection.armed = false; await scope.dispose(); }
+});
+it('checks an unpublished committed input in a real independent checkout, preserving unrelated files', { timeout: 180_000 }, async ({ task }) => {
   const f = await fixture('component'); const unrelated = resolve(f.cwd, 'user-file'); await writeFile(unrelated, 'do not change');
   const sha = await configure(f, { checks: [{ command: 'node', args: ['-e', 'process.stdout.write(JSON.stringify({cwd:process.cwd(),sha:require("node:child_process").execFileSync("git",["rev-parse","HEAD"],{encoding:"utf8",windowsHide:true}).trim(),intent:process.env.FORGE_RELEASE_COMMAND,frozen:process.env.FORGE_RELEASE_SHA}))'] }] });
   const transport: ReleaseTransport = { api: async () => { throw new Error('check must not query Vercel'); }, buildInfo: async () => { throw new Error('check must not fetch online'); } };
   const report = await run({ cwd: f.cwd, command: 'check', transport });
+  task.meta.fixtureCheckout = { ...checkoutPreparation };
   if (!report.ok) process.stderr.write(`managed-check command diagnostics: ${JSON.stringify(lifecycleFailures)}\n`);
-  expect(report, JSON.stringify({ error: report.error, lifecycleFailures, members: scopeObservation?.members })).toMatchObject({ ok: true, schemaVersion: 2, candidateSha: sha, stage: 'complete', processes: { status: 'closed' } });
+  expect(report, JSON.stringify({ error: report.error, steps: report.steps, checkoutPreparation, lifecycleFailures, backendFailures,
+    members: scopeObservation?.members })).toMatchObject({ ok: true, schemaVersion: 2, candidateSha: sha, stage: 'complete', processes: { status: 'closed' } });
   expect(report.executionRoot).toBe(resolve(f.cwd, '.tmp/release-slot/checkout'));
   const checked = report.steps.find(step => step.name === 'check:0');
   expect(JSON.parse(checked?.stdout ?? '')).toEqual({ cwd: report.executionRoot, sha, intent: 'check', frozen: sha });
@@ -138,7 +175,9 @@ it('stops after a preparation command modifies committed source', async ({ task 
   await configure(f, { source: { ...f.config.source, prepare: [{ command: 'node', args: ['-e', 'require("node:fs").writeFileSync("source.txt","changed")'] }] } });
   const report = await run({ cwd: f.cwd, command: 'check' });
   task.meta.fixtureCheckout = { ...checkoutPreparation };
-  expect(report, JSON.stringify(report.error)).toMatchObject({ ok: false, error: { code: 'CANDIDATE_CHANGED' }, processes: { status: 'closed' } });
+  expect(report, JSON.stringify({ error: report.error, lifecycleFailures, backendFailures, members: scopeObservation?.members,
+    queries: scopeObservation?.queries, queryFailures: scopeObservation?.queryFailures })).toMatchObject({ ok: false,
+    error: { code: 'CANDIDATE_CHANGED' }, processes: { status: 'closed' } });
   expect(f.ref('dev')).toBe(f.initial); expect(f.ref('main')).toBe(f.initial);
 });
 it('refuses a different pnpm version before frozen installation', async ({ task }) => {
