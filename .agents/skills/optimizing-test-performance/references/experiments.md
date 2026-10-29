@@ -13,7 +13,7 @@
 | `b6c82244fcd9afb3990b09327dcf199c8c8651f9` | 全链共享两个真实 worker；构建一次；隐藏窗口、父侧退出后释放槽、异常收尾失败；重阶段顺序执行；覆盖率暂存/回滚 | `pnpm check` 完整分支外部 1318.0361673 秒，exit 0；44 脚本文件/316 通过，27 包/1398 通过，原有 3 跳过；95 受管任务全部正常关闭且为空 |
 | `96cd5c8c1b2124de96c112c4b8447ef12210f515` | 9 个测试/说明文件。预算夹具仅准备真实目录/身份/锁；三个组件文件使用新鲜的已提交来源准备，保留原受管 session 与故障行为。无生产改动 | 局部预算 13 测试 40.486823 → 3.6535484 秒；terminal 13 测试 73.5342507 → 59.4738183 秒。完整 1302.7499428 秒，见下节 |
 
-实现证据：上述 Git diff、[两个查询合并 Changeset](../../../../.changeset/reduce-management-git-startups.md)、[候选观察 Changeset](../../../../.changeset/batch-candidate-observation.md)、[测试分层说明](../../../../packages/release-vercel/tests/README.md)、[验证契约](../../../../docs/maintenance/validation.md)。源码本身不证明历史计时；下列摘要取自当次保存的终态报告。
+实现证据：上述 Git diff、[查询合并与候选观察的发布记录](../../../../packages/release-vercel/CHANGELOG.md)、[测试分层说明](../../../../packages/release-vercel/tests/README.md)、[验证契约](../../../../docs/maintenance/validation.md)。源码本身不证明历史计时；下列摘要取自当次保存的终态报告。
 
 ### 最近一次正式全量
 
