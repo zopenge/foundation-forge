@@ -52,6 +52,12 @@ forge-repository-context check --root . --index .tmp/repository-context
 
 `current-verified` 每次重新发现并比较这些输入。源码或语义输入漂移返回 `stale`；构建期间发生漂移也不会推进 `current.json`。索引是可重建的本地缓存，不应提交。
 
+默认只保留当前 generation，不提供历史保留配置。持有构建锁时先回收历史快照和上次中断留下的暂存文件，再完整写入一个候选；原子替换 `current.json` 后回收旧 generation。成功返回时仅剩一份受管快照；切换期间至多保留旧 current 与一个候选。输入无变化时复用相同文件，但仍回收历史积累。回收不读取历史索引正文，只删除 `generations/generation-<64 位小写十六进制>.json` 和本包发布目录内符合发布器格式的暂存普通文件；不跟随链接，不递归删除同名目录或其他非归属文件。
+
+`loadRepositoryGeneration()` 精确读取已淘汰或不存在的 generation 时抛出 `GENERATION_NOT_AVAILABLE`，`details.generationId` 标识请求。调用方应重新获取 current 并从第一页生成新游标。`loadCurrentGeneration()` 遇到指针读取后旧文件被淘汰的竞态时，最多重读两次；已打开的文件或已加载到内存的 generation 可完整使用，不会拼接不同 generation。持续竞争或悬空指针仍返回明确失败，不无限等待。
+
+SDK 构建接受可选 `signal: AbortSignal`。指针切换前取消或发布失败保留旧 current，并回收未提交候选；切换是提交点，之后的取消不回滚，回收继续完成。`GENERATION_CLEANUP_FAILED` 表示回收失败，此时 current 可能已经推进，调用方应重新读取确认；后续构建必须先完成回收才能再写候选，因此不会因反复失败继续积累。进程硬中断后，完整候选和发布暂存由下一次合法持锁构建回收；残留 `.build-lock` 返回 `LOCK_STATE_UNKNOWN`，必须先核实原写入进程已经退出，再移除其锁，不自动抢锁。查询仍只读。这些保证以写入方遵守构建锁为前提，不支持外部进程同时替换 store 路径。
+
 ## 可信 frozen
 
 frozen 快路径只接受已经由 `@openge/forge-source-snapshot` 发布并授权的不可变 snapshot store；必须同时提供固定的 root、owner 和 snapshot id：
