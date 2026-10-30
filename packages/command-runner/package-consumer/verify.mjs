@@ -33,13 +33,18 @@ const runner = createNodeCommandRunner({
   identityAcquisition: { timeoutMs: 1000, pollIntervalMs: 10 }, terminationTimeoutMs: 1000,
 });
 const fixture = fileURLToPath(new URL('./command-fixture.mjs', import.meta.url));
+const traceCommand = phase => event => {
+  if (process.env.FORGE_PROCESS_TIMELINE !== '1' || event.type !== 'spawned') return;
+  process.stdout.write(`${JSON.stringify({ phase, callsite: 'command-runner/package-consumer/verify.mjs',
+    pid: process.pid, childPid: event.pid, at: new Date().toISOString() })}\n`);
+};
 const spec = (mode, args = []) => ({ command: process.execPath, args: [fixture, mode, ...args], environment: { mode: 'inherit' }, output: { mode: 'capture', maxBytesPerStream: 100, overflow: 'fail' } });
-const output = await runner.run(spec('output', ['7']));
+const output = await runner.run(spec('output', ['7']), traceCommand('direct-output'));
 assert.equal(output.exitCode, 7);
 assert.equal(output.terminationReason, 'exit');
 assert.equal(new TextDecoder().decode(output.stdout), 'alpha β');
 assert.equal(new TextDecoder().decode(output.stderr), 'error');
-const timed = await runner.run({ ...spec('wait'), timeoutMs: 80 });
+const timed = await runner.run({ ...spec('wait'), timeoutMs: 80 }, traceCommand('direct-timeout'));
 assert.equal(timed.terminationReason, 'timeout');
 assert.equal(terminations, 1);
 assert.ok(timed.identity);
@@ -63,12 +68,14 @@ const scoped = createNodeCommandRunner({ platform: windows ? 'win32' : 'posix',
 let scopeReady = false;
 const manual = scoped.start({ command: process.execPath, args: ['-e', 'process.stdout.write("owned")'],
   ownedScope: { start: 'manual', binding: 'installed-manual' }, timeoutMs: 15000,
-  output: { mode: 'capture', maxBytesPerStream: 100, overflow: 'fail' } }, event => { if (event.type === 'scope-ready') scopeReady = true; });
+  output: { mode: 'capture', maxBytesPerStream: 100, overflow: 'fail' } }, event => {
+  traceCommand('owned-manual')(event); if (event.type === 'scope-ready') scopeReady = true;
+});
 await manual.identity; assert.equal(scopeReady, true); assert.equal(typeof manual.authorizeStart, 'function');
 await manual.authorizeStart(); const normal = await manual.result;
 assert.equal(normal.ownedScope?.status, 'closed'); assert.equal(normal.terminationReason, 'exit');
 assert.equal(new TextDecoder().decode(normal.stdout), 'owned');
-const detach = "const c=require('node:child_process').spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{detached:true,stdio:'ignore'});c.unref()";
-const background = await scoped.run({ command: process.execPath, args: ['-e', detach], ownedScope: { start: 'automatic', binding: 'installed-descendant' }, timeoutMs: 15000 });
+const detach = "const c=require('node:child_process').spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{detached:true,windowsHide:true,stdio:'ignore'});c.unref()";
+const background = await scoped.run({ command: process.execPath, args: ['-e', detach], ownedScope: { start: 'automatic', binding: 'installed-descendant' }, timeoutMs: 15000 }, traceCommand('owned-descendant'));
 assert.equal(background.terminationReason, 'termination-failure');
 assert.equal(background.ownedScope?.reason, 'descendants-remained'); assert.equal(background.ownedScope?.empty, true);

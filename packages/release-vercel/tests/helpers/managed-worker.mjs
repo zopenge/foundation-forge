@@ -3,7 +3,7 @@ import process from 'node:process';
 import { runRelease } from '../../dist/node.js';
 
 const [cwd, command, deployedSha] = process.argv.slice(2);
-const sha = deployedSha ?? execFileSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }).trim();
+const sha = deployedSha ?? execFileSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8', windowsHide: true }).trim();
 const deployment = { id: 'dpl_fixture', projectId: 'prj_fixture', target: 'production', readyState: 'READY', source: 'git',
   gitSource: { type: 'github', repoId: 101, org: 'fixture', repo: 'repository', sha, ref: 'main' }, url: 'fixture.vercel.app' };
 const transport = { api: async path => {

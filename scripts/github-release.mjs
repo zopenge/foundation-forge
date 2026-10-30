@@ -47,6 +47,7 @@ const captureGit = (args, { cwd, input } = {}) => {
     encoding: 'utf8',
     input,
     shell: false,
+    windowsHide: true,
     stdio: input === undefined ? ['ignore', 'pipe', 'pipe'] : ['pipe', 'pipe', 'pipe'],
   });
   if (result.status !== 0) throw new Error(result.stderr || `git ${args.join(' ')} failed`);

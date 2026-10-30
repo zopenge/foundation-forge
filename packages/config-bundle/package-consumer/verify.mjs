@@ -31,4 +31,4 @@ try {
 
 execFileSync(execPath, ['--conditions=browser', '--input-type=module', '-e',
   "import assert from 'node:assert/strict'; import { createConfigBundle, decodeConfigBundle } from '@openge/forge-config-bundle'; const zip = await createConfigBundle([], { createdAt: '2026-09-04T00:00:00Z' }); assert.equal((await decodeConfigBundle(zip)).entries.length, 0); await assert.rejects(import('@openge/forge-config-bundle/node'), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });"
-], { cwd: import.meta.dirname, stdio: 'pipe' });
+], { cwd: import.meta.dirname, stdio: 'pipe', windowsHide: true });

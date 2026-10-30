@@ -29,6 +29,7 @@ export const appendAll = <T>(target: T[], values: readonly T[]): void => {
 export const buildRepositoryCorpus = async (
   options: BuildRepositoryCorpusOptions,
 ): Promise<BuildRepositoryCorpusResult> => {
+  options.signal?.throwIfAborted();
   const before = await discoverSourceSnapshot(options.rootDir, options.scopes, options.languages);
   const semanticBefore = await discoverSemanticInputs({
     rootDir: options.rootDir,
@@ -51,6 +52,7 @@ export const buildRepositoryCorpus = async (
   const generationId = `generation-${sha256(identity)}`;
   const lock = await acquireBuildLock(options.indexRoot, inputDigest);
   try {
+    options.signal?.throwIfAborted();
     const entities: Entity[] = [];
     const edges: Edge[] = [];
     const diagnostics: Diagnostic[] = [];
@@ -72,6 +74,7 @@ export const buildRepositoryCorpus = async (
       }
     }
     for (const file of before.files.filter((item) => isCppPath(item.path))) {
+      options.signal?.throwIfAborted();
       const extracted = extractCpp({
         path: file.path,
         text: await readFile(resolve(options.rootDir, file.path), 'utf8'),
@@ -139,7 +142,7 @@ export const buildRepositoryCorpus = async (
       sortingVersion: 'v1',
       corpus,
     };
-    await publishRepositoryGeneration(options.indexRoot, generation, lock);
+    await publishRepositoryGeneration(options.indexRoot, generation, lock, options.signal);
     return { status: 'ok', corpus, diagnostics: [], generation };
   } finally {
     await releaseBuildLock(lock);

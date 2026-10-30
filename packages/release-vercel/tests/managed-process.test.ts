@@ -84,14 +84,24 @@ it.each(['journal-failure', 'lock-replaced'])('never authorizes the real job aft
 });
 it.each(['EBUSY', 'EPERM', 'SECRETCODE'])('preserves only known lifecycle failure codes without exposing messages: %s', async code => {
   const f = await fixture(), write = f.slot.store.writeState.bind(f.slot.store);
+  const writes: Array<{ statuses: readonly string[]; injected: boolean; causeCode?: string }> = [];
   vi.spyOn(f.slot.store, 'writeState').mockImplementation(async (state, beforeCommit) => {
-    if (state.processes.some(command => command.status === 'closed')) throw Object.assign(new Error('token=fixture-private'), { code,
-      ...(code === 'EPERM' ? { syscall: 'rename', path: f.slot.paths.statePath } : {}) });
-    await write(state, beforeCommit);
+    const call: (typeof writes)[number] = { statuses: state.processes.map(command => command.status), injected: false };
+    writes.push(call);
+    if (state.processes.some(command => command.status === 'closed')) {
+      call.injected = true;
+      throw Object.assign(new Error('token=fixture-private'), { code,
+        ...(code === 'EPERM' ? { syscall: 'rename', path: f.slot.paths.statePath } : {}) });
+    }
+    try { await write(state, beforeCommit); }
+    catch (error) {
+      if (error instanceof Error && 'code' in error && typeof error.code === 'string') call.causeCode = error.code;
+      throw error;
+    }
   });
   const observed = await f.session.execution.run('journal-code', { command: 'node', args: ['-e', 'process.stdout.write("done")'] }, 'CHECK_FAILED')
     .then(value => ({ value }), (error: unknown) => ({ error }));
-  expect(observed).toMatchObject({ error: { code: 'PROCESS_STATE_UNKNOWN', details: { reason: 'PROCESS_LIFECYCLE_FAILED',
+  expect(observed, JSON.stringify({ observed, writes, commands: f.session.state.processes })).toMatchObject({ error: { code: 'PROCESS_STATE_UNKNOWN', details: { reason: 'PROCESS_LIFECYCLE_FAILED',
     ...(['EBUSY', 'EPERM'].includes(code) ? { causeCode: code } : {}),
     ...(code === 'EPERM' ? { causePhase: 'closed-state', causeSyscall: 'rename', causeFile: 'state.json' } : {}) } } });
   expect(JSON.stringify(observed)).not.toContain('fixture-private');
@@ -135,10 +145,13 @@ it('keeps cancellation failed while distinguishing safe stopping from normal clo
   const f = await fixture(), path = resolve(f.slot.paths.slotRoot, 'cancel-writes');
   const controller = new AbortController();
   const pending = f.session.execution.run('cancelled', { command: 'node', args: ['-e', 'setInterval(()=>require("node:fs").appendFileSync(process.argv[1],"x"),100)', path] }, 'CHECK_FAILED', undefined, controller.signal);
-  const failure = expect(pending).rejects.toMatchObject({ code: 'CANCELLED' });
+  // 立即接住提前失败；等待写入期间不留下尚未await的拒绝断言。
+  const outcome = pending.then(value => ({ value }), (error: unknown) => ({ error }));
   try { for (let i = 0; i < 60; i++) { try { await readFile(path); break; } catch { await new Promise(accept => setTimeout(accept, 100)); } } }
   finally { controller.abort(); }
-  await failure; const size = (await readFile(path)).length;
+  const observed = await outcome;
+  expect(observed, JSON.stringify({ observed, commands: f.session.state.processes })).toMatchObject({ error: { code: 'CANCELLED' } });
+  const size = (await readFile(path)).length;
   await new Promise(accept => setTimeout(accept, 250)); expect((await readFile(path)).length).toBe(size);
   expect(f.session.state.processes[0]?.status).toBe('stopped');
   await expect(f.session.assertClosed()).rejects.toMatchObject({ code: 'PROCESS_STATE_UNKNOWN' });

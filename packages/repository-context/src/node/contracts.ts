@@ -41,6 +41,7 @@ export interface BuildRepositoryCorpusOptions {
   readonly scopes: readonly string[];
   readonly languages: readonly RepositoryLanguage[];
   readonly tsconfigPath?: string;
+  readonly signal?: AbortSignal;
 }
 
 export interface BuildRepositoryCorpusResult {

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { access, mkdir, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import process from 'node:process';
@@ -29,6 +29,7 @@ const fixtureRoot = resolve('.tmp', 'repository-context-consumer');
 const indexRoot = resolve(fixtureRoot, '.index');
 await rm(fixtureRoot, { recursive: true, force: true });
 await mkdir(resolve(fixtureRoot, 'src'), { recursive: true });
+try {
 await writeFile(resolve(fixtureRoot, 'src', 'example.ts'), [
   'export function createExample(input: string): string {',
   '  return input;',
@@ -113,5 +114,19 @@ if (process.platform === 'win32' && consumerRoot) {
   assert.equal(JSON.parse(wrapped.stdout).corpusState, 'current-verified');
 }
 
-await rm(fixtureRoot, { recursive: true, force: true });
+for (let index = 0; index < 3; index += 1) {
+  await writeFile(resolve(fixtureRoot, 'src', 'example.ts'), `export const changed${index} = true;\n`, 'utf8');
+  const next = await nodeApi.buildRepositoryCorpus({
+    rootDir: fixtureRoot, indexRoot, corpusId: 'consumer-cli', scopes: ['src'], languages: ['typescript'],
+    tsconfigPath: resolve(fixtureRoot, 'tsconfig.json'),
+  });
+  assert.equal(next.status, 'ok');
+  assert.deepEqual(await readdir(resolve(indexRoot, 'generations')), [`${next.generation.generationId}.json`]);
+  assert.equal((await nodeApi.loadCurrentGeneration(indexRoot)).generationId, next.generation.generationId);
+}
+await assert.rejects(nodeApi.loadRepositoryGeneration(indexRoot, generation.generationId), { code: 'GENERATION_NOT_AVAILABLE' });
+assert.equal(sdkNetworkCalls, 0);
+} finally {
+  await rm(fixtureRoot, { recursive: true, force: true });
+}
 process.stdout.write('Repository context tarball consumer verified SDK, CLI, offline runtime, and Windows bin boundary.\n');

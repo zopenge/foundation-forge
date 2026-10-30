@@ -32,7 +32,7 @@ test.runIf(supported)('does not run before authorization and closes a short comm
 test.runIf(supported)('keeps a fast detached descendant from becoming a normal close', async () => {
   const root = await fixture(), output = resolve(root, 'writer');
   const writer = 'require("node:fs").appendFileSync(process.argv[1],"start");setInterval(()=>require("node:fs").appendFileSync(process.argv[1],"x"),25)';
-  const parent = `const c=require("node:child_process").spawn(process.execPath,["-e",${JSON.stringify(writer)},process.argv[1]],{stdio:"ignore",detached:true});c.unref();`;
+  const parent = `const c=require("node:child_process").spawn(process.execPath,["-e",${JSON.stringify(writer)},process.argv[1]],{stdio:"ignore",detached:true,windowsHide:true});c.unref();`;
   const scope = await start(['-e', parent, output]); await scope.authorize();
   expect(await scope.completion).toMatchObject({ closure: { status: 'unknown', reason: 'descendants-remained', empty: true } });
 });
@@ -46,7 +46,7 @@ test.runIf(supported)('can dispose an unbound scope without executing its job', 
 });
 test.runIf(supported)('owns multiple generations even when both parents exit immediately', async () => {
   const writer = 'setInterval(()=>{},1000)';
-  const detach = (body: string) => `const c=require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(body)}],{detached:true,stdio:'ignore'});c.unref()`;
+  const detach = (body: string) => `const c=require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(body)}],{detached:true,stdio:'ignore',windowsHide:true});c.unref()`;
   const scope = await start(['-e', detach(detach(writer))]); await scope.authorize();
   expect((await scope.completion).closure).toMatchObject({ status: 'unknown', reason: 'descendants-remained', empty: true });
 });

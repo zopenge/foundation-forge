@@ -68,6 +68,7 @@ export const publishIfNeeded = async ({ tag, bootstrap = false, model, policy,
       const child = spawn(command, args, {
         cwd: repositoryRoot,
         shell: false,
+        windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
       let stdout = '';

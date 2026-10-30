@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 const exec = promisify(execFile);
 export const runGit = async (cwd: string, args: readonly string[]): Promise<string> => {
-  const result = await exec('git', ['--no-optional-locks', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'core.quotepath=false', '-C', cwd, ...args], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+  const result = await exec('git', ['--no-optional-locks', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'core.quotepath=false', '-C', cwd, ...args], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, windowsHide: true });
   return result.stdout;
 };
 export const createRepository = async (): Promise<string> => {
