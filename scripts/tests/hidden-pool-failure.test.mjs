@@ -33,7 +33,19 @@ test('a pool drain failure rejects the CLI even when its descendant subsequently
   const context = await createTestRunContext({ packages, workers: 1 });
   trace('context-end');
   const release = resolve(root, 'release'), ready = resolve(root, 'ready'), drained = resolve(root, 'drained'), logRoot = resolve(context.root, 'finite-pipe');
-  const childCode = 'const f=require("node:fs");const startToken=process.platform==="linux"?f.readFileSync("/proc/self/stat","utf8").split(") ")[1].split(" ")[19]:"windows";f.writeFileSync(process.argv[1],JSON.stringify({pid:process.pid,startToken}));const t=setInterval(()=>{if(f.existsSync(process.argv[2])){clearInterval(t)}},10)';
+  // 延迟超过 Provider 的自然收尾观察窗口，要求夹具先等待后代退出再结束 CLI。
+  const identityModule = new URL('../../packages/process-control-node/dist/index.js', import.meta.url).href;
+  const childCode = `const f=require("node:fs");(async()=>{
+    let startToken;
+    if(process.platform==="win32"){
+      const {createWindowsNativeProcessIdentityReader}=await import(${JSON.stringify(identityModule)});
+      const observed=await createWindowsNativeProcessIdentityReader().readIdentity({pid:process.pid});
+      if(observed.status!=="FOUND"||observed.identity.pid!==process.pid)throw new Error("finite pipe identity unavailable");
+      startToken=observed.identity.startToken;
+    }else startToken=f.readFileSync("/proc/self/stat","utf8").split(") ")[1].split(" ")[19];
+    f.writeFileSync(process.argv[1],JSON.stringify({pid:process.pid,startToken}));
+    const t=setInterval(()=>{if(f.existsSync(process.argv[2])){clearInterval(t);setTimeout(()=>{},1500)}},10);
+  })().catch(error=>{console.error(error);process.exitCode=1});`;
   await writeFile(resolve(root, 'finite.test.mjs'), `import {it} from 'vitest';import {spawn} from 'node:child_process';import {readFile} from 'node:fs/promises';import {setTimeout as delay} from 'node:timers/promises';
     it('finite pipe holder',async()=>{const child=spawn(process.execPath,['-e',${JSON.stringify(childCode)},${JSON.stringify(ready)},${JSON.stringify(release)}],{detached:true,windowsHide:true,stdio:'inherit'});child.unref();const end=Date.now()+5000;while(Date.now()<end){try{await readFile(${JSON.stringify(ready)});return;}catch(error){if(error.code!=='ENOENT')throw error;}await delay(10);}throw new Error('readiness deadline');});`);
   await writeFile(resolve(root, 'vitest.config.mjs'), `export default {test:{include:["finite.test.mjs"],teardownTimeout:100,globalSetup:[${JSON.stringify(resolve(repositoryRoot, 'scripts/tests/helpers/finite-pipe-global-setup.mjs'))}]}};`);
@@ -53,11 +65,11 @@ test('a pool drain failure rejects the CLI even when its descendant subsequently
         assert.equal(reported, true);
       } finally { trace('release-start'); await writeFile(release, 'release'); trace('release-written'); }
       const outcome = await terminal;
-      trace('terminal-settled', { exitCode: outcome.error?.result?.exitCode, closure: outcome.error?.result?.closure });
+      trace('terminal-settled', { exitCode: outcome.error?.result?.exitCode, closure: outcome.error?.result?.closure, diagnostics: outcome.error?.result?.diagnostics });
       assert.ok(outcome.error, 'pool teardown failure must reject even with an empty normally closed Job');
       assert.ok(outcome.error.result.exitCode !== 0);
       assert.equal(outcome.error.result.closure.status, 'closed'); assert.equal(outcome.error.result.closure.empty, true);
-      if (process.platform === 'linux') assert.deepEqual(JSON.parse(await readFile(drained, 'utf8')), JSON.parse(await readFile(ready, 'utf8')));
+      assert.deepEqual(JSON.parse(await readFile(drained, 'utf8')), JSON.parse(await readFile(ready, 'utf8')));
       process.stdout.write(`FINITE_PIPE_PROOF ${JSON.stringify(outcome.error.result)}\n`);
     });
   } catch (error) { trace('test-failure', { atPhase: phase, errorCode: error?.code }); throw error;
