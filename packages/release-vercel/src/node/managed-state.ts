@@ -10,6 +10,7 @@ import { validRetirementHost } from './retirement-host.js';
 import { metadataReserveBytes } from './managed-metadata.js';
 import { checkoutObservationPlan } from './managed-observation.js';
 import { parsePrebuiltResolutions, parsePrebuiltState } from './prebuilt-state.js';
+import { prebuiltCandidateContext } from './version-alias.js';
 
 const uuid = /^[a-f0-9-]{36}$/u, sha = /^[a-f0-9]{40}$/u;
 function boundSource(value: unknown, source: FrozenSource): asserts value is FrozenSource {
@@ -27,7 +28,12 @@ export function parseManagedReceipt(value: unknown, source: FrozenSource, slotId
   boundSource(item.source, source);
   if (report.candidateSha !== item.source.sha || report.configSha256 !== item.source.configSha256) throw new ReleaseError('SLOT_STATE', { reason: 'RECEIPT_IDENTITY' });
   validateEffects(report.effects);
-  parsePrebuiltState(report.prebuilt, item.source as FrozenSource, report.effects as ReleaseReport['effects']);
+  const frozen = item.source as FrozenSource;
+  const prebuilt = parsePrebuiltState(report.prebuilt, frozen, report.effects as ReleaseReport['effects']);
+  const expected = prebuiltCandidateContext(frozen.config, prebuilt), context = record(report.candidateContext);
+  if (expected ? Object.keys(context).length !== Object.keys(expected).length
+    || Object.entries(expected).some(([key, value]) => context[key] !== value) : report.candidateContext !== undefined)
+    throw new ReleaseError('SLOT_STATE', { reason: 'CANDIDATE_CONTEXT' });
   return value as ManagedReceipt;
 }
 function validateEffects(value: unknown): void {

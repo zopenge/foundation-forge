@@ -18,6 +18,7 @@ import { readRetirementHost } from './retirement-host.js';
 import { createTerminalWriter, restoreManagedTerminal, type TerminalWriter } from './managed-terminal.js';
 import { metadataReserveBytes } from './managed-metadata.js';
 import { assertManagedHistory, captureManagedHistory } from './managed-history.js';
+import { versionAliasBuildEnvironment, versionAliasCandidateEnvironment } from './version-alias.js';
 
 const knownCauseCodes = new Set<string>([...getSystemErrorMap().values()].map(([code]) => code)
   .concat(Object.values(commandErrorCodes), Object.values(processControlErrorCodes)));
@@ -125,7 +126,10 @@ class ManagedProcess implements ExecutionLifecycle {
       try {
         const environment = spec.environment ?? { mode: 'inherit' as const };
         running = runner.start({ ...spec, signal: combined, ownedScope: { start: 'manual', binding },
-          environment: { ...environment, values: { ...environment.values, ...isolatedGitEnvironment(), FORGE_RELEASE_COMMAND: this.state.command, FORGE_RELEASE_SHA: this.slot.source.sha } } }, event => {
+          environment: { ...environment, values: { ...environment.values, ...isolatedGitEnvironment(),
+            ...versionAliasBuildEnvironment(this.slot.source.config, this.slot.source.sha, this.slot.source.configSha256),
+            ...(this.state.prebuilt ? versionAliasCandidateEnvironment(this.slot.source.config, this.state.prebuilt) : {}),
+            FORGE_RELEASE_COMMAND: this.state.command, FORGE_RELEASE_SHA: this.slot.source.sha } } }, event => {
           observer?.(event);
           if (event.type === 'termination-requested' && (event.reason === 'abort' || event.reason === 'timeout')) requestedTermination = event.reason;
           if (event.type === 'spawned') enqueue(async () => { command.pid = event.pid; command.status = 'spawned'; if (!batch) await this.persist(); });

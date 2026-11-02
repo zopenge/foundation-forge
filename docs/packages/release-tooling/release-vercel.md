@@ -70,6 +70,18 @@ check 仅构建、检查和冻结本地产物，不访问云。publish 在消费
 
 报告独立保存 prebuilt 绑定及创建/提升效果。两次云写入前均先原子保存 unknown 意图；取消、超时或丢失响应不得自动重发。已记录的同一候选可以显式续验；创建未知且没有 ID 时，不从可自填 metadata 猜测成功。提升未知通过原 ID、平台 promotion job 的完成状态、实际 alias 与标记观察；后续写入前持久保存引用原意图的观察证明。相同提升任务的权威终态失败也可单独记录为 failed，允许之后发布新候选，原首错、unknown 和未验证结果不改写；pending、任务缺失或其他目标不能建立该证明。不会自动回滚。Rolling Release 项目暂不支持。本地关闭与远端效果分别记录，历史首错及 unknown 不因新运行而丢失。
 
+### 可选的构建前版本入口
+
+在既有 delivery 内显式增加 `versionAlias: { hostnameTemplate: "site-{sha}.vercel.app" }`。模板只允许一个完整 40 位小写 SHA 占位符，前缀为 1–22 位小写 ASCII 字母、数字或中间连字符，固定 `.vercel.app` 后缀；拒绝协议、路径、端口、其他域及与生产主机名重合。省略时保持原有行为。prepare/check 在构建前收到受保护的 `FORGE_RELEASE_VERSION_URL`、`FORGE_RELEASE_CONFIG_SHA256`，候选尚未生成时 `FORGE_RELEASE_CANDIDATE_CONTEXT` 为空；不依赖历史临时产物或 Codex 环境。
+
+创建前先查询版本主机名是否占用；暂存并确认 READY 后再次查询。已直接绑定同一项目及部署 ID 时只读核验；否则先保存独立 alias unknown 意图，再至多提交一次绑定。只有明确 404 表示不存在，认证、其他请求错误、间接路由和归属不明均不能当作空位。不同绑定报 `VERSION_ALIAS_CONFLICT`，不主动换绑、不删除补建。版本 URL 的公开标记和 revision 必须匹配原 source/config/artifact，之后才执行验收；提升前后再次核验，并始终提升同一 ID。准入增加 `FORGE_RELEASE_PHASE=version-alias`，验收的 `FORGE_RELEASE_URL` 指向版本入口。
+
+候选生成后的 `report.candidateContext` 及受保护 JSON 环境变量 `FORGE_RELEASE_CANDIDATE_CONTEXT` 公开只读身份：teamId、projectId、sourceSha、configSha256、artifactSha256、deploymentId、candidateUrl、versionUrl、versionAliasVerified。仅包含明确字段，不含凭据、完整配置或环境；消费者的注册与内容验收须使用已核验的版本入口。此上下文不替代业务授权。
+
+`prebuilt.versionAlias` 保存主机名、effect 和 verified，`effects.versionAliasAssign` 与创建、提升独立。取消、超时或丢失响应后，publish 不重放未决绑定；status 只观察，verify 使用原 checkout/配置观察并验收，均不绑定、不提升。别名不存在继续保留未知，包括意图保存后、POST 前中断。后续云写入前必须另存绑定原 hostname/source/config/artifact/ID 的观察证明；原 unknown 历史不改写。本地 recover 仍不要求 Vercel 认证。默认别名读写使用标准受保护 `VERCEL_TOKEN`，其他原有读取沿用官方 CLI 会话。
+
+官方 alias assignment 能移动已有名字，未提供原子 create-if-absent。因此全部写入方仍须共享外部串行协调，覆盖版本绑定、验收、提升和未决核验；读取后写入不能防止不遵守协调的外部并发换绑。响应报告其他 oldDeploymentId 时停止并保留未知，不补偿回滚。消费者负责额度、历史部署保留、当前引用及回滚策略；本能力不无限保留历史，也不把版本入口注册为项目生产域。
+
 ## 各命令的边界
 
 下列推送和 Git 来源规则适用于默认 Git 交付；prebuilt 按上一节暂存、验收和提升同一候选，status/verify 只观察原候选、不产生云写入。

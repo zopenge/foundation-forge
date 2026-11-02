@@ -1,5 +1,6 @@
 import type { PrebuiltDeliveryConfig, ReleaseCheck, ReleaseConfig, ReleaseSource } from '../contracts.js';
 import { record, ReleaseError } from './errors.js';
+import { parseVersionAliasConfig } from './version-alias.js';
 
 function invalid(field: string): never { throw new ReleaseError('CONFIG_INVALID', { field }); }
 function object(value: unknown, keys: readonly string[], field: string, optional: readonly string[] = []): Record<string, unknown> {
@@ -53,7 +54,7 @@ export function validateReleaseConfig(value: unknown): ReleaseConfig {
   const selectedSource = source(root.source);
   let delivery: PrebuiltDeliveryConfig | undefined;
   if ('delivery' in root) {
-    const input = object(root.delivery, ['mode', 'maxFiles', 'maxBytes', 'concurrencyControl', 'admission'], 'delivery');
+    const input = object(root.delivery, ['mode', 'maxFiles', 'maxBytes', 'concurrencyControl', 'admission'], 'delivery', ['versionAlias']);
     if (input.mode !== 'prebuilt' || selectedSource.mode !== 'managed-commit') invalid('delivery.mode');
     const control = object(input.concurrencyControl, ['mode', 'scope'], 'delivery.concurrencyControl');
     if (control.mode !== 'external-serialization') invalid('delivery.concurrencyControl.mode');
@@ -61,7 +62,8 @@ export function validateReleaseConfig(value: unknown): ReleaseConfig {
     if (scope.length > 256) invalid('delivery.concurrencyControl.scope');
     delivery = { mode: 'prebuilt', maxFiles: integer(input.maxFiles, 10_000, 'delivery.maxFiles'),
       maxBytes: integer(input.maxBytes, Number.MAX_SAFE_INTEGER, 'delivery.maxBytes'), concurrencyControl: { mode: 'external-serialization', scope },
-      admission: commands(input.admission, 'delivery.admission') };
+      admission: commands(input.admission, 'delivery.admission'),
+      ...('versionAlias' in input ? { versionAlias: parseVersionAliasConfig(input.versionAlias) } : {}) };
   }
   const git = object(root.git, ['remote', 'repository', 'developmentBranch', 'releaseBranch'], 'git');
   const branch = (value: unknown, field: string) => {

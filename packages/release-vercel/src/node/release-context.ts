@@ -46,6 +46,7 @@ export interface PrebuiltEffectResolution {
   readonly artifactSha256: string;
   readonly deploymentId: string;
   readonly promotion: 'not-attempted' | 'succeeded' | 'failed';
+  readonly versionAlias?: { readonly hostname: string; readonly verified: true };
   readonly observedAt: string;
 }
 export interface ManagedState {

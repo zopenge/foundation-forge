@@ -4,6 +4,7 @@ import { record, ReleaseError } from './errors.js';
 import { candidateId, candidateOrigin } from './prebuilt-vercel.js';
 import { measureManagedUsage } from './managed-io.js';
 import { metadataReserveBytes } from './managed-metadata.js';
+import { versionAliasOrigin } from './version-alias.js';
 
 export function parsePrebuiltResolutions(value: unknown): readonly PrebuiltEffectResolution[] {
   if (value === undefined) return [];
@@ -17,6 +18,12 @@ export function parsePrebuiltResolutions(value: unknown): readonly PrebuiltEffec
       || !['not-attempted', 'succeeded', 'failed'].includes(String(item.promotion)) || typeof item.observedAt !== 'string' || !Number.isFinite(Date.parse(item.observedAt))) {
       throw new ReleaseError('SLOT_STATE', { reason: 'PREBUILT_RESOLUTIONS' });
     }
+    if (item.versionAlias !== undefined) {
+      const alias = record(item.versionAlias), match = typeof alias.hostname === 'string'
+        ? /^([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)-([a-f0-9]{40})\.vercel\.app$/u.exec(alias.hostname) : null;
+      if (Object.keys(alias).length !== 2 || alias.verified !== true || !match?.[1] || match[1].length > 22 || match[2] !== item.sourceSha)
+        throw new ReleaseError('SLOT_STATE', { reason: 'PREBUILT_ALIAS_RESOLUTION' });
+    }
     runs.add(item.runId);
   }
   return value as PrebuiltEffectResolution[];
@@ -25,7 +32,7 @@ export function parsePrebuiltResolutions(value: unknown): readonly PrebuiltEffec
 export function parsePrebuiltState(value: unknown, source: FrozenSource, effects: ReleaseReport['effects']): PrebuiltReleaseState | undefined {
   const fail = (): never => { throw new ReleaseError('SLOT_STATE', { reason: 'PREBUILT_BINDING' }); };
   if (value === undefined) {
-    if (effects.deploymentCreate !== undefined || effects.deploymentPromote !== undefined) fail();
+    if (effects.deploymentCreate !== undefined || effects.deploymentPromote !== undefined || effects.versionAliasAssign !== undefined) fail();
     return;
   }
   const item = record(value), config = source.config.delivery;
@@ -45,6 +52,16 @@ export function parsePrebuiltState(value: unknown, source: FrozenSource, effects
     || (item.acceptanceVerified && item.createEffect !== 'accepted')
     || (item.promoteEffect !== 'not-attempted' && (!item.acceptanceVerified || item.createEffect !== 'accepted'))
     || (item.promotionVerified && item.promoteEffect !== 'accepted')) fail();
+  if (config?.versionAlias) {
+    const alias = record(item.versionAlias);
+    let hostname: string | undefined;
+    try { const origin = versionAliasOrigin(source.config, source.sha); hostname = origin ? new URL(origin).hostname : undefined; } catch { fail(); }
+    if (Object.keys(alias).length !== 3 || !hostname || alias.hostname !== hostname
+      || !['not-attempted', 'accepted', 'unknown'].includes(String(alias.effect)) || typeof alias.verified !== 'boolean'
+      || effects.versionAliasAssign !== alias.effect || (alias.verified && alias.effect !== 'accepted')
+      || (alias.effect !== 'not-attempted' && (item.createEffect !== 'accepted' || item.deploymentId === undefined))
+      || ((item.acceptanceVerified || item.promoteEffect !== 'not-attempted') && !alias.verified)) fail();
+  } else if (item.versionAlias !== undefined || effects.versionAliasAssign !== undefined) fail();
   return value as PrebuiltReleaseState;
 }
 
@@ -63,6 +80,7 @@ export function managedPrebuiltContext(session: ManagedSession): ExecutionContex
       session.state.prebuilt = structuredClone(value);
       session.state.effects.deploymentCreate = value.createEffect;
       session.state.effects.deploymentPromote = value.promoteEffect;
+      if (value.versionAlias) session.state.effects.versionAliasAssign = value.versionAlias.effect;
       parsePrebuiltState(session.state.prebuilt, session.slot.source, session.state.effects);
       await session.persist(); context.state = session.state.prebuilt;
     },

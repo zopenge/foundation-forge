@@ -14,14 +14,38 @@ export type ReleaseSource = { readonly mode: 'workspace' } | {
   readonly prepare: readonly ReleaseCheck[];
 };
 export type ManagedSourceConfig = Extract<ReleaseSource, { mode: 'managed-commit' }>;
+export interface VersionAliasConfig { readonly hostnameTemplate: string }
 export interface PrebuiltDeliveryConfig {
   readonly mode: 'prebuilt';
   readonly maxFiles: number;
   readonly maxBytes: number;
   readonly concurrencyControl: { readonly mode: 'external-serialization'; readonly scope: string };
   readonly admission: readonly ReleaseCheck[];
+  readonly versionAlias?: VersionAliasConfig;
 }
 export type ReleaseCloudEffect = 'not-attempted' | 'accepted' | 'unknown';
+export interface PrebuiltVersionAliasState {
+  readonly hostname: string;
+  effect: ReleaseCloudEffect;
+  verified: boolean;
+}
+export interface PrebuiltCandidateContext {
+  readonly teamId: string; readonly projectId: string;
+  readonly sourceSha: string; readonly configSha256: string; readonly artifactSha256: string;
+  readonly deploymentId: string; readonly candidateUrl: string; readonly versionUrl: string;
+  readonly versionAliasVerified: boolean;
+}
+export interface VersionAliasBinding {
+  readonly alias: string; readonly projectId: string; readonly deploymentId: string;
+  readonly routing: 'direct';
+}
+export interface VersionAliasAssignment {
+  readonly alias: string; readonly uid: string; readonly oldDeploymentId?: string;
+}
+export interface VersionAliasTransport {
+  read(hostname: string, signal: AbortSignal): Promise<VersionAliasBinding | undefined>;
+  assign?(deploymentId: string, hostname: string, signal: AbortSignal): Promise<VersionAliasAssignment>;
+}
 export interface PrebuiltReleaseState {
   readonly sourceSha: string;
   readonly configSha256: string;
@@ -34,9 +58,10 @@ export interface PrebuiltReleaseState {
   deploymentUrl?: string;
   acceptanceVerified: boolean;
   promotionVerified: boolean;
+  versionAlias?: PrebuiltVersionAliasState;
 }
 export type ReleaseStage = 'source' | 'admission' | 'checkout' | 'install' | 'prepare' | 'checks'
-  | 'artifact' | 'promote' | 'push-dev' | 'push-main' | 'deployment' | 'acceptance' | 'recover' | 'retire' | 'complete' | 'failed';
+  | 'artifact' | 'version-alias' | 'promote' | 'push-dev' | 'push-main' | 'deployment' | 'acceptance' | 'recover' | 'retire' | 'complete' | 'failed';
 export interface ReleaseBudget {
   readonly sampleCount: number;
   readonly maxObservedBytes: number;
@@ -63,6 +88,7 @@ export const releaseErrorCodes = [
   'SOURCE_UNSUPPORTED', 'SOURCE_CHANGED', 'SLOT_PATH', 'SLOT_FOREIGN', 'SLOT_STATE', 'SLOT_NOT_FAST_FORWARD',
   'BUDGET_EXCEEDED', 'BUDGET_UNKNOWN', 'PROCESS_STATE_UNKNOWN', 'RECOVERY_REQUIRED', 'RECEIPT_SHA_MISMATCH',
   'ARTIFACT_INVALID', 'ARTIFACT_CHANGED', 'ADMISSION_FAILED',
+  'VERSION_ALIAS_CONFLICT',
 ] as const;
 export type ReleaseErrorCode = typeof releaseErrorCodes[number];
 export interface ReleaseDiagnostic { readonly code: ReleaseErrorCode; readonly details: Readonly<Record<string, unknown>> }
@@ -95,8 +121,9 @@ export interface ReleaseReport {
   readonly finishedAt: string;
   readonly steps: readonly ReleaseStep[];
   readonly effects: { developmentPush: ReleasePushEffect; releasePush: ReleasePushEffect;
-    deploymentCreate?: ReleaseCloudEffect; deploymentPromote?: ReleaseCloudEffect };
+    deploymentCreate?: ReleaseCloudEffect; deploymentPromote?: ReleaseCloudEffect; versionAliasAssign?: ReleaseCloudEffect };
   readonly prebuilt?: PrebuiltReleaseState;
+  readonly candidateContext?: PrebuiltCandidateContext;
   readonly deployment?: ReleaseDeployment;
   readonly error?: ReleaseDiagnostic;
   readonly recovery?: { readonly candidateSha: string; readonly nextCommand: string; readonly reportPath: string; readonly reportExists?: boolean; readonly observation?: ReleaseRecoveryObservation };
@@ -121,6 +148,7 @@ export interface ReleaseTransport {
   api(path: string, signal: AbortSignal): Promise<unknown>;
   buildInfo(url: string, signal: AbortSignal): Promise<unknown>;
   promote?(deploymentId: string, signal: AbortSignal): Promise<void>;
+  readonly versionAlias?: VersionAliasTransport;
 }
 export interface RunReleaseOptions {
   readonly command: ReleaseCommand;

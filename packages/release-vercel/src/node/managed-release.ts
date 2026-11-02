@@ -16,6 +16,8 @@ import { archiveManagedDisposition } from './managed-disposition.js';
 import { assertManagedRemoteSettled } from './managed-remote-state.js';
 import { managedCommandIdentities } from './managed-observation.js';
 import { managedPrebuiltContext } from './prebuilt-state.js';
+import { prebuiltCandidateContext } from './version-alias.js';
+import { resumeVerifiedAlias } from './prebuilt-resumption.js';
 
 export async function runManagedRelease(options: RunReleaseOptions): Promise<ReleaseReport> {
   const startedAt = new Date().toISOString();
@@ -23,15 +25,19 @@ export async function runManagedRelease(options: RunReleaseOptions): Promise<Rel
   let result: ReleaseDeployment | undefined, failure: ReleaseDiagnostic | undefined, stage: ReleaseStage = 'source';
   let closed = true, retained = false;
   const emptyEffects: ReleaseReport['effects'] = { developmentPush: 'not-attempted', releasePush: 'not-attempted' };
-  const buildReport = (): ReleaseReport => ({ schemaVersion: 2, command: options.command, ok: failure === undefined,
+  const buildReport = (): ReleaseReport => {
+    const candidateContext = source && session ? prebuiltCandidateContext(source.config, session.state.prebuilt) : undefined;
+    return { schemaVersion: 2, command: options.command, ok: failure === undefined,
     startedAt, finishedAt: new Date().toISOString(), steps: session?.steps ?? [], effects: session?.state.effects ?? emptyEffects,
     stage: session?.state.stage ?? stage, ...(source ? { sourceRoot: source.root, candidateSha: source.sha, configPath: source.configPath, configSha256: source.configSha256 } : {}),
     ...(slot ? { slotId: slot.slotId, runId: slot.runId, executionRoot: slot.paths.checkoutRoot } : {}),
     ...(session ? { budget: session.budget.summary(), processes: { status: closed ? 'closed' : 'unknown', knownCount: new Set(session.state.processes.flatMap(managedCommandIdentities).map(identity => `${String(identity.pid)}:${identity.startToken}`)).size } } : {}),
     ...(result ? { deployment: result } : {}), ...(failure ? { error: failure } : {}),
     ...(session?.state.prebuilt ? { prebuilt: session.state.prebuilt } : {}),
+    ...(candidateContext ? { candidateContext } : {}),
     ...(slot && source ? { recovery: { candidateSha: source.sha, reportPath: resolve(slot.paths.slotRoot, options.command === 'publish' ? 'latest-publish.json' : 'latest-check.json'),
-      nextCommand: recoveryCommand(retained || !closed || Object.values(session?.state.effects ?? emptyEffects).includes('unknown') ? 'recover' : options.command === 'publish' && (session?.state.prebuilt?.deploymentId || ['pushed', 'already-current'].includes(session?.state.effects.releasePush ?? '')) ? 'verify' : options.command, source) } } : {}) });
+      nextCommand: recoveryCommand(retained || !closed || Object.values(session?.state.effects ?? emptyEffects).includes('unknown') ? 'recover' : options.command === 'publish' && (session?.state.prebuilt?.deploymentId || ['pushed', 'already-current'].includes(session?.state.effects.releasePush ?? '')) ? 'verify' : options.command, source) } } : {}) };
+  };
   try {
     assertActive(options.signal);
     if (options.config !== undefined) throw new ReleaseError('SOURCE_UNSUPPORTED', { reason: 'COMMITTED_CONFIG_REQUIRED' });
@@ -46,9 +52,12 @@ export async function runManagedRelease(options: RunReleaseOptions): Promise<Rel
     if (source.config.delivery && options.command === 'publish') {
       const previous = await slot.store.readReceipt('publish');
       if (previous?.source.sha === source.sha && previous.source.configSha256 === source.configSha256 && previous.report.prebuilt) {
-        session.state.prebuilt = structuredClone(previous.report.prebuilt);
-        session.state.effects.deploymentCreate = previous.report.prebuilt.createEffect;
-        session.state.effects.deploymentPromote = previous.report.prebuilt.promoteEffect;
+        const resumed = await resumeVerifiedAlias(session, previous);
+        session.state.prebuilt = resumed?.candidate ?? structuredClone(previous.report.prebuilt);
+        session.state.effects.deploymentCreate = session.state.prebuilt.createEffect;
+        session.state.effects.deploymentPromote = session.state.prebuilt.promoteEffect;
+        if (session.state.prebuilt.versionAlias) session.state.effects.versionAliasAssign = session.state.prebuilt.versionAlias.effect;
+        if (resumed) session.state.prebuiltResolutions = [resumed.proof];
         await session.persist();
       }
     }

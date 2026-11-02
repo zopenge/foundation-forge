@@ -12,6 +12,23 @@ const delivery = { mode: 'prebuilt', maxFiles: 10_000, maxBytes: 268_435_456,
   admission: [{ command: 'node', args: ['admission.mjs'] }] };
 
 describe('explicit prebuilt delivery admission', () => {
+  it('preserves a declared SHA version hostname template for prebuilt delivery', () => {
+    const versionAlias = { hostnameTemplate: 'fixture-{sha}.vercel.app' };
+    expect(validateReleaseConfig({ ...managedConfig, delivery: { ...delivery, versionAlias } }))
+      .toMatchObject({ delivery: { versionAlias } });
+  });
+  it.each([
+    'fixture.vercel.app', 'fixture-{sha}-{sha}.vercel.app', 'fixture-{sha}.vercel.app.evil.invalid',
+    'https://fixture-{sha}.vercel.app', 'fixture-{sha}.vercel.app/path',
+    'fixture-{sha}.vercel.app:443', 'Fixture-{sha}.vercel.app', '-fixture-{sha}.vercel.app',
+    `a${'b'.repeat(22)}-{sha}.vercel.app`, 'fixture-{SHA}.vercel.app', 'fixture-{sha}.example.invalid',
+  ])('rejects an ambiguous or unsafe version hostname template %s', hostnameTemplate => {
+    expect(() => validateReleaseConfig({ ...managedConfig, delivery: { ...delivery, versionAlias: { hostnameTemplate } } }))
+      .toThrow('CONFIG_INVALID');
+  });
+  it('does not inject version-alias configuration into existing prebuilt inputs', () => {
+    expect(validateReleaseConfig({ ...managedConfig, delivery })).toStrictEqual({ ...managedConfig, delivery });
+  });
   it('accepts bounded prebuilt delivery only with a frozen managed source', () => {
     expect(validateReleaseConfig({ ...managedConfig, delivery })).toEqual({ ...managedConfig, delivery });
   });

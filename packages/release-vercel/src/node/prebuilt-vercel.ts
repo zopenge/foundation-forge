@@ -1,10 +1,11 @@
-import { request as httpsRequest } from 'node:https';
 import { setTimeout as delay } from 'node:timers/promises';
-import type { PrebuiltReleaseState, ReleaseConfig, ReleaseDeployment, ReleaseTransport } from '../contracts.js';
+import type { PrebuiltReleaseState, ReleaseConfig, ReleaseDeployment, ReleaseTransport, VersionAliasAssignment, VersionAliasBinding, VersionAliasTransport } from '../contracts.js';
 import { assertActive, record, ReleaseError } from './errors.js';
 import type { Execution } from './execution.js';
 import { matchesPrebuiltMarker, prebuiltMarkerPath } from './prebuilt-artifact.js';
 import { createTransport, request } from './vercel.js';
+import { prebuiltApiOnce } from './prebuilt-http.js';
+import { versionAliasOrigin } from './version-alias.js';
 
 const idPattern = /^dpl_[a-zA-Z0-9]{1,120}$/u;
 export function candidateId(value: unknown): string {
@@ -21,38 +22,45 @@ export function candidateOrigin(value: unknown): string {
 
 /** 单次公开 API 写入；固定 CLI 的 promote 内部会重试 POST，不能用于未决效果协议。 */
 export async function promotePrebuiltOnce(config: ReleaseConfig, deploymentId: string, signal: AbortSignal): Promise<void> {
-  assertActive(signal); const token = process.env.VERCEL_TOKEN;
-  if (!token) throw new ReleaseError('AUTH_REQUIRED', { reason: 'PREBUILT_TOKEN_REQUIRED' });
   const path = `/v10/projects/${encodeURIComponent(config.vercel.projectId)}/promote/${candidateId(deploymentId)}?teamId=${encodeURIComponent(config.vercel.teamId)}`;
-  await new Promise<void>((accept, reject) => {
-    let failure: unknown, accepted = false;
-    const request = httpsRequest(new URL(path, 'https://api.vercel.com'), { method: 'POST', agent: false, signal,
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'content-length': '2' } }, response => {
-      let length = 0;
-      response.on('data', (bytes: Buffer) => {
-        length += bytes.length;
-        if (length > config.limits.maxOutputBytes) request.destroy(new ReleaseError('VERCEL_API', { reason: 'OUTPUT_LIMIT' }));
-      });
-      response.on('error', error => { failure ??= error; request.destroy(); });
-      response.on('end', () => {
-        accepted = response.statusCode === 200 || response.statusCode === 202;
-        if (!accepted) failure ??= new ReleaseError(response.statusCode === 401 || response.statusCode === 403 ? 'AUTH_REQUIRED' : 'VERCEL_API', { status: response.statusCode });
-      });
-    });
-    const timer = setTimeout(() => request.destroy(new ReleaseError('VERCEL_API', { reason: 'REQUEST_TIMEOUT' })), config.limits.requestMs);
-    request.on('error', error => { failure ??= error; });
-    request.on('close', () => {
-      clearTimeout(timer);
-      if (signal.aborted) reject(new ReleaseError('CANCELLED'));
-      else if (failure || !accepted) reject(failure instanceof ReleaseError ? failure : new ReleaseError('VERCEL_API', { reason: 'PROMOTE_UNCONFIRMED' }));
-      else accept();
-    });
-    request.end('{}');
-  });
+  await prebuiltApiOnce(config, path, 'POST', '{}', signal);
+}
+function aliasHostname(config: ReleaseConfig, hostname: string): string {
+  const sha = /-([a-f0-9]{40})\.vercel\.app$/u.exec(hostname)?.[1];
+  if (!sha || versionAliasOrigin(config, sha) !== `https://${hostname}`) throw new ReleaseError('CONFIG_INVALID', { field: 'delivery.versionAlias' });
+  return encodeURIComponent(hostname);
+}
+function jsonBody(body: Buffer): Record<string, unknown> {
+  try { return record(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(body)) as unknown); }
+  catch { throw new ReleaseError('VERCEL_API', { reason: 'INVALID_JSON' }); }
+}
+export async function readPrebuiltVersionAlias(config: ReleaseConfig, hostname: string, signal: AbortSignal): Promise<VersionAliasBinding | undefined> {
+  const path = `/v4/aliases/${aliasHostname(config, hostname)}?teamId=${encodeURIComponent(config.vercel.teamId)}`;
+  const response = await prebuiltApiOnce(config, path, 'GET', '', signal, true);
+  if (response.status === 404) return;
+  const value = jsonBody(response.body);
+  if (value.alias !== hostname || typeof value.projectId !== 'string' || typeof value.deploymentId !== 'string'
+    || value.redirect != null || value.microfrontends != null || value.deletedAt != null)
+    throw new ReleaseError('VERSION_ALIAS_CONFLICT', { reason: 'DIRECT_BINDING_UNCONFIRMED' });
+  return { alias: hostname, projectId: value.projectId, deploymentId: value.deploymentId, routing: 'direct' };
+}
+export async function assignPrebuiltVersionAliasOnce(config: ReleaseConfig, deploymentId: string, hostname: string,
+  signal: AbortSignal): Promise<VersionAliasAssignment> {
+  aliasHostname(config, hostname);
+  const path = `/v2/deployments/${candidateId(deploymentId)}/aliases?teamId=${encodeURIComponent(config.vercel.teamId)}`;
+  const response = await prebuiltApiOnce(config, path, 'POST', JSON.stringify({ alias: hostname }), signal);
+  const value = jsonBody(response.body);
+  if (value.alias !== hostname || typeof value.uid !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/u.test(value.uid)
+    || (value.oldDeploymentId !== undefined && typeof value.oldDeploymentId !== 'string'))
+    throw new ReleaseError('VERCEL_API', { reason: 'VERSION_ALIAS_RESPONSE' });
+  return { alias: hostname, uid: value.uid, ...(typeof value.oldDeploymentId === 'string' ? { oldDeploymentId: value.oldDeploymentId } : {}) };
 }
 export function createPrebuiltTransport(execution: Execution, config: ReleaseConfig, writing: boolean): ReleaseTransport {
   if (writing && !process.env.VERCEL_TOKEN) throw new ReleaseError('AUTH_REQUIRED', { reason: 'PREBUILT_TOKEN_REQUIRED' });
-  return { ...createTransport(execution), promote: (id, signal) => promotePrebuiltOnce(config, id, signal) };
+  let versionAlias: VersionAliasTransport | undefined;
+  if (config.delivery?.versionAlias) versionAlias = { read: (hostname, signal) => readPrebuiltVersionAlias(config, hostname, signal),
+    ...(writing ? { assign: (id: string, hostname: string, signal: AbortSignal) => assignPrebuiltVersionAliasOnce(config, id, hostname, signal) } : {}) };
+  return { ...createTransport(execution), promote: (id, signal) => promotePrebuiltOnce(config, id, signal), ...(versionAlias ? { versionAlias } : {}) };
 }
 export class PrebuiltVerification {
   constructor(readonly config: ReleaseConfig, readonly transport: ReleaseTransport, readonly signal?: AbortSignal) {}
