@@ -161,6 +161,69 @@ test('revalidates the Windows process identity before forcefully terminating its
   });
 });
 
+test.each(['terminateProcess', 'terminateProcessTree'] as const)('%s does not require Windows metadata services to revalidate identity', async method => {
+  const requests: ProcessCommandRequest[] = [];
+  const controller = new AbortController();
+  const runner: ProcessCommandRunner = async request => {
+    requests.push(request);
+    if (request.args.some(value => value.includes('Get-CimInstance'))) {
+      throw new Error('metadata service unavailable');
+    }
+    if (request.command === 'powershell.exe') {
+      return { exitCode: 0, stderr: '', stdout: JSON.stringify({ ProcessId: 42, CreationDate: '/Date(1790000000123)/' }) };
+    }
+    return { exitCode: 0, stderr: '', stdout: 'SUCCESS' };
+  };
+  const provider = createWindowsProcessControl({ listenerBackend: 'netstat', runner });
+  await expect(provider[method]({ process: { pid: 42, startToken: '/Date(1790000000123)/' },
+    policy: { mode: 'force' }, signal: controller.signal })).resolves.toEqual({ forced: true, pid: 42 });
+  expect(requests).toHaveLength(2);
+  expect(requests.every(request => request.signal === controller.signal)).toBe(true);
+  expect(requests[1]).toMatchObject({ command: 'taskkill.exe', args: ['/PID', '42',
+    ...(method === 'terminateProcessTree' ? ['/T'] : []), '/F'] });
+});
+
+test.each([
+  { stdout: '', stderr: '', code: processControlErrorCodes.processIdentityUnavailable },
+  { stdout: 'invalid-json', stderr: '', code: processControlErrorCodes.commandFailed },
+  { stdout: JSON.stringify({ ProcessId: 43, CreationDate: '/Date(123)/' }), stderr: '', code: processControlErrorCodes.processIdentityUnavailable },
+  { stdout: JSON.stringify({ ProcessId: 42, CreationDate: '' }), stderr: '', code: processControlErrorCodes.processIdentityUnavailable },
+  { stdout: JSON.stringify({ ProcessId: 42, CreationDate: '/Date(124)/' }), stderr: '', code: processControlErrorCodes.processIdentityChanged },
+  { stdout: '', stderr: 'Access denied', code: processControlErrorCodes.commandFailed },
+])('does not terminate when the narrow Windows observation is rejected: $code/$stdout', async ({ stdout, stderr, code }) => {
+  const runner = vi.fn<ProcessCommandRunner>().mockResolvedValue({ exitCode: 0, stdout, stderr });
+  const provider = createWindowsProcessControl({ listenerBackend: 'netstat', runner });
+  await expect(provider.terminateProcessTree({ process: { pid: 42, startToken: '/Date(123)/' },
+    policy: { mode: 'force' } })).rejects.toMatchObject({ code });
+  expect(runner).toHaveBeenCalledTimes(1);
+});
+
+test('does not terminate after cancellation during the narrow Windows identity query', async () => {
+  const controller = new AbortController();
+  const runner = vi.fn<ProcessCommandRunner>().mockImplementation(async () => {
+    controller.abort();
+    return { exitCode: 0, stderr: '', stdout: JSON.stringify({ ProcessId: 42, CreationDate: '/Date(123)/' }) };
+  });
+  await expect(createWindowsProcessControl({ listenerBackend: 'netstat', runner }).terminateProcessTree({
+    process: { pid: 42, startToken: '/Date(123)/' }, policy: { mode: 'force' }, signal: controller.signal,
+  })).rejects.toMatchObject({ code: processControlErrorCodes.operationAborted });
+  expect(runner).toHaveBeenCalledTimes(1);
+});
+
+test('rechecks the Windows identity before escalation without reusing an earlier observation', async () => {
+  const requests: ProcessCommandRequest[] = [];
+  const runner = recordingSequenceRunner(requests, [
+    { exitCode: 0, stderr: '', stdout: JSON.stringify({ ProcessId: 42, CreationDate: '/Date(123)/' }) },
+    { exitCode: 0, stderr: '', stdout: 'SUCCESS' },
+    { exitCode: 0, stderr: '', stdout: JSON.stringify({ ProcessId: 42, CreationDate: '/Date(124)/' }) },
+  ]);
+  await expect(createWindowsProcessControl({ listenerBackend: 'netstat', runner }).terminateProcessTree({
+    process: { pid: 42, startToken: '/Date(123)/' }, policy: { mode: 'graceful-then-force', gracePeriodMs: 0, pollIntervalMs: 1 },
+  })).rejects.toMatchObject({ code: processControlErrorCodes.processIdentityChanged });
+  expect(requests).toHaveLength(3);
+  expect(requests[1]).toMatchObject({ command: 'taskkill.exe', args: ['/PID', '42', '/T'] });
+});
+
 test('revalidates identity before terminating only the selected Windows process', async () => {
   const requests: ProcessCommandRequest[] = [];
   const runner = recordingSequenceRunner(requests, [

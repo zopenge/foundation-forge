@@ -474,9 +474,11 @@ async function readProcessIdentity(
   pid: number,
   signal: AbortSignal | undefined,
 ): Promise<ProcessIdentity | undefined> {
-  const identities = options.platform === 'windows'
-    ? await describeWindowsProcesses([pid], runner, signal)
-    : await describePosixProcesses([pid], runner, signal);
+  if (options.platform === 'windows') {
+    const observed = await queryProcessIdentity('windows', runner, { pid, ...(signal === undefined ? {} : { signal }) });
+    return observed.status === 'FOUND' ? observed.identity : undefined;
+  }
+  const identities = await describePosixProcesses([pid], runner, signal);
   return identities.get(pid);
 }
 
