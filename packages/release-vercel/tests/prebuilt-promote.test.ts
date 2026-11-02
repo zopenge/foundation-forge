@@ -3,15 +3,17 @@ import type { Socket } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { prebuiltConfiguration } from './helpers/prebuilt-configuration.js';
 
-const target = vi.hoisted(() => ({ origin: '' }));
-// 只替换 TLS 连接目标；实际 Node request、正文、取消、超时及 socket 关闭均保持真实。
+const target = vi.hoisted(() => ({ origin: '', omitDestroyError: false }));
+// 连接与正文均真实；特定用例抑制destroy错误通知，覆盖错误未派发的完成时序。
 vi.mock('node:https', async importOriginal => {
   const original = await importOriginal<typeof import('node:https')>();
   const { request } = await import('node:http');
   return { ...original, request: (url: URL, options: import('node:https').RequestOptions, callback: (response: IncomingMessage) => void) => {
     expect(url.origin).toBe('https://api.vercel.com');
     expect(options.headers).toMatchObject({ authorization: 'Bearer fixture-token', 'content-type': 'application/json' });
-    return request(new URL(`${url.pathname}${url.search}`, target.origin), options, callback);
+    const connection = request(new URL(`${url.pathname}${url.search}`, target.origin), options, callback);
+    if (target.omitDestroyError) { const destroy = connection.destroy.bind(connection); connection.destroy = () => destroy(); }
+    return connection;
   } };
 });
 import { createPrebuiltTransport, promotePrebuiltOnce } from '../src/node/prebuilt-vercel.js';
@@ -24,7 +26,7 @@ let sockets: Set<Socket>, closures: Promise<void>[];
 let previousToken: string | undefined;
 beforeEach(async () => {
   previousToken = process.env.VERCEL_TOKEN; process.env.VERCEL_TOKEN = 'fixture-token';
-  requests = []; sockets = new Set(); closures = [];
+  requests = []; sockets = new Set(); closures = []; target.omitDestroyError = false;
   reply = (_request, response) => { response.writeHead(200, { 'content-type': 'application/json' }); response.end('{}'); };
   server = createServer((request, response) => {
     let body = ''; request.on('data', chunk => { body += String(chunk); });
@@ -41,7 +43,7 @@ afterEach(async () => {
   for (const socket of sockets) socket.destroy();
   await new Promise<void>((accept, reject) => { server.close(error => { if (error) reject(error); else accept(); }); });
   if (previousToken === undefined) delete process.env.VERCEL_TOKEN; else process.env.VERCEL_TOKEN = previousToken;
-  target.origin = '';
+  target.origin = ''; target.omitDestroyError = false;
 });
 async function assertClosed(): Promise<void> { await Promise.all(closures); expect(sockets.size).toBe(0); }
 
@@ -146,4 +148,13 @@ describe('version alias HTTP boundary', () => {
       .rejects.toMatchObject({ code: 'VERCEL_API', details: { reason: 'OUTPUT_LIMIT' } });
     await assertClosed(); expect(requests).toHaveLength(1);
   });
+  it.each([{ mode: 'body', reason: 'OUTPUT_LIMIT' }, { mode: 'deadline', reason: 'REQUEST_TIMEOUT' }])(
+    'preserves the $mode failure even when destroy emits no request error', async ({ mode, reason }) => {
+      target.omitDestroyError = true;
+      reply = mode === 'body' ? (_request, response) => { response.end('secret-fixture'.repeat(1000)); } : () => {};
+      const error: unknown = await Promise.resolve(adapter()?.assign?.('dpl_candidate', hostname, new AbortController().signal)).catch((error: unknown) => error);
+      expect(error).toMatchObject({ code: 'VERCEL_API', details: { reason } });
+      expect(JSON.stringify(error)).not.toContain('secret-fixture');
+      await assertClosed(); expect(requests).toHaveLength(1);
+    });
 });

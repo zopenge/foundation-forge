@@ -22,7 +22,10 @@ export async function prebuiltApiOnce(config: ReleaseConfig, path: string, metho
       let length = 0;
       response.on('data', (bytes: Buffer) => {
         length += bytes.length;
-        if (length > config.limits.maxOutputBytes) request.destroy(new ReleaseError('VERCEL_API', { reason: 'OUTPUT_LIMIT' }));
+        if (length > config.limits.maxOutputBytes) {
+          const error = new ReleaseError('VERCEL_API', { reason: 'OUTPUT_LIMIT' });
+          failure ??= error; request.destroy(error);
+        }
         else chunks.push(bytes);
       });
       response.on('error', error => { failure ??= error; request.destroy(); });
@@ -33,7 +36,10 @@ export async function prebuiltApiOnce(config: ReleaseConfig, path: string, metho
       });
     });
     request.on('socket', socket => { socketClosed = false; socket.once('close', () => { socketClosed = true; finish(); }); });
-    const timer = setTimeout(() => request.destroy(new ReleaseError('VERCEL_API', { reason: 'REQUEST_TIMEOUT' })), config.limits.requestMs);
+    const timer = setTimeout(() => {
+      const error = new ReleaseError('VERCEL_API', { reason: 'REQUEST_TIMEOUT' });
+      failure ??= error; request.destroy(error);
+    }, config.limits.requestMs);
     request.on('error', error => { failure ??= error; });
     request.on('close', () => { requestClosed = true; finish(); });
     request.end(body);
