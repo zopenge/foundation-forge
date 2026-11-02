@@ -1,5 +1,15 @@
 # @openge/forge-process-control-node
 
+## 0.6.0
+
+### Minor Changes
+
+- 3fc34ba: Windows Process Control 支持显式注入 Core 身份 reader，终止及升级前逐次复核，不回退到命令后端。Windows 发布执行显式共用原生启动与终止身份观测，预检计入原命令预算；能力缺失、身份变化、取消及关闭未知仍阻断发布。Windows workspace 执行要求 Windows x64 和已安装的原生预编译能力。
+
+### Patch Changes
+
+- bc9e206: Windows 终止前复用窄身份查询，避免为 PID/start token 复核加载完整 CIM 元数据服务；保留新鲜身份校验、取消、终止策略与失败语义。
+
 ## 0.5.0
 
 ### Minor Changes

@@ -1,5 +1,18 @@
 # @openge/forge-release-vercel
 
+## 0.5.0
+
+### Minor Changes
+
+- 98910f7: 增加显式 prebuilt SHA 版本主机名模板、构建前 URL 和无秘密候选上下文；通过独立 alias 意图及至多一次绑定，在版本入口验收后提升同一部署 ID。未知结果仅只读续验，历史观察证明绑定原始候选，全部写入方仍须共享外部串行协调。
+
+### Patch Changes
+
+- 3fc34ba: Windows Process Control 支持显式注入 Core 身份 reader，终止及升级前逐次复核，不回退到命令后端。Windows 发布执行显式共用原生启动与终止身份观测，预检计入原命令预算；能力缺失、身份变化、取消及关闭未知仍阻断发布。Windows workspace 执行要求 Windows x64 和已安装的原生预编译能力。
+- Updated dependencies [3fc34ba]
+- Updated dependencies [bc9e206]
+  - @openge/forge-process-control-node@0.6.0
+
 ## 0.4.0
 
 ### Minor Changes
