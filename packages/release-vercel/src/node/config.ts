@@ -1,11 +1,11 @@
-import type { ReleaseCheck, ReleaseConfig, ReleaseSource } from '../contracts.js';
+import type { PrebuiltDeliveryConfig, ReleaseCheck, ReleaseConfig, ReleaseSource } from '../contracts.js';
 import { record, ReleaseError } from './errors.js';
 
 function invalid(field: string): never { throw new ReleaseError('CONFIG_INVALID', { field }); }
-function object(value: unknown, keys: readonly string[], field: string): Record<string, unknown> {
+function object(value: unknown, keys: readonly string[], field: string, optional: readonly string[] = []): Record<string, unknown> {
   const result = record(value);
   if (value === null || typeof value !== 'object' || Array.isArray(value)
-    || Object.keys(result).some(key => !keys.includes(key)) || keys.some(key => !(key in result))) invalid(field);
+    || Object.keys(result).some(key => !keys.includes(key) && !optional.includes(key)) || keys.some(key => !(key in result))) invalid(field);
   return result;
 }
 function text(value: unknown, field: string, pattern = /./u): string {
@@ -48,8 +48,21 @@ function source(value: unknown): ReleaseSource {
     sampleIntervalMs, install: { packageManager: 'pnpm' }, prepare: commands(entry.prepare, 'source.prepare', true) };
 }
 export function validateReleaseConfig(value: unknown): ReleaseConfig {
-  const root = object(value, ['schemaVersion', 'source', 'git', 'vercel', 'checks', 'acceptance', 'buildInfo', 'limits'], 'config');
+  const root = object(value, ['schemaVersion', 'source', 'git', 'vercel', 'checks', 'acceptance', 'buildInfo', 'limits'], 'config', ['delivery']);
   if (root.schemaVersion !== 2) invalid('schemaVersion');
+  const selectedSource = source(root.source);
+  let delivery: PrebuiltDeliveryConfig | undefined;
+  if ('delivery' in root) {
+    const input = object(root.delivery, ['mode', 'maxFiles', 'maxBytes', 'concurrencyControl', 'admission'], 'delivery');
+    if (input.mode !== 'prebuilt' || selectedSource.mode !== 'managed-commit') invalid('delivery.mode');
+    const control = object(input.concurrencyControl, ['mode', 'scope'], 'delivery.concurrencyControl');
+    if (control.mode !== 'external-serialization') invalid('delivery.concurrencyControl.mode');
+    const scope = text(control.scope, 'delivery.concurrencyControl.scope', /^[\x21-\x7e]+$/u);
+    if (scope.length > 256) invalid('delivery.concurrencyControl.scope');
+    delivery = { mode: 'prebuilt', maxFiles: integer(input.maxFiles, 10_000, 'delivery.maxFiles'),
+      maxBytes: integer(input.maxBytes, Number.MAX_SAFE_INTEGER, 'delivery.maxBytes'), concurrencyControl: { mode: 'external-serialization', scope },
+      admission: commands(input.admission, 'delivery.admission') };
+  }
   const git = object(root.git, ['remote', 'repository', 'developmentBranch', 'releaseBranch'], 'git');
   const branch = (value: unknown, field: string) => {
     const result = text(value, field, /^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/u);
@@ -70,7 +83,7 @@ export function validateReleaseConfig(value: unknown): ReleaseConfig {
   if (path.startsWith('//') || path.split('/').includes('..')) invalid('buildInfo.path');
   const limits = object(root.limits, ['commandMs', 'deploymentMs', 'pollMs', 'requestMs', 'maxOutputBytes'], 'limits');
   const deploymentMs = integer(limits.deploymentMs, 3_600_000, 'limits.deploymentMs');
-  return { schemaVersion: 2, source: source(root.source),
+  return { schemaVersion: 2, source: selectedSource, ...(delivery ? { delivery } : {}),
     git: { remote: text(git.remote, 'git.remote', /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/u),
       repository: text(git.repository, 'git.repository'), developmentBranch, releaseBranch },
     vercel: { teamId: text(vercel.teamId, 'vercel.teamId', /^team_[a-zA-Z0-9]+$/u),

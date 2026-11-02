@@ -5,5 +5,6 @@
 | 需求 | 使用 package |
 | --- | --- |
 | 固定候选 SHA，通过现有 Git integration 发布并核对生产域名 | [`@openge/forge-release-vercel`](release-vercel.md) |
+| 冻结独立 Build Output，暂存生产候选、验收后提升同一部署 | [`@openge/forge-release-vercel`](release-vercel.md#预构建交付) |
 
 发布包组合公开的命令执行、进程控制与制品完整性能力；依赖方向指向基础原语，基础原语不认识发布流程或消费者。首版的单消费者阶段例外由维护者明确批准；扩大适用范围时需重新核对独立消费者与契约稳定性。

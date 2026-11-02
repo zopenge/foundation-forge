@@ -9,6 +9,7 @@ import type { ManagedCommand } from './release-context.js';
 import { validRetirementHost } from './retirement-host.js';
 import { metadataReserveBytes } from './managed-metadata.js';
 import { checkoutObservationPlan } from './managed-observation.js';
+import { parsePrebuiltResolutions, parsePrebuiltState } from './prebuilt-state.js';
 
 const uuid = /^[a-f0-9-]{36}$/u, sha = /^[a-f0-9]{40}$/u;
 function boundSource(value: unknown, source: FrozenSource): asserts value is FrozenSource {
@@ -26,6 +27,7 @@ export function parseManagedReceipt(value: unknown, source: FrozenSource, slotId
   boundSource(item.source, source);
   if (report.candidateSha !== item.source.sha || report.configSha256 !== item.source.configSha256) throw new ReleaseError('SLOT_STATE', { reason: 'RECEIPT_IDENTITY' });
   validateEffects(report.effects);
+  parsePrebuiltState(report.prebuilt, item.source as FrozenSource, report.effects as ReleaseReport['effects']);
   return value as ManagedReceipt;
 }
 function validateEffects(value: unknown): void {
@@ -38,6 +40,8 @@ export function parseManagedState(value: unknown, source: FrozenSource, slotId: 
     || !['check', 'publish', 'verify'].includes(String(item.command)) || !['running', 'closed', 'unknown'].includes(String(item.status))
     || !Number.isSafeInteger(owner.pid) || typeof owner.startToken !== 'string' || !Array.isArray(item.processes)) throw new ReleaseError('SLOT_STATE', { reason: 'STATE' });
   boundSource(item.source, source); validateEffects(item.effects);
+  parsePrebuiltState(item.prebuilt, item.source as FrozenSource, item.effects as ReleaseReport['effects']);
+  parsePrebuiltResolutions(item.prebuiltResolutions);
   if (item.host !== undefined && !validRetirementHost(item.host)) throw new ReleaseError('SLOT_STATE', { reason: 'HOST_OBSERVATION' });
   if (item.schemaVersion === 3) {
     if (!Array.isArray(item.history) || item.history.length > 10_000) throw new ReleaseError('SLOT_STATE', { reason: 'HISTORY_BINDING_MISSING' });

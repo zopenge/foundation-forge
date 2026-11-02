@@ -4,6 +4,7 @@ import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { performance } from 'node:perf_hooks';
 import { TextDecoder } from 'node:util';
+import { listenForFetch } from './fetch-listener.mjs';
 
 const fail=code=>Object.assign(new Error(code),{code});
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex').toUpperCase();
@@ -241,10 +242,8 @@ export const startTransportObserver=async({upstreamBaseURL,
       handlerErrors.push(error);
     });
   });
-  server.listen(0,'127.0.0.1');
-  try{await once(server,'listening');}
-  catch(error){server.close();throw error;}
-  const baseURL=`http://127.0.0.1:${server.address().port}${basePath}`;
+  const port=await listenForFetch(server);
+  const baseURL=`http://127.0.0.1:${port}${basePath}`;
   let closePromise=null;
   const close=()=>{
     if(!closePromise){

@@ -3,9 +3,11 @@ import type { ExecutionContext } from './release-context.js';
 import { assertActive, ReleaseError } from './errors.js';
 import { fetchAndAssertFastForward } from './git.js';
 import { createTransport, VercelVerification } from './vercel.js';
+import { publishPrebuiltCandidate } from './prebuilt-publication.js';
 
 /** 两种来源共用的唯一发布引擎；来源协调层只提供输入和守卫。 */
 export async function publishCandidate(context: ExecutionContext, command: 'check' | 'publish' | 'status' | 'verify'): Promise<ReleaseDeployment | undefined> {
+  if (context.config.delivery?.mode === 'prebuilt') return publishPrebuiltCandidate(context, command);
   const { execution, config, sha, signal, effects } = context;
   const verify = new VercelVerification(config, context.transport ?? createTransport(execution), signal);
   let result: ReleaseDeployment | undefined;

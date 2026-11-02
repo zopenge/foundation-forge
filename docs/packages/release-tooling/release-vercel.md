@@ -1,6 +1,6 @@
 # @openge/forge-release-vercel
 
-这个包把“检查固定提交、依次推送 Git 分支、复核生产部署”作为明确的 Node 工具提供。它依赖 Node.js >=22.14.0、Git 和已配置好的 Vercel Git integration。根入口只导出契约和错误码，浏览器可安全加载；所有 I/O 都从 `./node` 进入，该入口声明 `browser: null`。
+这个包提供固定提交的 Git integration 发布，以及显式的预构建制品交付。它依赖 Node.js >=22.14.0 和 Git；默认交付需要已配置的 Vercel Git integration，prebuilt 交付使用既有、未连接 Git 的项目。根入口只导出契约和错误码，浏览器可安全加载；所有 I/O 都从 `./node` 进入，该入口声明 `browser: null`。
 
 内部 Git 命令用单次调用配置让自动维护和垃圾回收保持在前台，仍受命令时限和受管进程归属检查约束，不改写仓库或宿主 Git 设置。命令退出后若仍有其他后代，继续保留未知关闭状态，不能因随后强制清理为空就升级为正常完成。
 
@@ -52,7 +52,27 @@ status/verify 选择最近 publish 收据，后来源 HEAD、配置或 check 不
 
 原工作区模式使用 `"source": {"mode":"workspace"}`，保留包含 untracked 的严格 clean 规则。已有 managed 锚点不能静默改槽、改配置绑定，或切回 workspace 执行检查/发布；先按实际收据、锁及引用完成显式维护，无自动迁移或清场。
 
+## 预构建交付
+
+在 schema 2 配置中显式增加 `delivery: { mode: "prebuilt", maxFiles: 10000, maxBytes: 268435456, concurrencyControl: { mode: "external-serialization", scope: "production-project" }, admission: [...] }`，来源必须为 `managed-commit`。admission 使用普通 ReleaseCheck 结构且至少一项，由消费者校验账号套餐、剩余额度及制品内容。未声明 delivery 时，旧配置规范化结果、摘要和 Git 发布语义保持不变。每仓可继续使用 `pnpm release` 映射到原公开 CLI 的 publish。
+
+已提交 prepare 步骤生成完整、自包含的 `.vercel/output/`，符合 Build Output API version 3。可通过消费者自己声明并固定版本的官方构建工具生成 standalone 产物；原生依赖须匹配 Vercel 的 Linux x64 运行环境。不得以历史任务目录作为输入，Windows 静态 fixture 通过也不代表原生云运行已通过。Git 字段继续冻结真实源码和开发分支，prebuilt 不推送任何分支，也不以 releaseBranch、caller meta 或伪造 gitSource 授权来源。
+
+逐文件路径、模式、长度、SHA-256 与 commit、配置摘要一起冻结。上传槽只含 Build Output 和明确的 project/team 上下文，拒绝外部链接、大小写冲突、危险路径、Git/常见环境及凭据文件；生成的 `static/.well-known/forge-prebuilt.json` 为保留路径。任意编译文件中嵌入的秘密仍须消费者审查，路径过滤不构成通用秘密证明。复制前预留新增物理用量和卷余量，仍受既有槽位总预算约束。
+
+check 仅构建、检查和冻结本地产物，不访问云。publish 在消费者准入和目标复核后调用固定 CLI 64.7.0 的 `deploy --prebuilt --prod --skip-domain --no-wait --json`，明确 project/team 且不允许隐式创建项目。保存 CLI 返回的真实 deployment ID，再从公开 API 核验账号、项目、production、CLI 来源和 READY，并真实读回制品标记。验收针对该候选 URL 执行，通过后再做准入及产物复核，最后提升同一 ID 并回读生产 alias、标记和 revision。不会把 Preview 重建称作同制品提升。
+
+默认 prebuilt 写入通过正常受保护配置提供 `VERCEL_TOKEN`；不依赖 Codex 或临时认证脚本。固定 CLI 的 promote/api POST 内部有重试，因此提升使用相同官方公开 endpoint 的单次 HTTPS 请求，受超时、输出和连接关闭约束，不修改或深引 CLI 实现。自定义 transport 的 promote 也必须只写一次并响应取消。
+
+项目 rootDirectory 必须未设置、为空或为 `.`；独立上传根只有 `.vercel`，因此嵌套根配置在记录创建意图之前拒绝，避免一个可提前识别的配置错误留下无 ID 的未知创建。POSIX 上传副本显式恢复记录的文件模式，不依赖调用方 umask。
+
+准入接收 `FORGE_RELEASE_PHASE=create|promote`、候选 SHA、产物摘要、team/project 和 `FORGE_RELEASE_SERIALIZATION_SCOPE`，候选存在时附带 deployment ID。同一项目跨机器、跨仓库的全部写入必须由外部协调者串行化，scope 只是显式声明，不是分布式锁；未知云效果未核清时仍须持有协调约束，不能因本地关闭而放行其他写入。固定槽锁独立保护本地资源。额度不足以 `ADMISSION_FAILED` 停止，消费者可排队或暂停。Foundation 不购买、自动升级或替消费者保证免费额度，不拥有签名注册、实例切换和 Worker 调度。
+
+报告独立保存 prebuilt 绑定及创建/提升效果。两次云写入前均先原子保存 unknown 意图；取消、超时或丢失响应不得自动重发。已记录的同一候选可以显式续验；创建未知且没有 ID 时，不从可自填 metadata 猜测成功。提升未知通过原 ID、平台 promotion job 的完成状态、实际 alias 与标记观察；后续写入前持久保存引用原意图的观察证明。相同提升任务的权威终态失败也可单独记录为 failed，允许之后发布新候选，原首错、unknown 和未验证结果不改写；pending、任务缺失或其他目标不能建立该证明。不会自动回滚。Rolling Release 项目暂不支持。本地关闭与远端效果分别记录，历史首错及 unknown 不因新运行而丢失。
+
 ## 各命令的边界
+
+下列推送和 Git 来源规则适用于默认 Git 交付；prebuilt 按上一节暂存、验收和提升同一候选，status/verify 只观察原候选、不产生云写入。
 
 check 校验冻结输入并运行检查，不推远程、不查询 Vercel；受管模式包含固定槽准备和冻结安装。下文原根锁路径及 HEAD 回退描述适用于 workspace；managed 使用上节的槽、冻结输入和收据选择。
 
@@ -78,7 +98,7 @@ const report = await runRelease({
 });
 ```
 
-runRelease 支持 command、cwd、configPath、workspace 专用 config 对象、sha、signal、transport、onLoginOutput，以及 retire 专用 runId、confirmOrigin。managed 必须用已提交文件。transport 仅替换 API/buildInfo 外部边界，必须响应取消；onLoginOutput 显示脱敏认证指引。公开签名不携带第三方实现类型。
+runRelease 支持 command、cwd、configPath、workspace 专用 config 对象、sha、signal、transport、onLoginOutput，以及 retire 专用 runId、confirmOrigin。managed 必须用已提交文件。transport 替换 API/buildInfo 及可选的 prebuilt promote 外部边界，必须响应取消、关闭自有资源，且不得重试提升写入；onLoginOutput 显示脱敏认证指引。公开签名不携带第三方实现类型。
 
 ## 恢复与资源所有权
 
@@ -118,7 +138,7 @@ Windows 原生 mutex / Linux 对原槽目录 fd 的 flock 串行化 recover 和 
 
 以下原根报告与人工恢复说明仅适用于 workspace 模式：
 
-任何前置失败都会阻止后续副作用；失败后不自动回滚或改历史。push 成功后发生线上失败，报告仍保留已推状态；结果不明的 push 标记 `unknown`，先核对真实 remote。同 SHA 重跑仍执行精确 SHA 的普通 push，由服务器的 porcelain 结果报告 up-to-date；不根据旧 refs 快照跳过目标。它读取既有部署，工具从不调用部署创建/上传 API。
+任何前置失败都会阻止后续副作用；失败后不自动回滚或改历史。Git 交付中，push 成功后发生线上失败，报告仍保留已推状态；结果不明的 push 标记 `unknown`，先核对真实 remote。同 SHA 重跑仍执行精确 SHA 的普通 push，由服务器的 porcelain 结果报告 up-to-date；不根据旧 refs 快照跳过目标。Git 交付只读取既有部署，不调用部署创建/上传 API；prebuilt 的显式写入按上节执行。
 
 取得锁且确定候选后，最近尝试报告原子写到 `.tmp/forge-vercel-release/latest-publish.json`，包含失败和恢复命令。发布分支已推时建议按固定 SHA 复核；未推或不明时建议重新 publish，并重新 fetch 判断。报告是本地恢复数据，不构成新的发布授权。
 

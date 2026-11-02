@@ -1,6 +1,6 @@
 # @openge/forge-release-vercel
 
-Explicit Git integration releases with bounded checks, fixed commit selection, and independent Vercel production verification. Node.js >=22.14.0 and Git are required. Configure the existing Vercel Git integration to deploy the release branch to production before using this package.
+Explicit Git integration or prebuilt releases with bounded checks, fixed commit selection, and independent Vercel production verification. Node.js >=22.14.0 and Git are required. The default delivery uses an existing Vercel Git integration; the optional prebuilt delivery stages self-contained Build Output without a Git integration.
 
 Internal Git commands keep automatic maintenance and garbage collection in the foreground through invocation-local settings. That work remains inside the command deadline and managed process scope; repository and global Git settings are not rewritten.
 
@@ -92,7 +92,47 @@ Before replacing state, the terminal receipt seals the identities and digests of
 
 Koffi 3.3.3 is a pinned, lazy native dependency. This repository and tarball consumers disable its install script with `allowBuilds.koffi: false`; consumers should do the same. Missing prebuilds/capabilities fail before the job, with no runtime download, compilation or fallback. Owned scopes manage trusted commands, not a security sandbox: do not delegate work to WMI/system services or other external process owners. Workspace mode retains its existing behavior.
 
+## Prebuilt delivery
+
+Use `source.mode: "managed-commit"` and add this optional field to the existing schema 2 configuration:
+
+```json
+{
+  "delivery": {
+    "mode": "prebuilt",
+    "maxFiles": 10000,
+    "maxBytes": 268435456,
+    "concurrencyControl": { "mode": "external-serialization", "scope": "production-project" },
+    "admission": [{ "command": "node", "args": ["scripts/release-admission.mjs"] }]
+  }
+}
+```
+
+Keep the normal public entry, for example `"release": "forge-vercel-release publish"`. Omitting `delivery` preserves the original Git behavior and configuration digest. Prebuilt requires an existing **Git-unlinked** project. Git fields still identify and freeze the local source repository; prebuilt never pushes either branch, and `releaseBranch` does not authorize deployment provenance.
+
+Committed `source.prepare` steps must produce a complete `.vercel/output/` implementing Build Output API version 3. A reviewed producer can use `vercel build --prod --standalone`; declare the producer and its exact version in the consuming repository. Function output must contain its dependencies. Native dependencies must target Vercel's Linux x64 environment; a Windows build or static fixture does not establish native-runtime compatibility. Obtain or generate artifacts through declared, reproducible steps; do not use a previous task's temporary directory as input.
+
+The tool snapshots sorted file paths, modes, lengths and SHA-256 digests, binds them to the real Git commit and normalized configuration, and copies only Build Output into an owned upload directory. Links, case collisions, unsafe paths, `.git`, common environment/credential files, and the reserved `static/.well-known/forge-prebuilt.json` path are rejected. The tool creates that public marker itself. Content review and detection of secrets embedded in compiled files remain mandatory consumer responsibilities; path checks cannot prove arbitrary bytes contain no secrets.
+
+`check` builds/checks and seals the local artifact without querying Vercel. `publish` then:
+
+1. Runs required consumer admission and validates the existing project/account. Project root-directory settings must be unset, empty, or `.`; nested roots are rejected before recording a create intent because the isolated upload contains only `.vercel`.
+2. Stages using the pinned CLI's `deploy --prebuilt --prod --skip-domain --no-wait --json` path, with explicit project/team and non-interactive execution.
+3. Records the returned deployment ID, reads its authoritative project/account/production/CLI-source/READY fields, and checks its actual marker.
+4. Runs `acceptance` against that exact candidate URL, with `FORGE_RELEASE_DEPLOYMENT_ID`, `FORGE_RELEASE_SHA` and `FORGE_RELEASE_ARTIFACT_SHA256`.
+5. Repeats consumer admission and frozen-input checks, promotes the same ID, then reads the production alias, marker and configured build-info revision.
+
+Admission receives `FORGE_RELEASE_PHASE=create|promote`, `FORGE_RELEASE_TEAM_ID`, `FORGE_RELEASE_PROJECT_ID` and `FORGE_RELEASE_SERIALIZATION_SCOPE`. It must reject exhausted quotas or an unacceptable plan. Every writer for the same project must be serialized by one external coordinator across machines/repositories; the declared scope is an assertion, not a distributed lock. Hold that coordination through acceptance, promotion and reconciliation of unknown effects; do not release it merely because a local process stopped. The fixed-slot lock separately protects local resources. Foundation does not buy resources, upgrade a plan, create a project, sign/register application catalogs, or guarantee unlimited free usage. The caller may queue or pause on `ADMISSION_FAILED`.
+
+Default prebuilt writes require the standard `VERCEL_TOKEN` credential, supplied through normal protected configuration. Never commit it. The CLI and public API independently verify the same configured project/account. The fixed CLI's promote command retries POST internally, so this package uses the equivalent public promotion API with a single HTTPS POST, a finite response limit/deadline and confirmed connection closure. It does not modify or deep-import CLI internals. A trusted custom `ReleaseTransport.promote` must honor cancellation and perform at most one write.
+
+Reports record `prebuilt` and independent `effects.deploymentCreate` / `effects.deploymentPromote`. Write intent is persisted before each side effect. An explicit repeat can reuse the recorded exact candidate; an unknown creation without a saved ID cannot be rediscovered by trusting caller metadata or silently retried. Unknown promotion is observed through its original ID, authoritative completed promotion job and actual alias. Before a later write, a bound resolution is persisted without rewriting the original unknown history. An authoritative terminal failure for that exact promotion can also be recorded as failed, allowing a new candidate while preserving the old failure and unverified result. A pending, missing or different job cannot establish that resolution. Rolling Release projects are rejected. No automatic rollback or duplicate deployment is performed. Local resource closure does not prove a remote effect completed.
+
+The source and upload copies are checked again before writes. Artifact-copy growth is admitted against the existing slot budget and free-space floor; account for dependencies, the original output and its upload copy. Temporary output is owned by the normal fixed slot and can be regenerated; it is not a prerequisite for a fresh checkout. Recovery of an interrupted run still requires that run's original durable local evidence.
+
 ## Commands and side effects
+
+The table describes the default Git delivery. Prebuilt delivery follows the staged candidate and promotion protocol above; `check` remains local and `status`/`verify` observe the saved candidate without cloud writes.
 
 | Command | Behavior |
 | --- | --- |
@@ -104,7 +144,7 @@ Koffi 3.3.3 is a pinned, lazy native dependency. This repository and tarball con
 | `recover` | Managed mode only: verify cessation and ownership, archive original outcomes, observe refs and finish local cleanup. Vercel login and unchanged remote tips are not local prerequisites. No install, checks, acceptance, pushes, deployment creation or rollback. |
 | `retire` | Managed mode only: explicitly select an interrupted run, bind its original host, require an independently observed later OS boot, archive the unchanged historical evidence and release its exact lock. Historical verification remains UNKNOWN; a new publish must pass all ordinary gates. |
 
-Shared options are `--cwd DIR`, `--config FILE`, and `--sha SHA` (only `status`/`verify`); `retire` additionally accepts `--run-id UUID` and `--confirm-origin SHA256`. `--help` prints JSON usage. Standard output is one structured JSON report. Exit codes: `0` successful command, `1` operational failure or pending retirement proof, `2` invalid CLI arguments. SIGINT/SIGTERM cancel active work; managed locks are released only with proven cessation and trusted local metadata, or explicit completed retirement. No command automatically commits, switches branches, force-pushes, creates/uploads deployments, rolls back, or rewrites history. Vercel requests are GET through `vercel api --raw --non-interactive`, reusing the official CLI session. Only `login` initiates login.
+Shared options are `--cwd DIR`, `--config FILE`, and `--sha SHA` (only `status`/`verify`); `retire` additionally accepts `--run-id UUID` and `--confirm-origin SHA256`. `--help` prints JSON usage. Standard output is one structured JSON report. Exit codes: `0` successful command, `1` operational failure or pending retirement proof, `2` invalid CLI arguments. SIGINT/SIGTERM cancel active work; managed locks are released only with proven cessation and trusted local metadata, or explicit completed retirement. No command automatically commits, switches branches, force-pushes, rolls back, or rewrites history. Git delivery never creates/uploads deployments. Read-only Vercel API requests use GET through `vercel api --raw --non-interactive`, reusing the official CLI session; prebuilt publish uses the explicit writes described above. Only `login` initiates login.
 
 Execution outcome, process cessation, local disposition and remote effects are separate facts. Safe local cleanup preserves the original state, receipts and `unknown` effects in bounded immutable `history/<RUN_ID>.json` records. The archive's `release-ready` flag authorizes exact lock release; it does not claim the subsequent unlink succeeded. Its optional `outcome` records execution before that release. New runs bind previous history contents and file identities, so a later check cannot erase uncertainty and missing/replaced history fails closed.
 
@@ -148,7 +188,7 @@ const report = await runRelease({
 if (!report.ok) console.error(report.error);
 ```
 
-The root exports only contracts and `releaseErrorCodes`, and is browser-safe. `./node` is explicitly `browser: null` and exports `runRelease`, `validateReleaseConfig`, and `ReleaseError`. Options include `command`, `cwd`, `configPath`, workspace-only `config`, `sha`, `signal`, `transport`, and `onLoginOutput`. Config objects are cloned/validated; managed callers must use a committed file. `transport` supplies only explicit `api(path, signal)` and anonymous `buildInfo(url, signal)` boundaries and must honor abort signals. Node callers supply `onLoginOutput` to display redacted official login instructions.
+The root exports only contracts and `releaseErrorCodes`, and is browser-safe. `./node` is explicitly `browser: null` and exports `runRelease`, `validateReleaseConfig`, and `ReleaseError`. Options include `command`, `cwd`, `configPath`, workspace-only `config`, `sha`, `signal`, `transport`, and `onLoginOutput`. Config objects are cloned/validated; managed callers must use a committed file. `transport` supplies explicit `api(path, signal)`, anonymous `buildInfo(url, signal)`, and optional prebuilt `promote(deploymentId, signal)` boundaries. Custom transports must honor abort signals, close their resources, and never retry a promotion write. Node callers supply `onLoginOutput` to display redacted official login instructions.
 
 Reports include schema 2, timestamps, SHA/config digest, source/execution roots, run/slot identity, stage, budget/process summaries, bounded job steps, separate push effects, deployment and errors. Managed metadata lives in the slot: ownership, run/recovery locks, state, terminal proof, immutable history and separate latest-check/latest-publish receipts. The source `.tmp/forge-vercel-release/managed.json` anchors slot/config/publish identity. A state/receipt is at most 1 MiB, anchor at most 64 KiB, and each persisted step stdout/stderr at most 2048 UTF-8 bytes with `truncated`; effects/diagnostics are never clipped. Writes reserve peak bytes and verify the relevant ownership boundaries. Foreign slots, unproven locks and unknown atomic-write remnants are not automatically removed. Workspace mode retains `.tmp/forge-vercel-release/latest-publish.json` and its config-digest/explicit-SHA selection; recover is unsupported there. Receipts are local recovery evidence, not signed authorization. Abrupt termination may retain locks. Live login output buffers partial lines for cross-chunk redaction and uses the same finite per-stream budget.
 
@@ -159,6 +199,7 @@ Reports include schema 2, timestamps, SHA/config digest, source/execution roots,
 | `ARGUMENT_INVALID`, `CONFIG_INVALID`, `CONFIG_READ` | Invalid options, strict configuration violation, or unreadable/invalid JSON file. |
 | `GIT_FAILED`, `GIT_DIRTY`, `GIT_BRANCH`, `GIT_REPOSITORY`, `GIT_DIVERGED` | Git execution, dirty source, wrong branch/root/remote, or missing/non-fast-forward remote branches. |
 | `CANDIDATE_CHANGED` | HEAD, tracked/untracked source, remote identity, or config changed during checks. |
+| `ARTIFACT_INVALID`, `ARTIFACT_CHANGED`, `ADMISSION_FAILED` | Unsafe/non-self-contained Build Output, changed local/remote artifact binding, or rejected consumer quota/content admission. |
 | `CHECK_FAILED`, `ACCEPTANCE_FAILED` | A configured check or production acceptance command failed. |
 | `COMMAND_TIMEOUT`, `COMMAND_FAILED`, `CANCELLED` | A bounded process timed out, executable could not be resolved, or operation was cancelled. |
 | `LOCKED`, `LOCK_OWNERSHIP` | Another lock exists, or the lock changed ownership before release. |

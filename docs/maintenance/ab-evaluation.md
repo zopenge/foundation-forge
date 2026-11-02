@@ -101,6 +101,8 @@ pnpm ab:eval diagnose --run-dir .tmp/eval-run-001
 
 当导出历史字节不能解释服务端输入 token 差异时，可在**新批次**的 `run` 命令加入 `--observe-transport on`。运行前会核对每臂配置的提供方地址：只接受 HTTPS 或本机回环 HTTP，缺失或无效地址在创建运行锁和模型调用之前阻断。每臂启动回环转发器，并通过运行时配置层覆盖模型端点；模型调用前再用客户端的 `debug config --pure` 核对实际有效地址，防止项目配置覆盖观测地址。观测不改变冻结任务包、原始配置或 A/C 工具权限。
 
+回环转发器按 Fetch 标准避开禁用端口；遇到禁用端口时，确认该监听关闭后再申请系统动态端口，最多尝试 32 次。耗尽后以 `TRANSPORT_FETCH_PORT_UNAVAILABLE` 停止，真实监听错误直接保留；此过程不重试上游请求或模型调用。
+
 ```text
 pnpm ab:eval transport-doctor --executable C:/path/to/opencode.exe --out .tmp/transport-probe-001
 pnpm ab:eval run --run-dir .tmp/eval-run-002 --observe-transport on

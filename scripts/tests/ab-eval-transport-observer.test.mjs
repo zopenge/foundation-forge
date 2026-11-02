@@ -1,22 +1,85 @@
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
-import { createServer, request } from 'node:http';
-import { once } from 'node:events';
+import { createServer, request, Server } from 'node:http';
 import test from 'node:test';
 
 import { startTransportObserver } from '../ab-eval/transport-observer.mjs';
+import { listenForFetch } from '../ab-eval/fetch-listener.mjs';
 
 const listen=async server=>{
-  server.listen(0,'127.0.0.1');
-  await once(server,'listening');
-  return `http://127.0.0.1:${server.address().port}`;
+  return `http://127.0.0.1:${await listenForFetch(server)}`;
 };
 const close=server=>new Promise((resolvePromise,reject)=>{
   server.closeIdleConnections();
   server.close(error=>error?reject(error):resolvePromise());
 });
 const sha=body=>createHash('sha256').update(body).digest('hex').toUpperCase();
+
+test('transport observer replaces a Fetch-blocked dynamic port and closes the rejected listener',async context=>{
+  const address=Server.prototype.address, originalClose=Server.prototype.close;
+  let first=true, closed=0;const servers=new Set();
+  // 只改变首次地址观测；真实监听仍由系统动态分配，不占用固定端口。
+  context.mock.method(Server.prototype,'address',function(...args){
+    const actual=address.apply(this,args);servers.add(this);
+    if(first&&actual){first=false;return {...actual,port:10080};}
+    return actual;
+  });
+  context.mock.method(Server.prototype,'close',function(...args){
+    closed++;return originalClose.apply(this,args);
+  });
+  const observer=await startTransportObserver({upstreamBaseURL:'https://example.invalid/v1'});
+  try{
+    assert.notEqual(new URL(observer.baseURL).port,'10080');
+    assert.ok(closed>=1);
+    const response=await globalThis.fetch(new URL('/other',observer.baseURL),{method:'POST',body:'fixture'});
+    assert.equal(response.status,404);
+    assert.deepEqual(await observer.close(),[]);
+  }finally{await observer.close();}
+  assert.ok([...servers].every(server=>!server.listening));
+});
+
+test('transport observer bounds blocked-port allocation and leaves no listening socket',async context=>{
+  const address=Server.prototype.address, originalClose=Server.prototype.close;
+  const servers=new Set();let observed=0,closed=0,observer;
+  context.mock.method(Server.prototype,'address',function(...args){
+    const actual=address.apply(this,args);servers.add(this);observed++;
+    return actual?{...actual,port:10080}:actual;
+  });
+  context.mock.method(Server.prototype,'close',function(...args){
+    closed++;return originalClose.apply(this,args);
+  });
+  try{
+    await assert.rejects(async()=>{observer=await startTransportObserver({upstreamBaseURL:'https://example.invalid/v1'});},
+      {code:'TRANSPORT_FETCH_PORT_UNAVAILABLE'});
+    assert.equal(observed,32);assert.equal(closed,32);
+    assert.ok([...servers].every(server=>!server.listening));
+  }finally{await observer?.close();}
+});
+
+test('transport observer preserves actual listen errors without allocating again',async context=>{
+  const failure=Object.assign(new Error('fixture listen failure'),{code:'EACCES'});
+  let attempts=0;const servers=new Set();
+  context.mock.method(Server.prototype,'listen',function(){
+    attempts++;servers.add(this);globalThis.queueMicrotask(()=>this.emit('error',failure));return this;
+  });
+  await assert.rejects(startTransportObserver({upstreamBaseURL:'https://example.invalid/v1'}),error=>error===failure);
+  assert.equal(attempts,1);
+  assert.ok([...servers].every(server=>!server.listening));
+});
+
+test('transport observer retains structured evidence when listener startup and cleanup both fail',async context=>{
+  const failure=Object.assign(new Error('fixture listen failure'),{code:'EACCES'});
+  const cleanup=Object.assign(new Error('fixture close failure'),{code:'EIO'});
+  context.mock.method(Server.prototype,'listen',function(){
+    globalThis.queueMicrotask(()=>this.emit('error',failure));return this;
+  });
+  context.mock.method(Server.prototype,'close',function(callback){callback(cleanup);return this;});
+  await assert.rejects(startTransportObserver({upstreamBaseURL:'https://example.invalid/v1'}),error=>{
+    assert.equal(error.code,'TRANSPORT_LISTEN_FAILED');
+    assert.deepEqual(error.errors,[failure,cleanup]);return true;
+  });
+});
 
 test('transport observer forwards streaming requests and records only numeric usage',async()=>{
   const payload={model:'test',messages:[{role:'user',
