@@ -1,3 +1,5 @@
+import type { ProcessIdentityReader } from '@openge/forge-process-control';
+
 export interface ProcessCommandRequest {
   readonly args: readonly string[];
   readonly command: string;
@@ -21,6 +23,7 @@ export interface ProcessIdentityReaderOptions {
 export interface WindowsProcessControlOptions {
   readonly listenerBackend: 'netstat' | 'powershell';
   readonly runner?: ProcessCommandRunner;
+  readonly identityReader?: ProcessIdentityReader;
 }
 
 export interface PosixProcessControlOptions {

@@ -8,6 +8,8 @@
 
 受管命令与只读管理检查统一使用最多十秒、且不超过 `commandMs` 的身份观测预算。原有单命令时限同时覆盖观测与执行，不因身份读取而重新计时；身份截止、取消及真实观测失败仍终止命令，不自动重试 Git 或发布。
 
+Windows 执行要求 Windows x64 和已安装的 Koffi 预编译能力。启动身份观测与终止前复核显式共用 Win32 原生 reader，不回退到 PowerShell 身份查询。workspace 首条命令在原预算内完成有界原生能力预检，预检耗时扣除后才将剩余额度交给命令；能力缺失或失败时不启动该命令。后续命令仍各自新鲜读取目标身份。POSIX 路径和受管 Job/subreaper 的关闭证明门禁不变；未知关闭仍失败，不因强制清空而转为正常完成。
+
 ## 配置与调用
 
 默认读取工作目录中的 `release.config.json`，完整示例见[包 README](../../../packages/release-vercel/README.md#configuration)。配置必须声明 `schemaVersion: 2`、显式 source、Git remote/期望仓库/开发与发布分支、Vercel team/project/HTTPS 生产源、检查与线上验收命令、构建标记以及有限的执行预算。schema 1 不转换、不回退。未知字段、无效分支、凭据型域名和无限时限都会失败。checks/acceptance 均须有 1–32 项，不通过 shell 执行。Windows 上 pnpm/npm 解析到 JavaScript CLI，不直接启动 `.cmd`。

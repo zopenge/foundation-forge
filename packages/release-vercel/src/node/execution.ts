@@ -3,12 +3,13 @@ import { createRequire } from 'node:module';
 import { delimiter, dirname, resolve, win32 } from 'node:path';
 import { createNodeCommandRunner } from '@openge/forge-command-runner/node';
 import type { ProcessIdentityReader } from '@openge/forge-process-control';
-import { createPosixProcessControl, createPosixProcessIdentityReader, createWindowsProcessControl, createWindowsProcessIdentityReader } from '@openge/forge-process-control-node';
+import { createPosixProcessControl, createPosixProcessIdentityReader, createWindowsNativeProcessIdentityReader, createWindowsProcessControl } from '@openge/forge-process-control-node';
 import type { ReleaseCheck, ReleaseConfig, ReleaseErrorCode, ReleaseStep } from '../contracts.js';
 import { assertActive, redact, ReleaseError } from './errors.js';
 import { LiveOutput } from './live-output.js';
 import type { ExecutionLifecycle } from './release-context.js';
 import { managedOwnedScopeProvider } from './owned-command-runner.js';
+import { ExecutionIdentityReady } from './execution-identity-ready.js';
 
 // 自动维护也属于本次 Git 命令；通过单次配置保持前台，不修改宿主或仓库设置。
 export const foregroundGitArguments = ['-c', 'maintenance.autoDetach=false', '-c', 'gc.autoDetach=false'];
@@ -39,13 +40,15 @@ export function vercelInvocation(args: readonly string[]): { command: string; ar
 }
 export class Execution {
   private readonly runner: ReturnType<typeof createNodeCommandRunner>;
+  private readonly identityReady?: ExecutionIdentityReady;
   observeCheckout<T>(operation: () => Promise<T>): Promise<T> {
     return this.lifecycle?.observeCheckout ? this.lifecycle.observeCheckout(operation) : operation();
   }
   constructor(readonly cwd: string, readonly config: Pick<ReleaseConfig, 'limits'>, readonly signal: AbortSignal | undefined,
     readonly steps: ReleaseStep[], private readonly lifecycle?: ExecutionLifecycle, selectedReader?: ProcessIdentityReader) {
-    const control = process.platform === 'win32' ? createWindowsProcessControl({ listenerBackend: 'netstat' }) : createPosixProcessControl({ listenerBackend: 'lsof' });
-    const reader = selectedReader ?? (process.platform === 'win32' ? createWindowsProcessIdentityReader() : createPosixProcessIdentityReader());
+    const reader = selectedReader ?? (process.platform === 'win32' ? createWindowsNativeProcessIdentityReader() : createPosixProcessIdentityReader());
+    const control = process.platform === 'win32' ? createWindowsProcessControl({ listenerBackend: 'netstat', identityReader: reader }) : createPosixProcessControl({ listenerBackend: 'lsof' });
+    if (process.platform === 'win32' && selectedReader === undefined) this.identityReady = new ExecutionIdentityReady(reader);
     this.runner = createNodeCommandRunner({ platform: process.platform === 'win32' ? 'win32' : 'posix',
       ...(lifecycle ? { ownedScopeProvider: managedOwnedScopeProvider() } : {}),
       processControl: { ...control, listProcesses: async request => {
@@ -63,13 +66,15 @@ export class Execution {
   async run(name: string, check: ReleaseCheck, errorCode: ReleaseErrorCode, values?: Readonly<Record<string, string>>,
     signal = this.signal, captureStep = true, onOutput?: (text: string) => void): Promise<string> {
     assertActive(signal);
+    const timeoutMs = Math.min(check.timeoutMs ?? this.config.limits.commandMs, this.config.limits.commandMs);
+    const remaining = await this.identityReady?.prepare(name, timeoutMs, signal) ?? timeoutMs;
     const invocation = resolveInvocation(check.command, check.args ?? []);
     const live = onOutput === undefined ? undefined : new LiveOutput(this.config.limits.maxOutputBytes, onOutput);
     const execute = this.lifecycle ? this.lifecycle.execute.bind(this.lifecycle, this.runner, name) : this.runner.run.bind(this.runner);
     const result = await execute({ ...invocation, cwd: this.cwd,
       environment: { mode: 'inherit', values: { GIT_TERMINAL_PROMPT: '0', VERCEL_TELEMETRY_DISABLED: '1', ...values } },
       output: { mode: 'capture', maxBytesPerStream: this.config.limits.maxOutputBytes, overflow: 'truncate' },
-      timeoutMs: Math.min(check.timeoutMs ?? this.config.limits.commandMs, this.config.limits.commandMs),
+      timeoutMs: remaining,
       ...(signal === undefined ? {} : { signal }),
     }, live === undefined ? undefined : event => {
       if (event.type === 'stdout' || event.type === 'stderr') live.write(event.type, event.chunk);
@@ -99,11 +104,12 @@ export class Execution {
     assertActive(this.signal);
     const controller = new AbortController();
     const signal = this.signal ? AbortSignal.any([this.signal, controller.signal]) : controller.signal;
+    const remaining = await this.identityReady?.prepare('git-stream', this.config.limits.commandMs, signal) ?? this.config.limits.commandMs;
     let failure: unknown;
     const execute = this.lifecycle ? this.lifecycle.execute.bind(this.lifecycle, this.runner, 'git-stream') : this.runner.run.bind(this.runner);
     const result = await execute({ command: 'git', args: [...foregroundGitArguments, ...args], cwd: this.cwd,
       environment: { mode: 'inherit', values: { GIT_TERMINAL_PROMPT: '0' } }, output: { mode: 'events' },
-      timeoutMs: this.config.limits.commandMs, signal }, event => {
+      timeoutMs: remaining, signal }, event => {
       if (event.type === 'stdout' && failure === undefined) {
         try { onChunk(event.chunk); } catch (error) { failure = error; controller.abort(); }
       }

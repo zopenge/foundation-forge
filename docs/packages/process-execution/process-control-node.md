@@ -53,7 +53,9 @@ Windows 身份 reader 使用 .NET `Process.GetProcessById` 读取目标 PID 的�
 
 只有成功且为空的查询结果（以及 POSIX `ps` 无匹配时退出码为 1、标准输出和错误输出均为空的结果）返回 `ABSENT`。权限诊断、失败退出、无效或缺失 token、非目标 PID 或歧义记录均拒绝；取消请求使用 `OPERATION_ABORTED`。
 
-Windows 单进程和进程树终止前的身份复核，以及优雅终止后的升级前轮询，复用上述窄查询，不再为只读身份加载 CIM 完整元数据服务。每次复核仍重新读取，PID 复用、身份不明、权限及取消错误继续阻止终止。完整进程描述和 listener 查询仍使用原后端，`taskkill` 参数及终止策略不变；调用方原有总关闭预算不延长。
+默认情况下，Windows 单进程和进程树终止前的身份复核，以及优雅终止后的升级前轮询，复用上述窄查询，不再为只读身份加载 CIM 完整元数据服务。每次复核仍重新读取，PID 复用、身份不明、权限及取消错误继续阻止终止。完整进程描述和 listener 查询仍使用原后端，`taskkill` 参数及终止策略不变；调用方原有总关闭预算不延长。
+
+`WindowsProcessControlOptions.identityReader` 可显式注入 Core `ProcessIdentityReader`。例如，在 Windows x64 将 `createWindowsNativeProcessIdentityReader()` 的结果传给该参数，使终止及升级前的身份复核不启动 PowerShell。调用方提供的身份与 reader 须使用可比较的 start token。每次终止和升级仍新鲜读取，不复用先前目标身份；缺席、PID/token 不合法、身份变化、reader 失败及取消均拒绝终止，不回退到命令查询。省略参数保持原有窄命令 reader；完整描述和 listener 查询不受注入项影响。
 
 ## 行为与限制
 

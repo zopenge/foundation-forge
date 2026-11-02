@@ -2,7 +2,7 @@ import { createPosixProcessControl, createPosixProcessIdentityReader, createWind
 import type { RecordedIdentity } from './release-context.js';
 import { assertActive, ReleaseError } from './errors.js';
 
-export const processControl = () => process.platform === 'win32' ? createWindowsProcessControl({ listenerBackend: 'netstat' }) : createPosixProcessControl({ listenerBackend: 'lsof' });
+export const processControl = () => process.platform === 'win32' ? createWindowsProcessControl({ listenerBackend: 'netstat', identityReader: identityReader() }) : createPosixProcessControl({ listenerBackend: 'lsof' });
 export const identityReader = () => process.platform === 'win32' ? createWindowsNativeProcessIdentityReader() : createPosixProcessIdentityReader();
 export async function currentCoordinator(signal?: AbortSignal): Promise<RecordedIdentity> {
   assertActive(signal);

@@ -54,6 +54,8 @@ Both command arrays contain 1–32 entries. Each entry accepts only `command`, o
 
 Process identity observation for both managed commands and read-only management checks has a maximum ten-second budget, capped by `commandMs`. The command's own timeout continues to cover observation and execution together. Identity failure and cancellation still stop the command; they do not trigger an automatic retry.
 
+Windows execution requires Windows x64 and the installed Koffi prebuild. Startup identity observation and termination revalidation explicitly share the native Win32 reader, without a PowerShell identity fallback. Before the first workspace command, a bounded native-readiness check runs within that command's original budget; its elapsed time is deducted before spawning. Native capability errors stop execution before that command starts. Later commands still read each child identity afresh. POSIX execution and managed Job/subreaper closure requirements remain unchanged.
+
 Prepare/check/acceptance commands receive protected `FORGE_RELEASE_COMMAND=check|publish|verify` and `FORGE_RELEASE_SHA`; acceptance also receives `FORGE_RELEASE_URL` and `FORGE_RELEASE_DEPLOYMENT_ID`. Inherited values cannot override this metadata. It describes intent, not business authorization. Consumers own business assertions and any idempotent remote preparation. The build marker must be deployed from source and contain the full SHA; do not fabricate it during verification.
 
 ## Managed commit mode
@@ -90,7 +92,7 @@ New active journals use schema 3. Before authorizing a command, the tool reserve
 
 Before replacing state, the terminal receipt seals the identities and digests of both the original file and the fsynced temporary file. Recovery accepts either exact image after a coordinator exit; copying the same bytes to another file still fails. After archiving original evidence, the exclusive recovery transaction can discard only the matching uncommitted temporary file. Unknown remnants remain blocked, and historical state and remote effects stay unchanged.
 
-Koffi 3.3.3 is a pinned, lazy native dependency. This repository and tarball consumers disable its install script with `allowBuilds.koffi: false`; consumers should do the same. Missing prebuilds/capabilities fail before the job, with no runtime download, compilation or fallback. Owned scopes manage trusted commands, not a security sandbox: do not delegate work to WMI/system services or other external process owners. Workspace mode retains its existing behavior.
+Koffi 3.3.3 is a pinned, lazy native dependency. This repository and tarball consumers disable its install script with `allowBuilds.koffi: false`; consumers should do the same. Missing prebuilds/capabilities fail before the job, with no runtime download, compilation or fallback. Owned scopes manage trusted commands, not a security sandbox: do not delegate work to WMI/system services or other external process owners. Workspace commands retain direct execution and their existing timeout and termination semantics.
 
 ## Prebuilt delivery
 

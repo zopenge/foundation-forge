@@ -475,8 +475,24 @@ async function readProcessIdentity(
   signal: AbortSignal | undefined,
 ): Promise<ProcessIdentity | undefined> {
   if (options.platform === 'windows') {
-    const observed = await queryProcessIdentity('windows', runner, { pid, ...(signal === undefined ? {} : { signal }) });
-    return observed.status === 'FOUND' ? observed.identity : undefined;
+    const request = { pid, ...(signal === undefined ? {} : { signal }) };
+    let observed: ReadProcessIdentityResult;
+    try {
+      observed = options.identityReader === undefined
+        ? await queryProcessIdentity('windows', runner, request)
+        : await options.identityReader.readIdentity(request);
+    } catch (error) {
+      assertNotAborted(signal);
+      if (error instanceof ProcessControlError) throw error;
+      throw new ProcessControlError(processControlErrorCodes.commandFailed, { backend: 'identity-reader' }, error);
+    }
+    assertNotAborted(signal);
+    if (observed?.status === 'ABSENT') return undefined;
+    if (observed?.status !== 'FOUND' || !observed.identity || observed.identity.pid !== pid
+      || typeof observed.identity.startToken !== 'string' || observed.identity.startToken.trim().length === 0) {
+      throw new ProcessControlError(processControlErrorCodes.processIdentityUnavailable, { pid });
+    }
+    return { pid, startToken: observed.identity.startToken };
   }
   const identities = await describePosixProcesses([pid], runner, signal);
   return identities.get(pid);

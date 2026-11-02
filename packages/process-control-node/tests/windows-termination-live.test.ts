@@ -1,6 +1,7 @@
 import { once } from 'node:events';
 import { expect, test, vi } from 'vitest';
-import { createWindowsProcessControl, createWindowsProcessIdentityReader } from '../src/index.js';
+import { createWindowsNativeProcessIdentityReader, createWindowsProcessControl, createWindowsProcessIdentityReader } from '../src/index.js';
+import { runProcessCommand } from '../src/command-runner.js';
 import { liveTerminationChild } from './helpers/live-termination-child.js';
 
 test.runIf(process.platform === 'win32')('revalidates a real CIM start token through the narrow reader before terminating its own child', async context => {
@@ -33,5 +34,27 @@ test('closes the real test child on cancellation and waits for its close event',
       { timeout: 1000, interval: 10 });
     await fixture.closed;
     await fixture.dispose();
+  } finally { await fixture.dispose(); }
+});
+
+test.runIf(process.platform === 'win32' && process.arch === 'x64')('terminates its real child with an explicitly injected native identity reader and no PowerShell calls', async context => {
+  const fixture = liveTerminationChild(context), reader = createWindowsNativeProcessIdentityReader();
+  const commands: string[] = [];
+  try {
+    await once(fixture.child, 'spawn');
+    const pid = fixture.child.pid; if (!pid) throw new Error('fixture child unavailable');
+    const observed = await reader.readIdentity({ pid, signal: fixture.signal });
+    expect(observed.status).toBe('FOUND'); if (observed.status !== 'FOUND') throw new Error('fixture identity unavailable');
+    const readIdentity = vi.fn(reader.readIdentity);
+    const provider = createWindowsProcessControl({ listenerBackend: 'netstat', identityReader: { readIdentity }, runner: request => {
+      commands.push(request.command);
+      if (request.command !== 'taskkill.exe') throw new Error('unexpected identity subprocess');
+      return runProcessCommand(request);
+    } });
+    await expect(provider.terminateProcessTree({ process: observed.identity, policy: { mode: 'force' }, signal: fixture.signal }))
+      .resolves.toEqual({ pid, forced: true });
+    await fixture.closed; expect(fixture.error()).toBeUndefined();
+    expect(readIdentity).toHaveBeenCalledExactlyOnceWith({ pid, signal: fixture.signal });
+    expect(commands).toEqual(['taskkill.exe']);
   } finally { await fixture.dispose(); }
 });
