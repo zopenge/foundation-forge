@@ -49,9 +49,11 @@ if (result.status === 'FOUND') {
 
 POSIX 组合层使用 `createPosixProcessIdentityReader()`。两个工厂均接受 `ProcessIdentityReaderOptions`，可通过 `runner?: ProcessCommandRunner` 注入已获授权的传输；省略时沿用本包已有命令执行器，创建 reader 本身不执行查询。
 
-Windows 身份 reader 使用 .NET `Process.GetProcessById` 读取目标 PID 的真实 `StartTime`，由 Console 输出 JSON，不加载 PowerShell cmdlet 模块；创建时间按 UTC 毫秒编码为既有 CIM JSON 的 `/Date(毫秒)/` token，保持与完整查询的 token 比较语义。仅明确的进程不存在返回空结果；访问拒绝、其他系统异常和取消仍拒绝，不重试或切换来源。POSIX reader 仍使用 `ps`，只查询 `pid` 和 `lstart`。完整 Windows 进程描述与终止接口继续使用原后端，本次没有将其改为另一套实现。
+Windows 身份 reader 使用 .NET `Process.GetProcessById` 读取目标 PID 的真实 `StartTime`，由 Console 输出 JSON，不加载 PowerShell cmdlet 模块；创建时间按 UTC 毫秒编码为既有 CIM JSON 的 `/Date(毫秒)/` token，保持与完整查询的 token 比较语义。仅明确的进程不存在返回空结果；访问拒绝、其他系统异常和取消仍拒绝，不重试或切换来源。POSIX reader 仍使用 `ps`，只查询 `pid` 和 `lstart`。
 
-只有成功且为空的查询结果（以及 POSIX `ps` 无匹配时退出码为 1、标准输出和错误输出均为空的结果）返回 `ABSENT`。权限诊断、失败退出、无效或缺失 token、非目标 PID 或歧义记录均拒绝；取消请求使用 `OPERATION_ABORTED`。完整的进程描述查询和终止接口保持原有行为。
+只有成功且为空的查询结果（以及 POSIX `ps` 无匹配时退出码为 1、标准输出和错误输出均为空的结果）返回 `ABSENT`。权限诊断、失败退出、无效或缺失 token、非目标 PID 或歧义记录均拒绝；取消请求使用 `OPERATION_ABORTED`。
+
+Windows 单进程和进程树终止前的身份复核，以及优雅终止后的升级前轮询，复用上述窄查询，不再为只读身份加载 CIM 完整元数据服务。每次复核仍重新读取，PID 复用、身份不明、权限及取消错误继续阻止终止。完整进程描述和 listener 查询仍使用原后端，`taskkill` 参数及终止策略不变；调用方原有总关闭预算不延长。
 
 ## 行为与限制
 

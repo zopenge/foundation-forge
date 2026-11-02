@@ -10,6 +10,11 @@ without loading PowerShell cmdlet modules and preserves the existing CIM JSON-da
 start-token format. Posix retains `ps`. Permission failures are rejected without
 retries or fallback sources; full Windows process queries retain their existing backend.
 
+Windows termination revalidates the PID and start token through the same narrow
+command reader, including before force escalation. It does not load CIM metadata
+services for that identity-only check. `taskkill`, termination policies, caller
+cancellation and failure handling remain unchanged.
+
 On Windows x64, explicitly choose `createWindowsNativeProcessIdentityReader()` to
 read a known PID through the installed Koffi prebuild and Win32 process handles.
 It preserves the millisecond start-token format, checks process liveness before

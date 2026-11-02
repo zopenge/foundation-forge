@@ -181,7 +181,8 @@ describe('real Git release gates', () => {
     const running = f.run('publish', { transport, signal: controller.signal }); await ready;
     const concurrent = await f.run(); expect(concurrent.error?.code).toBe('LOCKED');
     controller.abort(); const report = await running; expect(report.error?.code).toBe('CANCELLED');
-    expect((await f.run()).ok).toBe(true);
+    const resumed = await f.run();
+    expect(resumed.ok, JSON.stringify({ error: resumed.error, steps: resumed.steps, commands: commandFailures })).toBe(true);
   });
   it('bounds and redacts actual process output, with finite timeout', async () => {
     const f = await fixture();
