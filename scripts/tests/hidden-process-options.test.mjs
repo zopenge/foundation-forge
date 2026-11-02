@@ -148,7 +148,7 @@ const releaseCliProbe = async spawnSync => {
   const end = source.indexOf('const report = await runRelease');
   assert.ok(end > 0);
   runInNewContext(source.slice(0, end).replace(/^import .*;$/gmu, ''), {
-    spawnSync, releaseErrorCodes: ['CANDIDATE_CHANGED', 'ARTIFACT_CHANGED'], runRelease() {},
+    spawnSync, releaseErrorCodes: ['CANDIDATE_CHANGED', 'ARTIFACT_CHANGED', 'VERSION_ALIAS_CONFLICT'], runRelease() {},
     validateReleaseConfig: () => { throw Object.assign(new Error('invalid config'), { code: 'CONFIG_INVALID' }); },
     process: { execPath: '/node', env: { PACKAGE_CONSUMER_BINARIES: '{"forge-vercel-release":"/consumer/release.mjs"}' } },
   });

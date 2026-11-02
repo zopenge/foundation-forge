@@ -5,7 +5,8 @@ import process from 'node:process';
 import { releaseErrorCodes } from '@openge/forge-release-vercel';
 import { runRelease, validateReleaseConfig } from '@openge/forge-release-vercel/node';
 
-if (!releaseErrorCodes.includes('CANDIDATE_CHANGED') || !releaseErrorCodes.includes('ARTIFACT_CHANGED') || typeof runRelease !== 'function') throw new Error('release contracts missing');
+if (!releaseErrorCodes.includes('CANDIDATE_CHANGED') || !releaseErrorCodes.includes('ARTIFACT_CHANGED')
+  || !releaseErrorCodes.includes('VERSION_ALIAS_CONFLICT') || typeof runRelease !== 'function') throw new Error('release contracts missing');
 try { validateReleaseConfig({ schemaVersion: 9 }); throw new Error('invalid config accepted'); }
 catch (error) { if (error.code !== 'CONFIG_INVALID') throw error; }
 const binaries = JSON.parse(process.env.PACKAGE_CONSUMER_BINARIES ?? '{}');
@@ -101,16 +102,25 @@ for (const name of ['alpha', 'beta']) {
   }
   const prebuilt = validateReleaseConfig({ ...config,
     delivery: { mode: 'prebuilt', maxFiles: 100, maxBytes: 1_048_576,
+      versionAlias: { hostnameTemplate: `consumer-${name}-{sha}.vercel.app` },
       concurrencyControl: { mode: 'external-serialization', scope: `consumer-${name}` }, admission: [{ command: 'node', args: ['-e', 'process.exit(0)'] }] },
     source: { ...managedSource, prepare: [...managedSource.prepare, { command: 'node', args: ['-e',
-      'const f=require("node:fs");f.mkdirSync(".vercel/output/static",{recursive:true});f.writeFileSync(".vercel/output/config.json",JSON.stringify({version:3}));f.writeFileSync(".vercel/output/static/index.html","self-contained public consumer");'] }] } });
+      'const f=require("node:fs");f.mkdirSync(".vercel/output/static",{recursive:true});f.writeFileSync(".vercel/output/config.json",JSON.stringify({version:3}));f.writeFileSync(".vercel/output/static/index.html","self-contained public consumer");process.stdout.write(JSON.stringify({url:process.env.FORGE_RELEASE_VERSION_URL,config:process.env.FORGE_RELEASE_CONFIG_SHA256,context:process.env.FORGE_RELEASE_CANDIDATE_CONTEXT}));'] }] } });
   await writeFile(resolve(cwd, 'release.config.json'), JSON.stringify(prebuilt)); git('add', '-u'); git('commit', '-m', 'prebuilt consumer');
   const prebuiltSha = git('rev-parse', 'HEAD');
-  const checked = JSON.parse(execute(cwd, process.execPath, [binaries['forge-vercel-release'], 'check', '--cwd', cwd]));
+  const checked = JSON.parse(execute(cwd, process.execPath, name === 'alpha'
+    ? [resolve(import.meta.dirname, 'node-check.mjs'), cwd]
+    : [binaries['forge-vercel-release'], 'check', '--cwd', cwd]));
   if (!checked.ok || checked.candidateSha !== prebuiltSha || checked.prebuilt?.sourceSha !== prebuiltSha
     || checked.prebuilt?.fileCount !== 2 || !/^[a-f0-9]{64}$/u.test(checked.prebuilt?.artifactSha256 ?? '')
     || checked.prebuilt?.createEffect !== 'not-attempted' || checked.prebuilt?.promoteEffect !== 'not-attempted'
     || checked.processes?.status !== 'closed') throw new Error(`public tarball prebuilt check failed: ${JSON.stringify(checked.error)}`);
+  const hostname = `consumer-${name}-${prebuiltSha}.vercel.app`;
+  const metadata = JSON.parse(checked.steps.find(step => step.name === 'prepare:1')?.stdout ?? 'null');
+  if (metadata?.url !== `https://${hostname}` || metadata.config !== checked.configSha256 || metadata.context !== ''
+    || checked.candidateContext !== undefined || checked.effects.versionAliasAssign !== 'not-attempted'
+    || JSON.stringify(checked.prebuilt.versionAlias) !== JSON.stringify({ hostname, effect: 'not-attempted', verified: false }))
+    throw new Error('tarball version alias build context mismatch');
   if (git('status', '--porcelain=v1', '--untracked-files=no') !== '' || await readFile(resolve(cwd, 'user-note'), 'utf8') !== 'preserve') throw new Error('prebuilt consumer changed source');
   for (const branch of ['dev', 'main']) if (execute(root, 'git', ['--git-dir', remote, 'rev-parse', branch]) !== initial) throw new Error('prebuilt check changed remote refs');
 }

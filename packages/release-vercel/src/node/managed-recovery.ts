@@ -17,6 +17,8 @@ import { createTransport, VercelVerification } from './vercel.js';
 import { createPrebuiltTransport } from './prebuilt-vercel.js';
 import { managedPrebuiltContext } from './prebuilt-state.js';
 import { observePrebuiltCandidate } from './prebuilt-recovery.js';
+import { prebuiltCandidateContext } from './version-alias.js';
+import { recordVerifiedAlias } from './prebuilt-resumption.js';
 import { recoveryCommand } from './release-commands.js';
 import { claimManagedRecovery } from './managed-recovery-lock.js';
 import { BudgetMonitor } from './managed-budget.js';
@@ -49,12 +51,14 @@ interface ReceiptOutcome {
 }
 function receiptReport(options: RunReleaseOptions, outcome: ReceiptOutcome): ReleaseReport {
   const { source, location } = outcome;
+  const candidateContext = source ? prebuiltCandidateContext(source.config, outcome.prebuilt) : undefined;
   return { schemaVersion: 2, command: options.command, ok: outcome.failure === undefined, startedAt: outcome.startedAt, finishedAt: new Date().toISOString(),
     stage: outcome.stage, steps: outcome.steps, effects: { ...outcome.effects }, ...(outcome.runId ? { runId: outcome.runId } : {}),
     ...(source && location ? { sourceRoot: source.root, executionRoot: location.paths.checkoutRoot, slotId: location.anchor.slotId, candidateSha: source.sha, configSha256: source.configSha256, configPath: source.configPath,
       recovery: { candidateSha: source.sha, reportPath: resolve(location.paths.slotRoot, `latest-${outcome.kind ?? 'publish'}.json`), nextCommand: recoveryCommand(outcome.next ?? 'verify', source), ...(outcome.reportExists === undefined ? {} : { reportExists: outcome.reportExists }), ...(outcome.refs ? { observation: outcome.refs } : {}) } } : {}),
     ...(outcome.observation ? { processes: { status: outcome.observation.processes, knownCount: outcome.observation.knownCount } } : {}),
     ...(outcome.budget ? { budget: outcome.budget } : {}), ...(outcome.prebuilt ? { prebuilt: outcome.prebuilt } : {}),
+    ...(candidateContext ? { candidateContext } : {}),
     ...(outcome.deployment ? { deployment: outcome.deployment } : {}), ...(outcome.failure ? { error: outcome.failure } : {}) };
 }
 export async function observeRefs(execution: Execution, source: FrozenSource, observation: RecoveryObservation): Promise<ReleaseRecoveryObservation> {
@@ -149,6 +153,7 @@ async function runManagedVerification(options: RunReleaseOptions): Promise<Relea
       session.state.prebuilt = structuredClone(selected.receipt.report.prebuilt);
       session.state.effects.deploymentCreate = session.state.prebuilt.createEffect;
       session.state.effects.deploymentPromote = session.state.prebuilt.promoteEffect;
+      if (session.state.prebuilt.versionAlias) session.state.effects.versionAliasAssign = session.state.prebuilt.versionAlias.effect;
       await session.persist();
     }
     const assertFrozen = async () => { await assertHistoricalSource(source, options.signal); await assertCheckoutFrozen(current); };
@@ -156,6 +161,7 @@ async function runManagedVerification(options: RunReleaseOptions): Promise<Relea
     deployment = await publishCandidate({ execution: session.execution, config: source.config, sha: source.sha, signal: options.signal, transport: options.transport,
       effects: session.state.effects, prebuilt: managedPrebuiltContext(session), assertFrozen, mutationGuard: async () => { throw new ReleaseError('SOURCE_UNSUPPORTED'); },
       stage: async stage => { current.state.stage = stage; await current.persist(); }, checkpoint: async () => { throw new ReleaseError('SOURCE_UNSUPPORTED'); } }, 'verify');
+    await recordVerifiedAlias(session, selected.receipt, options.transport);
     await session.assertClosed(); await session.budget.sample(); session.state.stage = 'complete';
   } catch (error) { failure = diagnostic(error); }
   if (session) {
@@ -213,6 +219,7 @@ export async function runManagedReceiptCommand(options: RunReleaseOptions): Prom
         options.transport ?? createPrebuiltTransport(execution, source.config, false), options.signal);
       deployment = found.deployment; prebuilt = found.observed;
       effects.deploymentCreate = prebuilt.createEffect; effects.deploymentPromote = prebuilt.promoteEffect;
+      if (prebuilt.versionAlias) effects.versionAliasAssign = prebuilt.versionAlias.effect;
     } else {
       const verify = new VercelVerification(source.config, options.transport ?? createTransport(execution), options.signal);
       await verify.project(); deployment = await verify.find(source.sha);
@@ -223,8 +230,10 @@ export async function runManagedReceiptCommand(options: RunReleaseOptions): Prom
     stage = 'complete';
   } catch (error) { failure = diagnostic(error); }
   const source = selected?.receipt.source;
+  const candidateContext = source ? prebuiltCandidateContext(source.config, prebuilt) : undefined;
   return { schemaVersion: 2, command: options.command, ok: failure === undefined, startedAt, finishedAt: new Date().toISOString(), steps: [], stage,
     effects, ...(prebuilt ? { prebuilt } : {}),
+    ...(candidateContext ? { candidateContext } : {}),
     ...(source && selected ? { sourceRoot: source.root, executionRoot: selected.location.paths.checkoutRoot, configPath: source.configPath,
       slotId: selected.location.anchor.slotId, candidateSha: source.sha, configSha256: source.configSha256,
       ...(selected.receipt.report.runId ? { runId: selected.receipt.report.runId } : {}),
