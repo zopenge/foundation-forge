@@ -15,6 +15,7 @@ import { settleManagedSlot } from './managed-recovery.js';
 import { archiveManagedDisposition } from './managed-disposition.js';
 import { assertManagedRemoteSettled } from './managed-remote-state.js';
 import { managedCommandIdentities } from './managed-observation.js';
+import { managedPrebuiltContext } from './prebuilt-state.js';
 
 export async function runManagedRelease(options: RunReleaseOptions): Promise<ReleaseReport> {
   const startedAt = new Date().toISOString();
@@ -28,8 +29,9 @@ export async function runManagedRelease(options: RunReleaseOptions): Promise<Rel
     ...(slot ? { slotId: slot.slotId, runId: slot.runId, executionRoot: slot.paths.checkoutRoot } : {}),
     ...(session ? { budget: session.budget.summary(), processes: { status: closed ? 'closed' : 'unknown', knownCount: new Set(session.state.processes.flatMap(managedCommandIdentities).map(identity => `${String(identity.pid)}:${identity.startToken}`)).size } } : {}),
     ...(result ? { deployment: result } : {}), ...(failure ? { error: failure } : {}),
+    ...(session?.state.prebuilt ? { prebuilt: session.state.prebuilt } : {}),
     ...(slot && source ? { recovery: { candidateSha: source.sha, reportPath: resolve(slot.paths.slotRoot, options.command === 'publish' ? 'latest-publish.json' : 'latest-check.json'),
-      nextCommand: recoveryCommand(retained || !closed || Object.values(session?.state.effects ?? emptyEffects).includes('unknown') ? 'recover' : options.command === 'publish' && ['pushed', 'already-current'].includes(session?.state.effects.releasePush ?? '') ? 'verify' : options.command, source) } } : {}) });
+      nextCommand: recoveryCommand(retained || !closed || Object.values(session?.state.effects ?? emptyEffects).includes('unknown') ? 'recover' : options.command === 'publish' && (session?.state.prebuilt?.deploymentId || ['pushed', 'already-current'].includes(session?.state.effects.releasePush ?? '')) ? 'verify' : options.command, source) } } : {}) });
   try {
     assertActive(options.signal);
     if (options.config !== undefined) throw new ReleaseError('SOURCE_UNSUPPORTED', { reason: 'COMMITTED_CONFIG_REQUIRED' });
@@ -41,6 +43,15 @@ export async function runManagedRelease(options: RunReleaseOptions): Promise<Rel
     stage = 'admission'; await settleManagedSlot(options); slot = await openManagedSlot(source, original);
     session = await createManagedSession(slot, options.command === 'publish' ? 'publish' : 'check', options.signal);
     const currentSession = session, frozen = source;
+    if (source.config.delivery && options.command === 'publish') {
+      const previous = await slot.store.readReceipt('publish');
+      if (previous?.source.sha === source.sha && previous.source.configSha256 === source.configSha256 && previous.report.prebuilt) {
+        session.state.prebuilt = structuredClone(previous.report.prebuilt);
+        session.state.effects.deploymentCreate = previous.report.prebuilt.createEffect;
+        session.state.effects.deploymentPromote = previous.report.prebuilt.promoteEffect;
+        await session.persist();
+      }
+    }
     let previousPublish;
     try {
       const anchor = record(JSON.parse(await readFile(slot.paths.anchorPath, 'utf8')) as unknown);
@@ -54,8 +65,15 @@ export async function runManagedRelease(options: RunReleaseOptions): Promise<Rel
     const assertFrozen = async () => { await assertSourceFrozen(frozen, original); await assertCheckoutFrozen(currentSession); };
     result = await publishCandidate({ execution: session.execution, config: source.config, sha: source.sha, signal: options.signal, transport: options.transport,
       effects: session.state.effects, assertFrozen,
+      prebuilt: managedPrebuiltContext(session),
       mutationGuard: async effect => { await assertFrozen(); await currentSession.assertClosed(); await currentSession.budget.sample(); await currentSession.slot.lock.assertOwned();
-        return assertManagedRemoteSettled(currentSession.slot.paths, currentSession.execution, effect ? { effect, source: frozen } : undefined); },
+        return assertManagedRemoteSettled(currentSession.slot.paths, currentSession.execution, effect ? { effect, source: frozen } : undefined, options.transport,
+          async proof => {
+            const previous = currentSession.state.prebuiltResolutions ?? [];
+            if (previous.some(item => item.runId === proof.runId)) return;
+            if (previous.length >= 1000) throw new ReleaseError('BUDGET_EXCEEDED', { reason: 'PREBUILT_RESOLUTION_LIMIT' });
+            currentSession.state.prebuiltResolutions = [...previous, proof]; await currentSession.persist();
+          }); },
       stage: async value => { currentSession.state.stage = value; await currentSession.persist(); },
       checkpoint: async pending => { if (pending) currentSession.state.pendingPush = pending; else delete currentSession.state.pendingPush; await currentSession.persist(); } }, options.command === 'publish' ? 'publish' : 'check');
     await assertFrozen(); await session.assertClosed(); await session.budget.sample(); session.state.stage = 'complete';

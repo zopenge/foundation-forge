@@ -1,4 +1,4 @@
-import type { ReleaseCommand, ReleaseConfig, ReleaseReport, ReleaseStage, ReleaseTransport } from '../contracts.js';
+import type { PrebuiltReleaseState, ReleaseCommand, ReleaseConfig, ReleaseReport, ReleaseStage, ReleaseTransport } from '../contracts.js';
 import type { OwnedLock } from './lock.js';
 import type { CommandObserver, CommandResult, CommandRunner, CommandSpec, CommandTerminationReason } from '@openge/forge-command-runner';
 import type { ProcessScopeClosure } from '@openge/forge-process-control';
@@ -38,6 +38,16 @@ export interface ManagedCommand {
   terminalSha256?: string;
   closure?: { readonly observedAt: string; readonly exitCode: number | null; readonly termination: CommandTerminationReason; readonly requestedTermination?: 'abort' | 'timeout'; readonly ownedScope?: ProcessScopeClosure };
 }
+export interface PrebuiltEffectResolution {
+  readonly schemaVersion: 1;
+  readonly runId: string;
+  readonly sourceSha: string;
+  readonly configSha256: string;
+  readonly artifactSha256: string;
+  readonly deploymentId: string;
+  readonly promotion: 'not-attempted' | 'succeeded' | 'failed';
+  readonly observedAt: string;
+}
 export interface ManagedState {
   readonly schemaVersion: 2 | 3; readonly slotId: string; readonly runId: string;
   readonly source: FrozenSource; readonly command: ReleaseCommand;
@@ -48,6 +58,8 @@ export interface ManagedState {
   processes: ManagedCommand[];
   effects: ReleaseReport['effects'];
   pendingPush?: 'developmentPush' | 'releasePush';
+  prebuilt?: PrebuiltReleaseState;
+  prebuiltResolutions?: readonly PrebuiltEffectResolution[];
 }
 export interface ManagedReceipt { readonly schemaVersion: 2; readonly slotId: string; readonly source: FrozenSource; readonly report: ReleaseReport }
 export interface ManagedAnchor {
@@ -88,6 +100,12 @@ export interface ExecutionContext {
   readonly execution: Execution; readonly config: ReleaseConfig; readonly sha: string;
   readonly signal: AbortSignal | undefined; readonly transport: ReleaseTransport | undefined;
   readonly effects: ReleaseReport['effects'];
+  readonly prebuilt?: {
+    state: PrebuiltReleaseState | undefined;
+    reserve(bytes: number): Promise<void>;
+    executionAt(cwd: string): Execution;
+    save(state: PrebuiltReleaseState): Promise<void>;
+  } | undefined;
   assertFrozen(): Promise<void>;
   mutationGuard(effect?: 'developmentPush' | 'releasePush'): Promise<'already-current' | undefined>;
   stage(stage: ReleaseStage): Promise<void>;

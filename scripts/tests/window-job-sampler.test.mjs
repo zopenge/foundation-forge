@@ -61,11 +61,15 @@ test('成员上限在任何原生调用前校验，完整验收最多记录有�
 });
 
 test('完整验收可记录超过8192个历史实例的容量，仍逐一固定核验并关闭成员', () => {
-  const lists = Array.from({ length: 8193 }, (_, index) => ({ assigned: 1, count: 1, ids: [index + 10] }));
+  const firstPid = Math.max(1, process.pid - 4096);
+  // 容量测试始终跨过观察进程自身 PID，但模拟成员必须避开该硬保护身份。
+  const pids = Array.from({ length: 8194 }, (_, index) => firstPid + index).filter(pid => pid !== process.pid);
+  const lists = pids.map(pid => ({ assigned: 1, count: 1, ids: [pid] }));
   const f = transitionFixture(lists, { limit: 32768 });
   f.sampler.assigned(1, 10);
   for (let index = 0; index < lists.length; index++) f.sampler.sample();
-  assert.equal(f.members.length, 8193); assert.equal(f.members.at(-1).pid, 8202);
+  assert.equal(f.members.length, 8193, JSON.stringify({ observerPid: process.pid, gaps: f.gaps }));
+  assert.equal(f.members.at(-1).pid, pids.at(-1));
   assert.deepEqual(f.gaps, []); assert.equal(f.opened.length, 8193);
   f.sampler.close(); assert.equal(f.closed.length, 8193);
 });

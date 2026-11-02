@@ -14,8 +14,29 @@ export type ReleaseSource = { readonly mode: 'workspace' } | {
   readonly prepare: readonly ReleaseCheck[];
 };
 export type ManagedSourceConfig = Extract<ReleaseSource, { mode: 'managed-commit' }>;
+export interface PrebuiltDeliveryConfig {
+  readonly mode: 'prebuilt';
+  readonly maxFiles: number;
+  readonly maxBytes: number;
+  readonly concurrencyControl: { readonly mode: 'external-serialization'; readonly scope: string };
+  readonly admission: readonly ReleaseCheck[];
+}
+export type ReleaseCloudEffect = 'not-attempted' | 'accepted' | 'unknown';
+export interface PrebuiltReleaseState {
+  readonly sourceSha: string;
+  readonly configSha256: string;
+  readonly artifactSha256: string;
+  readonly fileCount: number;
+  readonly byteLength: number;
+  createEffect: ReleaseCloudEffect;
+  promoteEffect: ReleaseCloudEffect;
+  deploymentId?: string;
+  deploymentUrl?: string;
+  acceptanceVerified: boolean;
+  promotionVerified: boolean;
+}
 export type ReleaseStage = 'source' | 'admission' | 'checkout' | 'install' | 'prepare' | 'checks'
-  | 'push-dev' | 'push-main' | 'deployment' | 'acceptance' | 'recover' | 'retire' | 'complete' | 'failed';
+  | 'artifact' | 'promote' | 'push-dev' | 'push-main' | 'deployment' | 'acceptance' | 'recover' | 'retire' | 'complete' | 'failed';
 export interface ReleaseBudget {
   readonly sampleCount: number;
   readonly maxObservedBytes: number;
@@ -26,6 +47,7 @@ export interface ReleaseBudget {
 export interface ReleaseConfig {
   readonly schemaVersion: 2;
   readonly source: ReleaseSource;
+  readonly delivery?: PrebuiltDeliveryConfig;
   readonly git: { readonly remote: string; readonly repository: string; readonly developmentBranch: string; readonly releaseBranch: string };
   readonly vercel: { readonly teamId: string; readonly projectId: string; readonly productionUrl: string };
   readonly checks: readonly ReleaseCheck[];
@@ -40,6 +62,7 @@ export const releaseErrorCodes = [
   'DEPLOYMENT_TIMEOUT', 'DEPLOYMENT_MISSING', 'ALIAS_MISMATCH', 'BUILD_REVISION', 'BUILD_INFO', 'IO_FAILED',
   'SOURCE_UNSUPPORTED', 'SOURCE_CHANGED', 'SLOT_PATH', 'SLOT_FOREIGN', 'SLOT_STATE', 'SLOT_NOT_FAST_FORWARD',
   'BUDGET_EXCEEDED', 'BUDGET_UNKNOWN', 'PROCESS_STATE_UNKNOWN', 'RECOVERY_REQUIRED', 'RECEIPT_SHA_MISMATCH',
+  'ARTIFACT_INVALID', 'ARTIFACT_CHANGED', 'ADMISSION_FAILED',
 ] as const;
 export type ReleaseErrorCode = typeof releaseErrorCodes[number];
 export interface ReleaseDiagnostic { readonly code: ReleaseErrorCode; readonly details: Readonly<Record<string, unknown>> }
@@ -71,7 +94,9 @@ export interface ReleaseReport {
   readonly startedAt: string;
   readonly finishedAt: string;
   readonly steps: readonly ReleaseStep[];
-  readonly effects: { developmentPush: ReleasePushEffect; releasePush: ReleasePushEffect };
+  readonly effects: { developmentPush: ReleasePushEffect; releasePush: ReleasePushEffect;
+    deploymentCreate?: ReleaseCloudEffect; deploymentPromote?: ReleaseCloudEffect };
+  readonly prebuilt?: PrebuiltReleaseState;
   readonly deployment?: ReleaseDeployment;
   readonly error?: ReleaseDiagnostic;
   readonly recovery?: { readonly candidateSha: string; readonly nextCommand: string; readonly reportPath: string; readonly reportExists?: boolean; readonly observation?: ReleaseRecoveryObservation };
@@ -95,6 +120,7 @@ export interface ReleaseReport {
 export interface ReleaseTransport {
   api(path: string, signal: AbortSignal): Promise<unknown>;
   buildInfo(url: string, signal: AbortSignal): Promise<unknown>;
+  promote?(deploymentId: string, signal: AbortSignal): Promise<void>;
 }
 export interface RunReleaseOptions {
   readonly command: ReleaseCommand;

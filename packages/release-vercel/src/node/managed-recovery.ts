@@ -11,9 +11,12 @@ import { createManagedExecution } from './managed-execution.js';
 import { assertRepository, normalizeRepository, remoteRefs } from './git.js';
 import { configDigest, readCommittedConfig, relativeConfigPath } from './source.js';
 import { identityReader } from './process-identities.js';
-import type { ReleaseBudget, ReleaseDeployment, ReleaseDiagnostic, ReleaseRecoveryObservation, ReleaseRefRelation, ReleaseReport, ReleaseStage, RunReleaseOptions } from '../contracts.js';
+import type { PrebuiltReleaseState, ReleaseBudget, ReleaseDeployment, ReleaseDiagnostic, ReleaseRecoveryObservation, ReleaseRefRelation, ReleaseReport, ReleaseStage, RunReleaseOptions } from '../contracts.js';
 import { diagnostic } from './workspace-release.js';
 import { createTransport, VercelVerification } from './vercel.js';
+import { createPrebuiltTransport } from './prebuilt-vercel.js';
+import { managedPrebuiltContext } from './prebuilt-state.js';
+import { observePrebuiltCandidate } from './prebuilt-recovery.js';
 import { recoveryCommand } from './release-commands.js';
 import { claimManagedRecovery } from './managed-recovery-lock.js';
 import { BudgetMonitor } from './managed-budget.js';
@@ -42,6 +45,7 @@ interface ReceiptOutcome {
   readonly stage: ReleaseStage; readonly effects: ReleaseReport['effects']; readonly steps: ReleaseReport['steps']; readonly failure?: ReleaseDiagnostic;
   readonly observation?: RecoveryObservation; readonly refs?: ReleaseRecoveryObservation; readonly deployment?: ReleaseDeployment; readonly budget?: ReleaseBudget;
   readonly next?: string; readonly kind?: 'publish' | 'check'; readonly reportExists?: boolean;
+  readonly prebuilt?: PrebuiltReleaseState;
 }
 function receiptReport(options: RunReleaseOptions, outcome: ReceiptOutcome): ReleaseReport {
   const { source, location } = outcome;
@@ -50,7 +54,8 @@ function receiptReport(options: RunReleaseOptions, outcome: ReceiptOutcome): Rel
     ...(source && location ? { sourceRoot: source.root, executionRoot: location.paths.checkoutRoot, slotId: location.anchor.slotId, candidateSha: source.sha, configSha256: source.configSha256, configPath: source.configPath,
       recovery: { candidateSha: source.sha, reportPath: resolve(location.paths.slotRoot, `latest-${outcome.kind ?? 'publish'}.json`), nextCommand: recoveryCommand(outcome.next ?? 'verify', source), ...(outcome.reportExists === undefined ? {} : { reportExists: outcome.reportExists }), ...(outcome.refs ? { observation: outcome.refs } : {}) } } : {}),
     ...(outcome.observation ? { processes: { status: outcome.observation.processes, knownCount: outcome.observation.knownCount } } : {}),
-    ...(outcome.budget ? { budget: outcome.budget } : {}), ...(outcome.deployment ? { deployment: outcome.deployment } : {}), ...(outcome.failure ? { error: outcome.failure } : {}) };
+    ...(outcome.budget ? { budget: outcome.budget } : {}), ...(outcome.prebuilt ? { prebuilt: outcome.prebuilt } : {}),
+    ...(outcome.deployment ? { deployment: outcome.deployment } : {}), ...(outcome.failure ? { error: outcome.failure } : {}) };
 }
 export async function observeRefs(execution: Execution, source: FrozenSource, observation: RecoveryObservation): Promise<ReleaseRecoveryObservation> {
   const refs = await remoteRefs(execution, source.config);
@@ -88,7 +93,7 @@ async function recoverManagedPublication(options: RunReleaseOptions): Promise<Re
     if (source.config.source.mode !== 'managed-commit') throw new ReleaseError('SOURCE_UNSUPPORTED');
     budget = new BudgetMonitor(location.paths, source.config.source); await budget.sample();
     const execution = createManagedExecution(source.root, source.config, options.signal, []);
-    refs = await observeRefsForDisposition(execution, source, observation);
+    if (!source.config.delivery) refs = await observeRefsForDisposition(execution, source, observation);
     if (observation.owner !== 'inactive') throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'OWNER_NOT_INACTIVE', owner: observation.owner });
     if (observation.processes !== 'closed') throw new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'CLOSURE_UNPROVEN', processes: observation.processes });
     await budget.sample();
@@ -105,7 +110,9 @@ async function recoverManagedPublication(options: RunReleaseOptions): Promise<Re
   return receiptReport(options, { startedAt, stage: failure ? 'recover' : 'complete', steps: [], effects, ...(reportExists === undefined ? {} : { reportExists }),
     ...(source ? { source } : {}), ...(location ? { location } : {}), ...(state ? { runId: state.runId, kind: state.command === 'check' ? 'check' : 'publish' } : {}),
     ...(observation ? { observation } : {}), ...(refs ? { refs } : {}), ...(budget ? { budget: budget.summary() } : {}), ...(failure ? { failure } : {}),
-    next: failure ? failure.details.reason === 'CLOSURE_UNPROVEN' && state ? `retire --run-id ${state.runId}` : 'recover' : effects.releasePush === 'pushed' || effects.releasePush === 'already-current' ? 'verify' : 'publish' });
+    ...(state?.prebuilt ? { prebuilt: state.prebuilt } : {}),
+    next: failure ? failure.details.reason === 'CLOSURE_UNPROVEN' && state ? `retire --run-id ${state.runId}` : 'recover'
+      : state?.prebuilt ? state.prebuilt.deploymentId ? 'verify' : 'status' : effects.releasePush === 'pushed' || effects.releasePush === 'already-current' ? 'verify' : 'publish' });
 }
 export async function settleManagedSlot(options: RunReleaseOptions): Promise<void> {
   if (!await pathExists(resolve(options.cwd, '.tmp/forge-vercel-release/managed.json'))) return;
@@ -128,6 +135,7 @@ async function runManagedVerification(options: RunReleaseOptions): Promise<Relea
   const report = () => receiptReport(options, { startedAt, stage: session?.state.stage ?? 'source', steps: session?.steps ?? [], effects: session?.state.effects ?? { developmentPush: 'not-attempted', releasePush: 'not-attempted' },
     ...(selected ? { source: selected.receipt.source, location: selected.location, ...(session ? { runId: session.state.runId } : {}) } : {}),
     ...(session ? { observation: { owner: closed ? 'inactive' : 'unknown', processes: closed ? 'closed' : 'unknown', knownCount: new Set(session.state.processes.flatMap(managedCommandIdentities).map(identity => `${String(identity.pid)}:${identity.startToken}`)).size }, budget: session.budget.summary() } : {}),
+    ...(session?.state.prebuilt ? { prebuilt: session.state.prebuilt } : {}),
     ...(deployment ? { deployment } : {}), ...(failure ? { failure } : {}), next: closed ? 'verify' : 'recover' });
   try {
     if (options.config !== undefined) throw new ReleaseError('SOURCE_UNSUPPORTED', { reason: 'COMMITTED_CONFIG_REQUIRED' });
@@ -137,10 +145,16 @@ async function runManagedVerification(options: RunReleaseOptions): Promise<Relea
     const original = createManagedExecution(source.root, source.config, options.signal, []);
     await settleManagedSlot(options); slot = await openManagedSlot(source, original); session = await createManagedSession(slot, 'verify', options.signal);
     const current = session;
+    if (source.config.delivery && selected.receipt.report.prebuilt) {
+      session.state.prebuilt = structuredClone(selected.receipt.report.prebuilt);
+      session.state.effects.deploymentCreate = session.state.prebuilt.createEffect;
+      session.state.effects.deploymentPromote = session.state.prebuilt.promoteEffect;
+      await session.persist();
+    }
     const assertFrozen = async () => { await assertHistoricalSource(source, options.signal); await assertCheckoutFrozen(current); };
     await assertFrozen();
     deployment = await publishCandidate({ execution: session.execution, config: source.config, sha: source.sha, signal: options.signal, transport: options.transport,
-      effects: session.state.effects, assertFrozen, mutationGuard: async () => { throw new ReleaseError('SOURCE_UNSUPPORTED'); },
+      effects: session.state.effects, prebuilt: managedPrebuiltContext(session), assertFrozen, mutationGuard: async () => { throw new ReleaseError('SOURCE_UNSUPPORTED'); },
       stage: async stage => { current.state.stage = stage; await current.persist(); }, checkpoint: async () => { throw new ReleaseError('SOURCE_UNSUPPORTED'); } }, 'verify');
     await session.assertClosed(); await session.budget.sample(); session.state.stage = 'complete';
   } catch (error) { failure = diagnostic(error); }
@@ -167,6 +181,7 @@ export async function runManagedReceiptCommand(options: RunReleaseOptions): Prom
   let deployment: ReleaseDeployment | undefined, failure: ReleaseDiagnostic | undefined, stage: ReleaseStage = 'source', needsRecovery = false;
   let refs: ReleaseRecoveryObservation | undefined;
   let effects: ReleaseReport['effects'] = { developmentPush: 'not-attempted', releasePush: 'not-attempted' };
+  let prebuilt: PrebuiltReleaseState | undefined;
   try {
     assertActive(options.signal);
     if (options.config !== undefined) throw new ReleaseError('SOURCE_UNSUPPORTED', { reason: 'COMMITTED_CONFIG_REQUIRED' });
@@ -185,15 +200,23 @@ export async function runManagedReceiptCommand(options: RunReleaseOptions): Prom
     const locallyReady = await hasManagedDisposition(location.paths, state);
     needsRecovery = observation.owner !== 'inactive' || observation.processes !== 'closed' || (state.status !== 'closed' && !locallyReady);
     const execution = createManagedExecution(source.root, source.config, options.signal, []);
-    refs = await observeRefs(execution, source, observation);
+    refs = source.config.delivery ? { owner: observation.owner, processes: observation.processes, observedAt: new Date().toISOString() }
+      : await observeRefs(execution, source, observation);
     const published = receipt.report.runId ? await readManagedDisposition(location.paths, receipt.report.runId) : undefined;
     for (const [effect, current] of [['developmentPush', refs.developmentRef], ['releasePush', refs.releaseRef]] as const) {
       if (effects[effect] !== 'unknown') continue;
       if (!published || published.stopped.source.sha !== source.sha || !current || !['candidate', 'superseded'].includes(current.relation)) needsRecovery = true;
     }
     stage = 'deployment';
-    const verify = new VercelVerification(source.config, options.transport ?? createTransport(execution), options.signal);
-    await verify.project(); deployment = await verify.find(source.sha);
+    if (source.config.delivery) {
+      const found = await observePrebuiltCandidate(source.config, receipt.report.prebuilt,
+        options.transport ?? createPrebuiltTransport(execution, source.config, false), options.signal);
+      deployment = found.deployment; prebuilt = found.observed;
+      effects.deploymentCreate = prebuilt.createEffect; effects.deploymentPromote = prebuilt.promoteEffect;
+    } else {
+      const verify = new VercelVerification(source.config, options.transport ?? createTransport(execution), options.signal);
+      await verify.project(); deployment = await verify.find(source.sha);
+    }
     if (observation.processes === 'unknown') throw new ReleaseError('PROCESS_STATE_UNKNOWN');
     if (needsRecovery) throw new ReleaseError('RECOVERY_REQUIRED', { activeRunId: state.runId, owner: observation.owner, processes: observation.processes });
     if (!deployment) throw new ReleaseError('DEPLOYMENT_MISSING');
@@ -201,7 +224,7 @@ export async function runManagedReceiptCommand(options: RunReleaseOptions): Prom
   } catch (error) { failure = diagnostic(error); }
   const source = selected?.receipt.source;
   return { schemaVersion: 2, command: options.command, ok: failure === undefined, startedAt, finishedAt: new Date().toISOString(), steps: [], stage,
-    effects,
+    effects, ...(prebuilt ? { prebuilt } : {}),
     ...(source && selected ? { sourceRoot: source.root, executionRoot: selected.location.paths.checkoutRoot, configPath: source.configPath,
       slotId: selected.location.anchor.slotId, candidateSha: source.sha, configSha256: source.configSha256,
       ...(selected.receipt.report.runId ? { runId: selected.receipt.report.runId } : {}),
