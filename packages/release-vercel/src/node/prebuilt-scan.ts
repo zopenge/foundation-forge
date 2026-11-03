@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
+import { realpath as realpathForNode } from 'node:fs';
 import { chmod, lstat, mkdir, open, opendir, readlink, realpath, symlink } from 'node:fs/promises';
 import { dirname, relative, resolve } from 'node:path';
+import { promisify } from 'node:util';
 import type { ReleaseConfig } from '../contracts.js';
 import { ReleaseError } from './errors.js';
 import { assertPathChain } from './managed-io.js';
@@ -9,6 +11,7 @@ import { artifactGuard, artifactInvalid, artifactLinkTarget, artifactPath,
 import { resolveArtifactLinks } from './prebuilt-links.js';
 
 export const artifactMarkerFile = 'static/.well-known/forge-prebuilt.json';
+const nodeRealpath = promisify(realpathForNode);
 export async function inspectArtifact(root: string, config: ReleaseConfig, signal: AbortSignal | undefined, deadline: number,
   destination?: string, generatedDirectories?: ReadonlySet<string>): Promise<ArtifactInventory> {
   if (!config.delivery) return artifactInvalid('DELIVERY_REQUIRED');
@@ -77,9 +80,13 @@ export async function inspectArtifact(root: string, config: ReleaseConfig, signa
     const resolved = resolveArtifactLinks(files, directories, links, guard);
     const physicalRoot = await realpath(root);
     for (const link of resolved) {
-      guard(); const absolute = resolve(root, link.path), physicalTarget = await realpath(absolute);
-      const actual = relative(physicalRoot, physicalTarget).split(process.platform === 'win32' ? '\\' : '/').join('/');
-      if (actual !== link.resolvedPath || artifactLinkTarget(await readlink(absolute)) !== link.target) return artifactInvalid('LINK_NATIVE_TARGET');
+      guard(); const absolute = resolve(root, link.path);
+      // Node 模块使用的默认 realpath 与原生 realpath(3) 对链接前缀和 .. 可能有不同结果，必须同时一致。
+      const [physicalTarget, runtimeTarget] = await Promise.all([realpath(absolute), nodeRealpath(absolute)]); guard();
+      const portable = (path: string) => relative(physicalRoot, path).split(process.platform === 'win32' ? '\\' : '/').join('/');
+      if (portable(physicalTarget) !== link.resolvedPath) return artifactInvalid('LINK_NATIVE_TARGET');
+      if (portable(runtimeTarget) !== link.resolvedPath) return artifactInvalid('LINK_NODE_TARGET');
+      if (artifactLinkTarget(await readlink(absolute)) !== link.target) return artifactInvalid('LINK_CHANGED');
     }
     if (destination) for (const link of resolved) {
       guard(); const target = resolve(destination, link.path); await assertPathChain(destination, dirname(target));

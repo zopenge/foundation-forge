@@ -1,4 +1,4 @@
-import { expect, test, vi } from 'vitest';
+import { expect, onTestFailed, test, vi } from 'vitest';
 import { resolve } from 'node:path';
 
 import { ProcessControlError, processControlErrorCodes } from '@openge/forge-process-control';
@@ -218,21 +218,32 @@ test('Posix reader rejects nonempty output with a failed exit status', async () 
 });
 
 
-test.runIf(process.platform === 'win32')('Windows reader works without cmdlet module loading', async () => {
-  const { runProcessCommand } = await import('../src/command-runner.js');
+test.runIf(process.platform === 'win32')('Windows reader works without cmdlet module loading', async context => {
+  const { startIdentityCommand } = await import('./helpers/identity-command.js');
+  const { readIdentityPair } = await import('./helpers/identity-read-pair.js');
+  let calls = 0; const observations: { durationMs: number; outcome: string }[] = [];
   const reader = createWindowsProcessIdentityReader({
-    runner: (request) => runProcessCommand({
-      ...request,
-      args: [...request.args.slice(0, 3), "$PSModuleAutoLoadingPreference='None'; " + request.args[3]],
-    }),
+    runner: async request => {
+      calls++; const started = performance.now(); let outcome: string | undefined;
+      try {
+        const result = await startIdentityCommand({ ...request,
+          args: [...request.args.slice(0, 3), "$PSModuleAutoLoadingPreference='None'; " + request.args[3]] }).completion;
+        outcome = `exit:${result.exitCode}`; return result;
+      } catch (error) { outcome = error instanceof ProcessControlError ? error.code : 'ERROR'; throw error; }
+      finally { observations.push({ durationMs: Math.round(performance.now() - started), outcome: outcome ?? 'UNKNOWN' }); }
+    },
   });
-  const first = await reader.readIdentity({ pid: process.pid, signal: AbortSignal.timeout(7_000) });
+  const signal = AbortSignal.any([context.signal, AbortSignal.timeout(7_000)]);
+  const pair = readIdentityPair(reader, process.pid, signal);
+  const drain = async () => { await pair.then(() => {}, () => {}); };
+  context.onTestFinished(drain);
+  onTestFailed(async () => { await drain(); process.stderr.write(`${JSON.stringify({ kind: 'WINDOWS_READER_LIVE', calls, observations })}\n`); });
+  const [first, second] = await pair;
   expect(first.status).toBe('FOUND');
   if (first.status !== 'FOUND') {
     throw new Error('Expected the current process identity.');
   }
   expect(first.identity.pid).toBe(process.pid);
   expect(first.identity.startToken).toMatch(/^\/Date\(\d+\)\/$/u);
-  await expect(reader.readIdentity({ pid: process.pid, signal: AbortSignal.timeout(7_000) }))
-    .resolves.toEqual(first);
+  expect(second).toEqual(first); expect(calls).toBe(2);
 });

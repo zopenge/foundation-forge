@@ -1,4 +1,7 @@
 import { mkdir, readFile, readlink, rename, rm, symlink, unlink, writeFile } from 'node:fs/promises';
+import { realpath as nativeRealpath } from 'node:fs/promises';
+import { realpath as realpathForNode } from 'node:fs';
+import { promisify } from 'node:util';
 import { resolve } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { assertPrebuiltArtifact, freezePrebuiltArtifact } from '../src/node/prebuilt-artifact.js';
@@ -66,9 +69,11 @@ it('checks native resolution against portable symlink-prefix and parent traversa
   await symlink('shared/deep', resolve(f.output, 'prefix'), 'dir');
   await symlink('prefix/../leaf.cjs', resolve(f.output, 'use.cjs'), 'file');
   const actual = await load(resolve(f.output, 'use.cjs'), context.signal);
+  const [physicalTarget, runtimeTarget] = await Promise.all([nativeRealpath(resolve(f.output, 'use.cjs')), promisify(realpathForNode)(resolve(f.output, 'use.cjs'))]);
   expect(['portable', 'lexical']).toContain(actual);
+  expect(runtimeTarget).toBe(resolve(f.output, actual === 'portable' ? 'shared/leaf.cjs' : 'leaf.cjs'));
   const seal = () => freezePrebuiltArtifact(f.root, f.config, f.sha, context.signal, async () => {});
-  if (actual !== 'portable') await expect(seal()).rejects.toMatchObject({ code: 'ARTIFACT_INVALID' });
+  if (actual !== 'portable') await expect(seal(), JSON.stringify({ actual, physicalTarget, runtimeTarget })).rejects.toMatchObject({ code: 'ARTIFACT_INVALID' });
   else {
     const artifact = await seal();
     expect(await load(resolve(artifact.uploadRoot, '.vercel/output/use.cjs'), context.signal)).toBe('portable');

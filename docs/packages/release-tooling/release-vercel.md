@@ -60,7 +60,7 @@ status/verify 选择最近 publish 收据，后来源 HEAD、配置或 check 不
 
 已提交 prepare 步骤生成完整、自包含的 `.vercel/output/`，符合 Build Output API version 3。可通过消费者自己声明并固定版本的官方构建工具生成 standalone 产物；原生依赖须匹配 Vercel 的 Linux x64 运行环境。不得以历史任务目录作为输入，Windows 静态 fixture 通过也不代表原生云运行已通过。Git 字段继续冻结真实源码和开发分支，prebuilt 不推送任何分支，也不以 releaseBranch、caller meta 或伪造 gitSource 授权来源。
 
-逐文件及目录的路径、模式、长度、SHA-256 与 commit、配置摘要一起冻结。Build Output 内允许完整闭包中的相对 symlink，包括 pnpm 依赖链接和 `.func` 别名；逐项绑定链接文本、目标类型和解析后的目标。物理文件只复制一次，不展开链接目录；复制后原输出与副本必须保持相同的可移植解析结果。绝对链接、junction、外逃、断链、链接或目录循环、大小写冲突、Windows 与可移植解析不一致均拒绝。链接占用既有 maxFiles 数量预算，目标文本的 UTF-8 字节计入 maxBytes，不提高原阈值；Git 源码、槽位根和元数据仍沿用原有链接拒绝。
+逐文件及目录的路径、模式、长度、SHA-256 与 commit、配置摘要一起冻结。Build Output 内允许完整闭包中的相对 symlink，包括 pnpm 依赖链接和 `.func` 别名；逐项绑定链接文本、目标类型和解析后的目标。物理文件只复制一次，不展开链接目录；复制后原输出与副本必须同时经由底层文件系统和 Node 默认 realpath 得到相同的可移植目标。两种解析在 Linux 的链接前缀加 `..` 路径上也可能不同，不能只核对原生 API。绝对链接、junction、外逃、断链、链接或目录循环、大小写冲突及解析不一致均拒绝。链接占用既有 maxFiles 数量预算，目标文本的 UTF-8 字节计入 maxBytes，不提高原阈值；Git 源码、槽位根和元数据仍沿用原有链接拒绝。
 
 上传槽只含 Build Output 和明确的 project/team 上下文，拒绝危险路径、Git/常见环境及凭据文件；生成的 `static/.well-known/forge-prebuilt.json` 为保留路径。任意编译文件中嵌入的秘密仍须消费者审查，路径过滤不构成通用秘密证明。复制前预留新增物理用量和卷余量，仍受既有槽位总预算约束。消费者须在封存和上传期间保持产物静止；这些检查不是对抗恶意并发写入的操作系统沙箱。
 
