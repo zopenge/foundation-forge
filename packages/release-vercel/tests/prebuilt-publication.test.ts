@@ -25,6 +25,7 @@ describe('prebuilt publication through the existing release engine', () => {
     expect(order).toEqual(['run:check:0', 'run:admission:create:0', 'run:prebuilt-create', 'run:acceptance:0', 'run:admission:promote:0', 'promote']);
     expect(value.effects).toEqual({ developmentPush: 'not-attempted', releasePush: 'not-attempted', deploymentCreate: 'accepted', deploymentPromote: 'accepted' });
     expect(value.context.prebuilt?.state?.promotionVerified).toBe(true);
+    expect((await readdir(resolve(value.uploadRoot, '..'))).sort()).toEqual(['prebuilt']);
     expect(value.snapshots.some(item => item.createEffect === 'unknown' && !item.deploymentId)).toBe(true);
     expect(value.snapshots.some(item => item.promoteEffect === 'unknown' && item.deploymentId === 'dpl_candidate')).toBe(true);
   });

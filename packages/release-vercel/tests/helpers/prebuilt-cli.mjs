@@ -1,8 +1,9 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import process from 'node:process';
 
-const [counterPath, mode, ...args] = process.argv.slice(2);
-const required = ['deploy', '--prebuilt', '--prod', '--skip-domain', '--no-wait', '--json', '--non-interactive', '--project', 'prj_fixture', '--scope', 'team_fixture'];
+const [counterPath, mode, globalFlag, globalDirectory, ...args] = process.argv.slice(2);
+if (globalFlag !== '--global-config' || !globalDirectory || !readFileSync(`${globalDirectory}/config.json`, 'utf8')) throw new Error('private CLI configuration missing');
+const required = ['deploy', '--prebuilt', '--archive=tgz', '--prod', '--skip-domain', '--no-wait', '--json', '--non-interactive', '--project', 'prj_fixture', '--scope', 'team_fixture'];
 if (JSON.stringify(args) !== JSON.stringify(required)) throw new Error('unexpected prebuilt CLI invocation');
 const project = JSON.parse(readFileSync('.vercel/project.json', 'utf8'));
 if (project.projectId !== 'prj_fixture' || project.orgId !== 'team_fixture') throw new Error('wrong project context');

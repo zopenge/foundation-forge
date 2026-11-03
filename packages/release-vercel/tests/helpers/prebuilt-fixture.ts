@@ -33,7 +33,11 @@ export async function prebuiltFixture() {
       assertActive(signal); trace.push(`run:${name}`); await hooks.run?.(name, values);
       if (name === 'prebuilt-create') {
         const args = check.args ?? [];
-        const expected = ['deploy', '--prebuilt', '--prod', '--skip-domain', '--no-wait', '--json', '--non-interactive',
+        const configuration = args[args.indexOf('--global-config') + 1];
+        if (!args.includes('--global-config') || !configuration || values?.XDG_CACHE_HOME !== configuration
+          || values.APPDATA !== configuration || values.LOCALAPPDATA !== configuration) throw new Error('prebuilt CLI configuration must be private');
+        if (JSON.parse(await readFile(resolve(configuration, 'config.json'), 'utf8')).currentTeam !== 'team_fixture') throw new Error('wrong private CLI team');
+        const expected = ['deploy', '--prebuilt', '--archive=tgz', '--prod', '--skip-domain', '--no-wait', '--json', '--non-interactive',
           '--project', 'prj_fixture', '--scope', 'team_fixture'];
         if (this.cwd !== uploadRoot || JSON.stringify(args.slice(-expected.length)) !== JSON.stringify(expected) || code !== 'VERCEL_API') {
           throw new Error(`unexpected staging invocation: ${JSON.stringify({ cwd: this.cwd, args, code })}`);

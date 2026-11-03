@@ -9,6 +9,7 @@ import { request } from './vercel.js';
 import { configDigest } from './source.js';
 import { versionAliasBuildEnvironment, versionAliasCandidateEnvironment, versionAliasOrigin } from './version-alias.js';
 import { assertVersionAliasAvailable, bindVersionAlias, observeVersionAlias, versionAliasTransport } from './prebuilt-alias.js';
+import { createPrebuiltCliContext } from './prebuilt-cli-context.js';
 
 export async function publishPrebuiltCandidate(context: ExecutionContext, command: 'check' | 'publish' | 'status' | 'verify'): Promise<ReleaseDeployment | undefined> {
   const { execution, config, sha, signal, effects, prebuilt } = context;
@@ -48,7 +49,7 @@ export async function publishPrebuiltCandidate(context: ExecutionContext, comman
   const artifact = await freezePrebuiltArtifact(execution.cwd, config, sha, signal, bytes => prebuilt.reserve(bytes));
   const versionOrigin = versionAliasOrigin(config, sha);
   const initial: PrebuiltReleaseState = { sourceSha: sha, configSha256: artifact.configSha256, artifactSha256: artifact.artifactSha256,
-    fileCount: artifact.files.length, byteLength: artifact.byteLength, createEffect: 'not-attempted', promoteEffect: 'not-attempted', acceptanceVerified: false, promotionVerified: false,
+    fileCount: artifact.files.length + artifact.links.length, byteLength: artifact.byteLength, createEffect: 'not-attempted', promoteEffect: 'not-attempted', acceptanceVerified: false, promotionVerified: false,
     ...(versionOrigin ? { versionAlias: { hostname: new URL(versionOrigin).hostname, effect: 'not-attempted', verified: false } } : {}) };
   if (selected && (selected.sourceSha !== sha || selected.configSha256 !== artifact.configSha256 || selected.artifactSha256 !== artifact.artifactSha256)) {
     throw new ReleaseError('ARTIFACT_CHANGED', { reason: 'RECORDED_CANDIDATE_CHANGED' });
@@ -73,14 +74,25 @@ export async function publishPrebuiltCandidate(context: ExecutionContext, comman
       await assertVersionAliasAvailable(verify, state.versionAlias.hostname);
     }
     await admission('create'); await guard(); await context.stage('deployment');
-    state = await save({ ...state, createEffect: 'unknown' });
-    const invocation = vercelInvocation(['deploy', '--prebuilt', '--prod', '--skip-domain', '--no-wait', '--json', '--non-interactive',
-      '--project', config.vercel.projectId, '--scope', config.vercel.teamId]);
-    const output = await prebuilt.executionAt(artifact.uploadRoot).run('prebuilt-create', invocation, 'VERCEL_API', undefined, signal, false);
-    let parsed: unknown; try { parsed = JSON.parse(output); } catch { throw new ReleaseError('VERCEL_API', { reason: 'INVALID_CREATE_JSON' }); }
-    const envelope = record(parsed), candidate = record(envelope.deployment ?? parsed);
-    if ((envelope.status !== undefined && envelope.status !== 'ok') || candidate.target !== 'production') throw new ReleaseError('DEPLOYMENT_SOURCE');
-    state = await save({ ...state, deploymentId: candidateId(candidate.id), deploymentUrl: candidateOrigin(candidate.url), createEffect: 'accepted' });
+    const cli = await createPrebuiltCliContext(artifact.uploadRoot, config.vercel.teamId, signal);
+    let creationError: unknown, creationFailed = false;
+    try {
+      assertActive(signal); state = await save({ ...state, createEffect: 'unknown' });
+      const invocation = vercelInvocation(['--global-config', cli.directory, 'deploy', '--prebuilt', '--archive=tgz', '--prod', '--skip-domain', '--no-wait', '--json', '--non-interactive',
+        '--project', config.vercel.projectId, '--scope', config.vercel.teamId], { preserveArchiveModes: true });
+      const output = await prebuilt.executionAt(artifact.uploadRoot).run('prebuilt-create', invocation, 'VERCEL_API', cli.environment, signal, false);
+      let parsed: unknown; try { parsed = JSON.parse(output); } catch { throw new ReleaseError('VERCEL_API', { reason: 'INVALID_CREATE_JSON' }); }
+      const envelope = record(parsed), candidate = record(envelope.deployment ?? parsed);
+      if ((envelope.status !== undefined && envelope.status !== 'ok') || candidate.target !== 'production') throw new ReleaseError('DEPLOYMENT_SOURCE');
+      state = await save({ ...state, deploymentId: candidateId(candidate.id), deploymentUrl: candidateOrigin(candidate.url), createEffect: 'accepted' });
+    } catch (error) { creationFailed = true; creationError = error; }
+    try { await cli.dispose(); }
+    catch (cleanup) {
+      if (creationError instanceof ReleaseError) throw new ReleaseError(creationError.code, { ...creationError.details, cleanup: 'CLI_CONTEXT_CLEANUP' });
+      if (creationFailed) throw new AggregateError([creationError, cleanup], 'CLI_CONTEXT_CLEANUP', { cause: cleanup });
+      throw cleanup;
+    }
+    if (creationFailed) throw creationError;
   }
   const candidate = await verify.ready(state);
   if (state.promoteEffect !== 'not-attempted') {
