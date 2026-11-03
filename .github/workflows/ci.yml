@@ -11,8 +11,8 @@ jobs:
     name: ${{ matrix.os }} / Node.js ${{ matrix.node-version }}
     runs-on: ${{ matrix.os }}
     env:
-      # Vitest 的环境变量会覆盖包配置；Windows 原生进程用例逐文件占用宿主。
-      VITEST_MAX_WORKERS: ${{ matrix.os == 'windows-2025' && '1' || '' }}
+      # 仓库入口按共享预算派生 Vitest 子进程；Windows 的单槽约束必须从根预算生效。
+      FORGE_CHECK_TEST_WORKERS: ${{ matrix.os == 'windows-2025' && '1' || '2' }}
     strategy:
       fail-fast: false
       matrix:

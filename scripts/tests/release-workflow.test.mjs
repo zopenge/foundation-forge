@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
@@ -24,6 +25,58 @@ const dataDrivenScriptUrls = [
 async function readWorkflow(url) {
   return parse(await readFile(url, 'utf8'));
 }
+
+function startWorkflowProbe(args, options) {
+  const result = Promise.withResolvers();
+  let outcome;
+  const child = execFile(process.execPath, args, { ...options, windowsHide: true }, (error, stdout) => {
+    outcome = { error, stdout };
+  });
+  child.once('close', () => {
+    if (!outcome) { result.reject(new Error('CI_PROBE_RESULT_MISSING')); return; }
+    if (outcome.error) result.reject(outcome.error); else result.resolve({ stdout: outcome.stdout });
+  });
+  return { child, completion: result.promise };
+}
+
+test('a cancelled CI budget probe waits for its actual child close before rejecting', async t => {
+  const controller = new globalThis.AbortController();
+  const { child, completion } = startWorkflowProbe(['-e', 'setInterval(()=>{},1000)'], {
+    signal: globalThis.AbortSignal.any([t.signal, controller.signal]),
+  });
+  let closed = false;
+  const closure = new Promise(accept => child.once('close', () => { closed = true; accept(); }));
+  child.once('spawn', () => { controller.abort(); });
+  const observed = completion.then(() => undefined, error => error);
+  try {
+    assert.equal((await observed)?.code, 'ABORT_ERR');
+    assert.equal(closed, true);
+  } finally { controller.abort(); await closure; await observed; }
+});
+
+test('CI worker selections reach the real repository budget and serialize Windows reservations', async t => {
+  const workflow = await readWorkflow(ciWorkflowUrl);
+  for (const [os, expected] of [['windows-2025', 1], ['ubuntu-24.04', 2]]) {
+    const selected = Object.fromEntries(Object.entries(workflow.jobs.verify.env).map(([key, value]) => {
+      const expression = /^\$\{\{\s*matrix\.os == '([^']+)' && '([^']*)' \|\| '([^']*)'\s*\}\}$/u.exec(value);
+      assert.ok(expression, 'CI worker environment requires an explicit OS selection');
+      return [key, os === expression[1] ? expression[2] : expression[3]];
+    }));
+    // 在独立子进程中清除外层测试的预算注入，重现 Actions 根命令的实际环境。
+    const { completion } = startWorkflowProbe(['--input-type=module', '-e', `
+      import {setImmediate} from 'node:timers/promises';
+      import {createTestWorkerBudget} from ${JSON.stringify(new URL('../test-worker-budget.mjs', import.meta.url).href)};
+      const budget=createTestWorkerBudget(), gate=Promise.withResolvers(); let running=0, peak=0;
+      const tasks=[0,1].map(index=>budget.run({name:String(index),workers:1},async()=>{
+        running++;peak=Math.max(peak,running);await gate.promise;running--;
+      }));
+      await setImmediate(); const observed=peak; gate.resolve(); await Promise.all(tasks);
+      console.log(JSON.stringify({limit:budget.limit,peak:observed,active:budget.summary().activeWorkers}));
+    `], { signal: t.signal, windowsHide: true, env: { ...process.env,
+      VITEST_MAX_WORKERS: undefined, FORGE_CHECK_TEST_WORKERS: undefined, ...selected } });
+    assert.deepEqual(JSON.parse((await completion).stdout), { limit: expected, peak: expected, active: 0 }, os);
+  }
+});
 
 function releaseSteps(workflow) {
   return workflow.jobs.release.steps;
