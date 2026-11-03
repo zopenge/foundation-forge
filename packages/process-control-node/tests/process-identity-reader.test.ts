@@ -1,5 +1,7 @@
 import { expect, onTestFailed, test, vi } from 'vitest';
 import { resolve } from 'node:path';
+import { mkdir, mkdtemp, readFile, rm, rmdir } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 
 import { ProcessControlError, processControlErrorCodes } from '@openge/forge-process-control';
 
@@ -221,22 +223,40 @@ test('Posix reader rejects nonempty output with a failed exit status', async () 
 test.runIf(process.platform === 'win32')('Windows reader works without cmdlet module loading', async context => {
   const { startIdentityCommand } = await import('./helpers/identity-command.js');
   const { readIdentityPair } = await import('./helpers/identity-read-pair.js');
-  let calls = 0; const observations: { durationMs: number; outcome: string }[] = [];
+  const traceBase = fileURLToPath(new URL('../../../.tmp/', import.meta.url));
+  await mkdir(traceBase, { recursive: true });
+  const traceRoot = await mkdtemp(resolve(traceBase, 'windows-reader-')), traceFiles: string[] = [];
+  let calls = 0;
+  const observations: { durationMs: number; outcome: string; phases: string[];
+    events: ReturnType<typeof startIdentityCommand>['events'] }[] = [];
   const reader = createWindowsProcessIdentityReader({
     runner: async request => {
       calls++; const started = performance.now(); let outcome: string | undefined;
+      const tracePath = resolve(traceRoot, `${calls}.txt`); traceFiles.push(tracePath);
+      const literalPath = tracePath.replaceAll("'", "''");
+      // 只向本测试自建文件记录阶段；原身份输出和错误流完整保留。
+      const prefix = "$PSModuleAutoLoadingPreference='None'; $forgeIdentityClock=[System.Diagnostics.Stopwatch]::StartNew(); "
+        + `[System.IO.File]::WriteAllText('${literalPath}','ready'+[Environment]::NewLine); `;
+      const suffix = `; [System.IO.File]::AppendAllText('${literalPath}','queried:'+$forgeIdentityClock.ElapsedMilliseconds.ToString([System.Globalization.CultureInfo]::InvariantCulture)+[Environment]::NewLine);`;
+      const command = startIdentityCommand({ ...request, args: [...request.args.slice(0, 3), prefix + request.args[3] + suffix] });
       try {
-        const result = await startIdentityCommand({ ...request,
-          args: [...request.args.slice(0, 3), "$PSModuleAutoLoadingPreference='None'; " + request.args[3]] }).completion;
+        const result = await command.completion;
         outcome = `exit:${result.exitCode}`; return result;
       } catch (error) { outcome = error instanceof ProcessControlError ? error.code : 'ERROR'; throw error; }
-      finally { observations.push({ durationMs: Math.round(performance.now() - started), outcome: outcome ?? 'UNKNOWN' }); }
+      finally {
+        let phases: string[];
+        try { phases = (await readFile(tracePath, 'utf8')).trim().split(/\r?\n/u); }
+        catch (error) { phases = [error instanceof Error && 'code' in error ? `trace:${String(error.code)}` : 'trace:UNKNOWN']; }
+        observations.push({ durationMs: Math.round(performance.now() - started), outcome: outcome ?? 'UNKNOWN', phases, events: command.events });
+      }
     },
   });
   const signal = AbortSignal.any([context.signal, AbortSignal.timeout(7_000)]);
   const pair = readIdentityPair(reader, process.pid, signal);
   const drain = async () => { await pair.then(() => {}, () => {}); };
-  context.onTestFinished(drain);
+  context.onTestFinished(async () => {
+    await drain(); for (const path of traceFiles) await rm(path, { force: true }); await rmdir(traceRoot);
+  });
   onTestFailed(async () => { await drain(); process.stderr.write(`${JSON.stringify({ kind: 'WINDOWS_READER_LIVE', calls, observations })}\n`); });
   const [first, second] = await pair;
   expect(first.status).toBe('FOUND');
@@ -246,4 +266,9 @@ test.runIf(process.platform === 'win32')('Windows reader works without cmdlet mo
   expect(first.identity.pid).toBe(process.pid);
   expect(first.identity.startToken).toMatch(/^\/Date\(\d+\)\/$/u);
   expect(second).toEqual(first); expect(calls).toBe(2);
+  for (const observation of observations) {
+    expect(observation.phases[0]).toBe('ready');
+    expect(observation.phases[1]).toMatch(/^queried:\d+$/u);
+  }
+  process.stdout.write(`${JSON.stringify({ kind: 'WINDOWS_READER_LIVE', calls, observations })}\n`);
 });
