@@ -11,7 +11,7 @@ import { createManagedExecution } from './managed-execution.js';
 import { assertRepository, normalizeRepository, remoteRefs } from './git.js';
 import { configDigest, readCommittedConfig, relativeConfigPath } from './source.js';
 import { identityReader } from './process-identities.js';
-import type { PrebuiltReleaseState, ReleaseBudget, ReleaseDeployment, ReleaseDiagnostic, ReleaseRecoveryObservation, ReleaseRefRelation, ReleaseReport, ReleaseStage, RunReleaseOptions } from '../contracts.js';
+import type { PrebuiltReleaseState, ReleaseBudget, ReleaseCompletionState, ReleaseDeployment, ReleaseDiagnostic, ReleaseRecoveryObservation, ReleaseRefRelation, ReleaseReport, ReleaseStage, RunReleaseOptions } from '../contracts.js';
 import { diagnostic } from './workspace-release.js';
 import { createTransport, VercelVerification } from './vercel.js';
 import { createPrebuiltTransport } from './prebuilt-vercel.js';
@@ -32,6 +32,9 @@ import { discardPreparedState, restoreManagedTerminal } from './managed-terminal
 import { archiveManagedDisposition, assertDispositionSnapshot, hasManagedDisposition, readManagedDisposition } from './managed-disposition.js';
 import { hasFinalizedRetirement } from './retirement-record.js';
 import { assertManagedHistory } from './managed-history.js';
+import { runCompletion } from './completion.js';
+import { observedCompletionState, parseCompletionState } from './completion-state.js';
+import { readCompletionSnapshots } from './completion-history.js';
 
 export async function classifyRemoteRef(execution: Execution, sha: string, ref: string): Promise<ReleaseRefRelation> {
   if (sha === ref) return 'candidate';
@@ -48,6 +51,7 @@ interface ReceiptOutcome {
   readonly observation?: RecoveryObservation; readonly refs?: ReleaseRecoveryObservation; readonly deployment?: ReleaseDeployment; readonly budget?: ReleaseBudget;
   readonly next?: string; readonly kind?: 'publish' | 'check'; readonly reportExists?: boolean;
   readonly prebuilt?: PrebuiltReleaseState;
+  readonly completion?: ReleaseCompletionState;
 }
 function receiptReport(options: RunReleaseOptions, outcome: ReceiptOutcome): ReleaseReport {
   const { source, location } = outcome;
@@ -58,6 +62,7 @@ function receiptReport(options: RunReleaseOptions, outcome: ReceiptOutcome): Rel
       recovery: { candidateSha: source.sha, reportPath: resolve(location.paths.slotRoot, `latest-${outcome.kind ?? 'publish'}.json`), nextCommand: recoveryCommand(outcome.next ?? 'verify', source), ...(outcome.reportExists === undefined ? {} : { reportExists: outcome.reportExists }), ...(outcome.refs ? { observation: outcome.refs } : {}) } } : {}),
     ...(outcome.observation ? { processes: { status: outcome.observation.processes, knownCount: outcome.observation.knownCount } } : {}),
     ...(outcome.budget ? { budget: outcome.budget } : {}), ...(outcome.prebuilt ? { prebuilt: outcome.prebuilt } : {}),
+    ...(outcome.completion ? { completion: outcome.completion } : {}),
     ...(candidateContext ? { candidateContext } : {}),
     ...(outcome.deployment ? { deployment: outcome.deployment } : {}), ...(outcome.failure ? { error: outcome.failure } : {}) };
 }
@@ -115,6 +120,7 @@ async function recoverManagedPublication(options: RunReleaseOptions): Promise<Re
     ...(source ? { source } : {}), ...(location ? { location } : {}), ...(state ? { runId: state.runId, kind: state.command === 'check' ? 'check' : 'publish' } : {}),
     ...(observation ? { observation } : {}), ...(refs ? { refs } : {}), ...(budget ? { budget: budget.summary() } : {}), ...(failure ? { failure } : {}),
     ...(state?.prebuilt ? { prebuilt: state.prebuilt } : {}),
+    ...(state?.completion ? { completion: state.completion } : {}),
     next: failure ? failure.details.reason === 'CLOSURE_UNPROVEN' && state ? `retire --run-id ${state.runId}` : 'recover'
       : state?.prebuilt ? state.prebuilt.deploymentId ? 'verify' : 'status' : effects.releasePush === 'pushed' || effects.releasePush === 'already-current' ? 'verify' : 'publish' });
 }
@@ -136,18 +142,25 @@ async function runManagedVerification(options: RunReleaseOptions): Promise<Relea
   const startedAt = new Date().toISOString();
   let selected: Awaited<ReturnType<typeof loadManagedPublication>> | undefined, slot: ManagedSlot | undefined, session: ManagedSession | undefined;
   let failure: ReleaseDiagnostic | undefined, deployment: ReleaseDeployment | undefined, closed = true;
-  const report = () => receiptReport(options, { startedAt, stage: session?.state.stage ?? 'source', steps: session?.steps ?? [], effects: session?.state.effects ?? { developmentPush: 'not-attempted', releasePush: 'not-attempted' },
-    ...(selected ? { source: selected.receipt.source, location: selected.location, ...(session ? { runId: session.state.runId } : {}) } : {}),
+  const report = () => receiptReport(options, { startedAt, stage: session?.state.stage ?? 'source', steps: session?.steps ?? [],
+    effects: session?.state.effects ?? (selected?.receipt.report.completion ? selected.receipt.report.effects : { developmentPush: 'not-attempted', releasePush: 'not-attempted' }),
+    ...(selected ? { source: selected.receipt.source, location: selected.location, ...(selected.reportExists ? {} : { reportExists: false }),
+      ...(session ? { runId: session.state.runId } : {}) } : {}),
     ...(session ? { observation: { owner: closed ? 'inactive' : 'unknown', processes: closed ? 'closed' : 'unknown', knownCount: new Set(session.state.processes.flatMap(managedCommandIdentities).map(identity => `${String(identity.pid)}:${identity.startToken}`)).size }, budget: session.budget.summary() } : {}),
     ...(session?.state.prebuilt ? { prebuilt: session.state.prebuilt } : {}),
-    ...(deployment ? { deployment } : {}), ...(failure ? { failure } : {}), next: closed ? 'verify' : 'recover' });
+    ...(session?.state.completion ? { completion: session.state.completion } : {}),
+    ...(!session && selected?.receipt.report.completion ? { completion: selected.receipt.report.completion,
+      ...(selected.receipt.report.prebuilt ? { prebuilt: selected.receipt.report.prebuilt } : {}) } : {}),
+    ...(deployment ? { deployment } : {}), ...(failure ? { failure } : {}),
+    next: closed ? session?.state.completion && session.state.completion.status !== 'completed' ? 'verify --retry-completion' : 'verify' : 'recover' });
   try {
     if (options.config !== undefined) throw new ReleaseError('SOURCE_UNSUPPORTED', { reason: 'COMMITTED_CONFIG_REQUIRED' });
     selected = await loadManagedPublication(options.cwd, options.configPath ?? 'release.config.json', options.sha, options.signal);
     const { source } = selected.receipt;
+    if (options.retryCompletion && !source.config.completion) throw new ReleaseError('SOURCE_UNSUPPORTED', { reason: 'COMPLETION_NOT_CONFIGURED' });
     if (!await pathExists(resolve(selected.location.paths.checkoutRoot, '.git'))) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'CHECKOUT_MISSING' });
     const original = createManagedExecution(source.root, source.config, options.signal, []);
-    await settleManagedSlot(options); slot = await openManagedSlot(source, original); session = await createManagedSession(slot, 'verify', options.signal);
+    await settleManagedSlot(options); slot = await openManagedSlot(source, original, 'verify'); session = await createManagedSession(slot, 'verify', options.signal);
     const current = session;
     if (source.config.delivery && selected.receipt.report.prebuilt) {
       session.state.prebuilt = structuredClone(selected.receipt.report.prebuilt);
@@ -161,6 +174,7 @@ async function runManagedVerification(options: RunReleaseOptions): Promise<Relea
     deployment = await publishCandidate({ execution: session.execution, config: source.config, sha: source.sha, signal: options.signal, transport: options.transport,
       effects: session.state.effects, prebuilt: managedPrebuiltContext(session), assertFrozen, mutationGuard: async () => { throw new ReleaseError('SOURCE_UNSUPPORTED'); },
       stage: async stage => { current.state.stage = stage; await current.persist(); }, checkpoint: async () => { throw new ReleaseError('SOURCE_UNSUPPORTED'); } }, 'verify');
+    await runCompletion(session, options, assertFrozen);
     await recordVerifiedAlias(session, selected.receipt, options.transport);
     await session.assertClosed(); await session.budget.sample(); session.state.stage = 'complete';
   } catch (error) { failure = diagnostic(error); }
@@ -188,11 +202,12 @@ export async function runManagedReceiptCommand(options: RunReleaseOptions): Prom
   let refs: ReleaseRecoveryObservation | undefined;
   let effects: ReleaseReport['effects'] = { developmentPush: 'not-attempted', releasePush: 'not-attempted' };
   let prebuilt: PrebuiltReleaseState | undefined;
+  let completion: ReleaseCompletionState | undefined;
   try {
     assertActive(options.signal);
     if (options.config !== undefined) throw new ReleaseError('SOURCE_UNSUPPORTED', { reason: 'COMMITTED_CONFIG_REQUIRED' });
     if (options.command !== 'status') throw new ReleaseError('SOURCE_UNSUPPORTED', { reason: 'RECEIPT_COMMAND_PENDING' });
-    selected = await loadManagedPublication(options.cwd, options.configPath ?? 'release.config.json', options.sha, options.signal);
+    selected = await loadManagedPublication(options.cwd, options.configPath ?? 'release.config.json', options.sha, options.signal, true);
     const { receipt, location } = selected, source = receipt.source;
     effects = { ...receipt.report.effects };
     const stateValue = await readBoundedJson(location.paths.statePath);
@@ -203,6 +218,16 @@ export async function runManagedReceiptCommand(options: RunReleaseOptions): Prom
     await assertManagedHistory(location.paths, state);
     const restored = await restoreManagedTerminal(location.paths, state, { allowReleasedLock: !await pathExists(location.paths.lockPath), ...(options.signal ? { signal: options.signal } : {}) });
     observation = await inspectManagedRecovery(restored.state, location.paths, options.signal);
+    if (source.config.completion) {
+      const snapshots = await readCompletionSnapshots(location.paths, location.anchor.slotId, state, options.signal);
+      const matches = snapshots.filter(snapshot => snapshot.origin.source.sha === source.sha && snapshot.origin.source.configSha256 === source.configSha256
+        && (!receipt.report.completion || snapshot.completion.publicationRunId === receipt.report.completion.publicationRunId));
+      if (matches.length > 1) throw new ReleaseError('SLOT_STATE', { reason: 'COMPLETION_BINDING_AMBIGUOUS' });
+      const snapshot = matches[0];
+      completion = observedCompletionState(snapshot?.completion, state.runId, observation.owner);
+      parseCompletionState(completion, source, receipt.report.prebuilt);
+      if (completion) prebuilt = snapshot?.current.prebuilt ?? receipt.report.prebuilt;
+    }
     const locallyReady = await hasManagedDisposition(location.paths, state);
     needsRecovery = observation.owner !== 'inactive' || observation.processes !== 'closed' || (state.status !== 'closed' && !locallyReady);
     const execution = createManagedExecution(source.root, source.config, options.signal, []);
@@ -215,7 +240,7 @@ export async function runManagedReceiptCommand(options: RunReleaseOptions): Prom
     }
     stage = 'deployment';
     if (source.config.delivery) {
-      const found = await observePrebuiltCandidate(source.config, receipt.report.prebuilt,
+      const found = await observePrebuiltCandidate(source.config, prebuilt ?? receipt.report.prebuilt,
         options.transport ?? createPrebuiltTransport(execution, source.config, false), options.signal);
       deployment = found.deployment; prebuilt = found.observed;
       effects.deploymentCreate = prebuilt.createEffect; effects.deploymentPromote = prebuilt.promoteEffect;
@@ -227,17 +252,24 @@ export async function runManagedReceiptCommand(options: RunReleaseOptions): Prom
     if (observation.processes === 'unknown') throw new ReleaseError('PROCESS_STATE_UNKNOWN');
     if (needsRecovery) throw new ReleaseError('RECOVERY_REQUIRED', { activeRunId: state.runId, owner: observation.owner, processes: observation.processes });
     if (!deployment) throw new ReleaseError('DEPLOYMENT_MISSING');
+    if (completion && completion.status !== 'completed') {
+      stage = 'completion'; throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'COMPLETION_PENDING' });
+    }
     stage = 'complete';
   } catch (error) { failure = diagnostic(error); }
   const source = selected?.receipt.source;
   const candidateContext = source ? prebuiltCandidateContext(source.config, prebuilt) : undefined;
   return { schemaVersion: 2, command: options.command, ok: failure === undefined, startedAt, finishedAt: new Date().toISOString(), steps: [], stage,
     effects, ...(prebuilt ? { prebuilt } : {}),
+    ...(completion ? { completion } : {}),
     ...(candidateContext ? { candidateContext } : {}),
     ...(source && selected ? { sourceRoot: source.root, executionRoot: selected.location.paths.checkoutRoot, configPath: source.configPath,
       slotId: selected.location.anchor.slotId, candidateSha: source.sha, configSha256: source.configSha256,
       ...(selected.receipt.report.runId ? { runId: selected.receipt.report.runId } : {}),
-      recovery: { candidateSha: source.sha, reportPath: resolve(selected.location.paths.slotRoot, 'latest-publish.json'), nextCommand: recoveryCommand(needsRecovery ? 'recover' : 'verify', source), ...(refs ? { observation: refs } : {}) } } : {}),
+      recovery: { candidateSha: source.sha, reportPath: resolve(selected.location.paths.slotRoot, 'latest-publish.json'),
+        nextCommand: recoveryCommand(needsRecovery ? 'recover' : completion && completion.status !== 'completed' ? 'verify --retry-completion' : 'verify', source),
+        ...(selected.reportExists ? {} : { reportExists: false }),
+        ...(refs ? { observation: refs } : {}) } } : {}),
     ...(observation ? { processes: { status: observation.processes, knownCount: observation.knownCount } } : {}),
     ...(deployment ? { deployment } : {}), ...(failure ? { error: failure } : {}) };
 }
@@ -319,17 +351,56 @@ export async function assertHistoricalSource(source: FrozenSource, signal?: Abor
   if (committed.oid !== source.configBlobOid || await configDigest(committed.config) !== source.configSha256
     || await configDigest(source.config) !== source.configSha256) throw new ReleaseError('SLOT_STATE', { reason: 'CONFIG_BLOB_BINDING' });
 }
-async function loadManagedPublication(cwd: string, configPath: string, sha?: string, signal?: AbortSignal): Promise<{ receipt: ManagedReceipt; location: ManagedLocation }> {
+/** 缺少正常收据时只读原意图；descriptor 永远是失败，绝不补造原发布成功。 */
+async function completionIntentReceipt(location: ManagedLocation, selected: NonNullable<ManagedAnchor['latestPublish']>, signal: AbortSignal | undefined,
+  allowActive: boolean): Promise<ManagedReceipt | undefined> {
+  const archive = await readManagedDisposition(location.paths, selected.runId);
+  const retired = archive ? undefined : (await readCompletionSnapshots(location.paths, location.anchor.slotId, undefined, signal))
+    .flatMap(snapshot => snapshot.ceased).find(state => state.command === 'publish' && state.runId === selected.runId);
+  const archived = !!archive || !!retired;
+  let state = archive?.stopped ?? retired;
+  if (!state) {
+    const value = await readBoundedJson(location.paths.statePath);
+    if (record(record(record(value).source).config).completion === undefined) return;
+    const source = frozenSource(record(value).source, location);
+    state = parseManagedState(value, source, location.anchor.slotId);
+  }
+  if (state.command !== 'publish' || state.runId !== selected.runId || !state.source.config.completion || !state.completion || !state.prebuilt) return;
+  const source = frozenSource(state.source, location);
+  if (source.sha !== selected.sha || source.configSha256 !== selected.configSha256 || state.slotId !== location.anchor.slotId)
+    throw new ReleaseError('SLOT_STATE', { reason: 'COMPLETION_INTENT_IDENTITY' });
+  await assertHistoricalSource(source, signal);
+  if (!archived && !allowActive) throw new ReleaseError('RECOVERY_REQUIRED', {
+    reason: 'COMPLETION_INTENT_NEEDS_RECOVERY', runId: state.runId, nextCommand: recoveryCommand('recover', source) });
+  if (archive && !state.processes.every(hasVerifiedManagedStop)) throw new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'CLOSURE_UNPROVEN' });
+  const observedAt = archive?.recordedAt ?? new Date().toISOString(), candidateContext = prebuiltCandidateContext(source.config, state.prebuilt);
+  const report: ReleaseReport = { schemaVersion: 2, command: 'publish', ok: false, startedAt: observedAt, finishedAt: observedAt,
+    steps: [], effects: { ...state.effects }, candidateSha: source.sha, configSha256: source.configSha256, runId: state.runId,
+    slotId: state.slotId, sourceRoot: source.root, executionRoot: location.paths.checkoutRoot, configPath: source.configPath, stage: state.stage,
+    prebuilt: state.prebuilt, completion: state.completion, ...(candidateContext ? { candidateContext } : {}),
+    error: { code: 'RECOVERY_REQUIRED', details: { reason: archived ? 'ARCHIVED_PUBLICATION_INTENT' : 'ACTIVE_PUBLICATION_INTENT' } } };
+  return parseManagedReceipt({ schemaVersion: 2, slotId: state.slotId, source, report }, source, state.slotId);
+}
+async function loadManagedPublication(cwd: string, configPath: string, sha?: string, signal?: AbortSignal,
+  allowActiveCompletion = false): Promise<{ receipt: ManagedReceipt; location: ManagedLocation; reportExists: boolean }> {
   assertActive(signal);
   const location = await readManagedLocation(cwd, configPath), selected = location.anchor.latestPublish;
   if (!selected) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'PUBLISH_RECEIPT_MISSING' });
   if (sha !== undefined && sha !== selected.sha) throw new ReleaseError('RECEIPT_SHA_MISMATCH', { requested: sha, known: selected.sha });
   const value = await readBoundedJson(resolve(location.paths.slotRoot, 'latest-publish.json'));
+  if (value === undefined) {
+    const intent = await completionIntentReceipt(location, selected, signal, allowActiveCompletion);
+    if (intent) return { receipt: intent, location, reportExists: false };
+  }
   const source = frozenSource(record(value).source, location);
   const receipt = parseManagedReceipt(value, source, location.anchor.slotId);
-  if (receipt.report.runId !== selected.runId || source.sha !== selected.sha || source.configSha256 !== selected.configSha256 || receipt.report.command !== 'publish') throw new ReleaseError('SLOT_STATE', { reason: 'PUBLICATION_BINDING' });
   await assertHistoricalSource(source, signal);
-  return { receipt, location };
+  if (receipt.report.command === 'publish' && receipt.report.runId !== selected.runId) {
+    const intent = await completionIntentReceipt(location, selected, signal, allowActiveCompletion);
+    if (intent) return { receipt: intent, location, reportExists: false };
+  }
+  if (receipt.report.runId !== selected.runId || source.sha !== selected.sha || source.configSha256 !== selected.configSha256 || receipt.report.command !== 'publish') throw new ReleaseError('SLOT_STATE', { reason: 'PUBLICATION_BINDING' });
+  return { receipt, location, reportExists: true };
 }
 export async function selectManagedPublication(sourceRoot: string, configPath: string, sha?: string): Promise<ManagedReceipt> {
   return (await loadManagedPublication(sourceRoot, configPath, sha)).receipt;

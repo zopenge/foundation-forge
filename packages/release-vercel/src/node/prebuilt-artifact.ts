@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { lstat, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import type { ReleaseConfig } from '../contracts.js';
+import type { PrebuiltReleaseState, ReleaseConfig } from '../contracts.js';
 import { record, ReleaseError } from './errors.js';
 import { assertPathChain, pathExists, readBoundedJson } from './managed-io.js';
 import { configDigest } from './source.js';
@@ -13,7 +13,12 @@ export interface PrebuiltArtifact extends ArtifactInventory {
   readonly artifactSha256: string; readonly uploadIdentity: { readonly dev: string; readonly ino: string };
 }
 export const prebuiltMarkerPath = '/.well-known/forge-prebuilt.json';
-const manifestLimit = 4_194_304;
+export const prebuiltManifestLimit = 4_194_304;
+const manifestLimit = prebuiltManifestLimit;
+export function prebuiltArtifactPaths(cwd: string): { root: string; uploadRoot: string; manifestPath: string } {
+  const uploadRoot = resolve(cwd, '.tmp/forge-vercel-release/prebuilt');
+  return { root: resolve(cwd, '.vercel/output'), uploadRoot, manifestPath: resolve(uploadRoot, '.vercel/forge-artifact.json') };
+}
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 const artifactDigest = (sourceSha: string, configSha256: string, inventory: ArtifactInventory) =>
   digest(JSON.stringify({ formatVersion: 2, sourceSha, configSha256, ...inventory }));
@@ -31,7 +36,7 @@ export function matchesPrebuiltMarker(value: unknown, artifact: Pick<PrebuiltArt
 }
 export async function freezePrebuiltArtifact(cwd: string, config: ReleaseConfig, sourceSha: string, signal: AbortSignal | undefined,
   reserve: (bytes: number) => Promise<void>): Promise<PrebuiltArtifact> {
-  const deadline = Date.now() + config.limits.commandMs, root = resolve(cwd, '.vercel/output');
+  const deadline = Date.now() + config.limits.commandMs, { root, uploadRoot } = prebuiltArtifactPaths(cwd);
   await assertPathChain(cwd, root);
   const initial = await inspectArtifact(root, config, signal, deadline);
   const configuration = initial.files.find(file => file.path === 'config.json');
@@ -44,7 +49,7 @@ export async function freezePrebuiltArtifact(cwd: string, config: ReleaseConfig,
   artifactGuard(signal, deadline);
   await reserve(initial.byteLength + Buffer.byteLength(JSON.stringify(initial)) + 65_536);
   artifactGuard(signal, deadline);
-  const uploadRoot = resolve(cwd, '.tmp/forge-vercel-release/prebuilt'); await assertPathChain(cwd, uploadRoot);
+  await assertPathChain(cwd, uploadRoot);
   if (await pathExists(uploadRoot)) {
     const ownerPath = resolve(uploadRoot, '.vercel/forge-artifact.json'); await assertPathChain(uploadRoot, ownerPath);
     const owner = record(await readBoundedJson(ownerPath, manifestLimit)), identity = await lstat(uploadRoot, { bigint: true });
@@ -92,6 +97,25 @@ export async function assertPrebuiltArtifact(artifact: PrebuiltArtifact, config:
       if (JSON.stringify(value) !== JSON.stringify(expected)) throw new ReleaseError('ARTIFACT_CHANGED');
     }
     artifactGuard(signal, deadline);
+  } catch (error) {
+    if (error instanceof ReleaseError && ['CANCELLED', 'BUDGET_EXCEEDED'].includes(error.code)) throw error;
+    throw new ReleaseError('ARTIFACT_CHANGED');
+  }
+}
+
+/** 只读复核原封存输出及身份；恢复不得重新构建、复制或生成 marker 来补造原输入。 */
+export async function assertRecordedPrebuiltArtifact(cwd: string, config: ReleaseConfig, state: PrebuiltReleaseState, signal?: AbortSignal): Promise<void> {
+  try {
+    const deadline = Date.now() + config.limits.commandMs;
+    const { root, uploadRoot } = prebuiltArtifactPaths(cwd);
+    await assertPathChain(cwd, root); await assertPathChain(cwd, uploadRoot);
+    const ownerPath = resolve(uploadRoot, '.vercel/forge-artifact.json'); await assertPathChain(uploadRoot, ownerPath);
+    const owner = record(await readBoundedJson(ownerPath, manifestLimit));
+    if (typeof owner.dev !== 'string' || !/^\d+$/u.test(owner.dev) || typeof owner.ino !== 'string' || !/^\d+$/u.test(owner.ino)) throw new ReleaseError('ARTIFACT_CHANGED');
+    const current = await inspectArtifact(root, config, signal, deadline);
+    const artifact: PrebuiltArtifact = { ...current, root, uploadRoot, sourceSha: state.sourceSha, configSha256: state.configSha256,
+      artifactSha256: state.artifactSha256, uploadIdentity: { dev: owner.dev, ino: owner.ino } };
+    await assertPrebuiltArtifact(artifact, config, signal, deadline);
   } catch (error) {
     if (error instanceof ReleaseError && ['CANCELLED', 'BUDGET_EXCEEDED'].includes(error.code)) throw error;
     throw new ReleaseError('ARTIFACT_CHANGED');

@@ -18,6 +18,7 @@ import { managedCommandIdentities } from './managed-observation.js';
 import { managedPrebuiltContext } from './prebuilt-state.js';
 import { prebuiltCandidateContext } from './version-alias.js';
 import { resumeVerifiedAlias } from './prebuilt-resumption.js';
+import { runCompletion } from './completion.js';
 
 export async function runManagedRelease(options: RunReleaseOptions): Promise<ReleaseReport> {
   const startedAt = new Date().toISOString();
@@ -34,6 +35,7 @@ export async function runManagedRelease(options: RunReleaseOptions): Promise<Rel
     ...(session ? { budget: session.budget.summary(), processes: { status: closed ? 'closed' : 'unknown', knownCount: new Set(session.state.processes.flatMap(managedCommandIdentities).map(identity => `${String(identity.pid)}:${identity.startToken}`)).size } } : {}),
     ...(result ? { deployment: result } : {}), ...(failure ? { error: failure } : {}),
     ...(session?.state.prebuilt ? { prebuilt: session.state.prebuilt } : {}),
+    ...(session?.state.completion ? { completion: session.state.completion } : {}),
     ...(candidateContext ? { candidateContext } : {}),
     ...(slot && source ? { recovery: { candidateSha: source.sha, reportPath: resolve(slot.paths.slotRoot, options.command === 'publish' ? 'latest-publish.json' : 'latest-check.json'),
       nextCommand: recoveryCommand(retained || !closed || Object.values(session?.state.effects ?? emptyEffects).includes('unknown') ? 'recover' : options.command === 'publish' && (session?.state.prebuilt?.deploymentId || ['pushed', 'already-current'].includes(session?.state.effects.releasePush ?? '')) ? 'verify' : options.command, source) } } : {}) };
@@ -46,7 +48,7 @@ export async function runManagedRelease(options: RunReleaseOptions): Promise<Rel
     const original = createManagedExecution(options.cwd, entry, options.signal, []);
     source = await freezeManagedSource(options.cwd, options.configPath ?? 'release.config.json', original);
     await inspectCommitTree(source, original);
-    stage = 'admission'; await settleManagedSlot(options); slot = await openManagedSlot(source, original);
+    stage = 'admission'; await settleManagedSlot(options); slot = await openManagedSlot(source, original, options.command === 'publish' ? 'publish' : 'check');
     session = await createManagedSession(slot, options.command === 'publish' ? 'publish' : 'check', options.signal);
     const currentSession = session, frozen = source;
     if (source.config.delivery && options.command === 'publish') {
@@ -85,6 +87,7 @@ export async function runManagedRelease(options: RunReleaseOptions): Promise<Rel
           }); },
       stage: async value => { currentSession.state.stage = value; await currentSession.persist(); },
       checkpoint: async pending => { if (pending) currentSession.state.pendingPush = pending; else delete currentSession.state.pendingPush; await currentSession.persist(); } }, options.command === 'publish' ? 'publish' : 'check');
+    await runCompletion(session, options, assertFrozen);
     await assertFrozen(); await session.assertClosed(); await session.budget.sample(); session.state.stage = 'complete';
   } catch (error) { failure = diagnostic(error); }
   if (session) {

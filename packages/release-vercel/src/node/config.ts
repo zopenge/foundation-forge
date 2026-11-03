@@ -1,4 +1,4 @@
-import type { PrebuiltDeliveryConfig, ReleaseCheck, ReleaseConfig, ReleaseSource } from '../contracts.js';
+import type { PrebuiltDeliveryConfig, ReleaseCheck, ReleaseCompletionConfig, ReleaseConfig, ReleaseSource } from '../contracts.js';
 import { record, ReleaseError } from './errors.js';
 import { parseVersionAliasConfig } from './version-alias.js';
 
@@ -49,7 +49,7 @@ function source(value: unknown): ReleaseSource {
     sampleIntervalMs, install: { packageManager: 'pnpm' }, prepare: commands(entry.prepare, 'source.prepare', true) };
 }
 export function validateReleaseConfig(value: unknown): ReleaseConfig {
-  const root = object(value, ['schemaVersion', 'source', 'git', 'vercel', 'checks', 'acceptance', 'buildInfo', 'limits'], 'config', ['delivery']);
+  const root = object(value, ['schemaVersion', 'source', 'git', 'vercel', 'checks', 'acceptance', 'buildInfo', 'limits'], 'config', ['delivery', 'completion']);
   if (root.schemaVersion !== 2) invalid('schemaVersion');
   const selectedSource = source(root.source);
   let delivery: PrebuiltDeliveryConfig | undefined;
@@ -64,6 +64,12 @@ export function validateReleaseConfig(value: unknown): ReleaseConfig {
       maxBytes: integer(input.maxBytes, Number.MAX_SAFE_INTEGER, 'delivery.maxBytes'), concurrencyControl: { mode: 'external-serialization', scope },
       admission: commands(input.admission, 'delivery.admission'),
       ...('versionAlias' in input ? { versionAlias: parseVersionAliasConfig(input.versionAlias) } : {}) };
+  }
+  let completion: ReleaseCompletionConfig | undefined;
+  if ('completion' in root) {
+    const input = object(root.completion, ['idempotent', 'jobs'], 'completion');
+    if (!delivery || selectedSource.mode !== 'managed-commit' || input.idempotent !== true) invalid('completion');
+    completion = { idempotent: true, jobs: commands(input.jobs, 'completion.jobs') };
   }
   const git = object(root.git, ['remote', 'repository', 'developmentBranch', 'releaseBranch'], 'git');
   const branch = (value: unknown, field: string) => {
@@ -85,7 +91,7 @@ export function validateReleaseConfig(value: unknown): ReleaseConfig {
   if (path.startsWith('//') || path.split('/').includes('..')) invalid('buildInfo.path');
   const limits = object(root.limits, ['commandMs', 'deploymentMs', 'pollMs', 'requestMs', 'maxOutputBytes'], 'limits');
   const deploymentMs = integer(limits.deploymentMs, 3_600_000, 'limits.deploymentMs');
-  return { schemaVersion: 2, source: selectedSource, ...(delivery ? { delivery } : {}),
+  return { schemaVersion: 2, source: selectedSource, ...(delivery ? { delivery } : {}), ...(completion ? { completion } : {}),
     git: { remote: text(git.remote, 'git.remote', /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/u),
       repository: text(git.repository, 'git.repository'), developmentBranch, releaseBranch },
     vercel: { teamId: text(vercel.teamId, 'vercel.teamId', /^team_[a-zA-Z0-9]+$/u),

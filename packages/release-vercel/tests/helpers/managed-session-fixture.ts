@@ -7,10 +7,12 @@ import { assertManagedPaths } from '../../src/node/managed-paths.js';
 import { createManagedStateStore } from '../../src/node/managed-state.js';
 import { currentCoordinator } from '../../src/node/process-identities.js';
 import type { FrozenSource, ManagedSlot } from '../../src/node/release-context.js';
+import type { ReleaseConfig } from '../../src/contracts.js';
 import { managedBudgetFixture } from './managed-budget-fixture.js';
 
 /** 协议组件使用真实目录、锁、身份及状态存储；Git来源准入由专门集成用例验证。 */
-export async function managedSessionFixture({ sampleIntervalMs = 250 } = {}) {
+export async function managedSessionFixture({ sampleIntervalMs = 250, extraConfig = {} }:
+  { sampleIntervalMs?: number; extraConfig?: Pick<ReleaseConfig, 'delivery' | 'completion'> } = {}) {
   const base = await managedBudgetFixture();
   try {
     const config = validateReleaseConfig({ schemaVersion: 2, source: { ...base.limits, sampleIntervalMs },
@@ -18,7 +20,7 @@ export async function managedSessionFixture({ sampleIntervalMs = 250 } = {}) {
       vercel: { teamId: 'team_fixture', projectId: 'prj_fixture', productionUrl: 'https://fixture.example.invalid' },
       checks: [{ command: 'node', args: ['-e', 'process.exit(0)'] }], acceptance: [{ command: 'node', args: ['-e', 'process.exit(0)'] }],
       buildInfo: { path: '/build-info.json', revisionField: 'revision' },
-      limits: { commandMs: 15_000, deploymentMs: 1000, pollMs: 20, requestMs: 1000, maxOutputBytes: 4096 } });
+      limits: { commandMs: 15_000, deploymentMs: 1000, pollMs: 20, requestMs: 1000, maxOutputBytes: 4096 }, ...extraConfig });
     const bytes = Buffer.from(JSON.stringify(config)), runId = randomUUID(), slotId = randomUUID();
     // SHA是自包含的组件输入，不声称来自真实提交；配置blob按真实Git对象格式计算。
     const sha = createHash('sha1').update(runId).digest('hex');

@@ -19,6 +19,8 @@ import { createTerminalWriter, restoreManagedTerminal, type TerminalWriter } fro
 import { metadataReserveBytes } from './managed-metadata.js';
 import { assertManagedHistory, captureManagedHistory } from './managed-history.js';
 import { versionAliasBuildEnvironment, versionAliasCandidateEnvironment } from './version-alias.js';
+import { protectedCompletionEnvironment } from './completion-state.js';
+import { assertCompletionInput } from './completion-input.js';
 
 const knownCauseCodes = new Set<string>([...getSystemErrorMap().values()].map(([code]) => code)
   .concat(Object.values(commandErrorCodes), Object.values(processControlErrorCodes)));
@@ -44,7 +46,11 @@ class ManagedProcess implements ExecutionLifecycle {
     await this.slot.store.writeState(this.state, async prepared => { await this.terminal?.prepareState(prepared); });
     await this.terminal?.acceptState(this.state);
   }
-  async guard(): Promise<void> { assertNoGitContext(); await assertManagedPaths(this.slot.paths); await this.slot.lock.assertOwned(); await assertManagedHistory(this.slot.paths, this.state); }
+  async guard(): Promise<void> {
+    assertNoGitContext(); await assertManagedPaths(this.slot.paths); await this.slot.lock.assertOwned(); await assertManagedHistory(this.slot.paths, this.state);
+    if (this.state.completion && this.state.completion.status !== 'completed' && this.state.completionInput)
+      await assertCompletionInput(this.slot.paths.checkoutRoot, this.state.completionInput);
+  }
   async assertClosed(): Promise<void> {
     if (!this.state.processes.every(hasVerifiedManagedClosure)) throw new ReleaseError('PROCESS_STATE_UNKNOWN');
   }
@@ -129,6 +135,7 @@ class ManagedProcess implements ExecutionLifecycle {
           environment: { ...environment, values: { ...environment.values, ...isolatedGitEnvironment(),
             ...versionAliasBuildEnvironment(this.slot.source.config, this.slot.source.sha, this.slot.source.configSha256),
             ...(this.state.prebuilt ? versionAliasCandidateEnvironment(this.slot.source.config, this.state.prebuilt) : {}),
+            ...protectedCompletionEnvironment(this.slot.source, this.state.prebuilt, this.state.completion, name),
             FORGE_RELEASE_COMMAND: this.state.command, FORGE_RELEASE_SHA: this.slot.source.sha } } }, event => {
           observer?.(event);
           if (event.type === 'termination-requested' && (event.reason === 'abort' || event.reason === 'timeout')) requestedTermination = event.reason;
@@ -175,8 +182,12 @@ class ManagedProcess implements ExecutionLifecycle {
 }
 export async function createManagedSession(slot: ManagedSlot, command: 'check' | 'publish' | 'verify', signal?: AbortSignal): Promise<ManagedSession> {
   if (slot.source.config.source.mode !== 'managed-commit') throw new ReleaseError('SOURCE_UNSUPPORTED');
+  const resumed = command === 'check' ? undefined : slot.completionResume;
   const state: ManagedState = { schemaVersion: 3, slotId: slot.slotId, runId: slot.runId, source: slot.source, command,
-    coordinator: slot.coordinator, host: await readRetirementHost(signal), history: await captureManagedHistory(slot.paths), stage: 'admission', status: 'running', processes: [], effects: { developmentPush: 'not-attempted', releasePush: 'not-attempted' } };
+    coordinator: slot.coordinator, host: await readRetirementHost(signal), history: await captureManagedHistory(slot.paths), stage: 'admission', status: 'running', processes: [],
+    ...(resumed ? { prebuilt: structuredClone(resumed.prebuilt), completion: structuredClone(resumed.completion), completionInput: structuredClone(resumed.input) } : {}),
+    effects: { developmentPush: 'not-attempted', releasePush: 'not-attempted', ...(resumed ? { deploymentCreate: resumed.prebuilt.createEffect,
+      deploymentPromote: resumed.prebuilt.promoteEffect, ...(resumed.prebuilt.versionAlias ? { versionAliasAssign: resumed.prebuilt.versionAlias.effect } : {}) } : {}) } };
   const budget = new BudgetMonitor(slot.paths, slot.source.config.source, undefined, metadataReserveBytes), lifecycle = new ManagedProcess(slot, state, budget), steps: ReleaseStep[] = [];
   await lifecycle.persist();
   return { slot, command, state, budget, steps, execution: createManagedExecution(slot.paths.checkoutRoot, slot.source.config, signal, steps, lifecycle),

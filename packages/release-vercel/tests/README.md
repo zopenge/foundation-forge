@@ -2,6 +2,10 @@
 
 测试按要捕获的失败机制划分。组件测试减少无关流程的重复执行，不把合成状态或边界错误当作完整发布成功；测试数量、覆盖率数字本身不能证明语义等价。
 
+completion-config/state/history/input分别验证显式旗标/配置、格式与绑定、追加历史和关闭门禁、真实目录及封存manifest身份；合成journal仅用于协议反例，不作为OS成功证明。managed-completion保留真实独立Git、安装、受管runner/journal和发布协调链，覆盖生产后目标/metadata、运行中并发拒绝、失败后新SHA保护、无旗标拒绝重试、显式追加、已完成不重放、解除pin及真实超时/取消。managed-completion-crash让独立协调器在publish收据写入前真实退出，核对真实stop、原意图封存、无成功收据续验及旧archive不变。
+
+真实tarball的alpha额外通过公开SDK完成受控云发布后的任务失败，再由实装公开CLI明确重试；核对精确context、追加attempt、旧收据字节、create/promote各一次。云API及部署CLI的I/O叶边界只连接自有loopback替身，应用命令、进程、Git、原锁与持久化保持原实现；不操作真实云，不将其声明为线上生产验收。共享helper随package-consumer维护，所有输入在本次私有fixture中现场生成，不依赖ignored诊断脚本或旧.tmp内容。
+
 Windows崩溃夹具通过[windows-fixture-ancestry.ts](helpers/windows-fixture-ancestry.ts)在单个PowerShell命令内发现自有父链并复核同一PID集合，每次CIM查询都带明确过滤，保留原10秒期限。返回前逐项核对协调器身份、父边、实例身份和完整集合；额外进程、替换、缺失或环均拒绝。[windows-fixture-ancestry.test.ts](windows-fixture-ancestry.test.ts)同时验证协议反例和真实父子进程，不以全机枚举或合成身份代替清理归属证明。
 
 | 不变量 | 保留的真实验证 | 组件验证的边界 |
@@ -37,7 +41,7 @@ worker 运行已构建的 `dist`，遵循仓库先 build、再测试/打包的�
 
 [managed-budget-fixture.test.ts](managed-budget-fixture.test.ts) 验证预算组件在 Git 不可用时仍可创建真实资源、写入原子元数据，并核对夹具之间的隔离与清理边界。预算夹具每次从空目录生成，不复用旧 `.tmp/` 内容。
 
-tarball smoke 使用两个独立仓库：alpha 通过真实 Node 子进程执行完整 managed check，同时验证 CRLF 源文件与内部 junction，再通过实装 CLI recover 验证已停止历史不被重写、未重新安装或执行检查；beta 通过实装 CLI 执行 workspace check，再提交 managed 配置并验证外来 slot 在安装和应用命令前被拒绝。alpha 核对当前 schema3 宿主证据和真实关闭状态；两者均核对冻结命令环境、锁文件字节、源文件/分支和远端 refs 不变。alpha 保留未跟踪辅助文件，beta 将辅助文件明确写入忽略规则，遵守 workspace 的脏树门禁。真实 postinstall 失败、同 slot/路径重试、失败回执与缓存保留由 managed-resume 专项继续验证。消费者不执行 publish；真实发布成功由上述 managed-release 代表链承担。旧格式 journal 的人为降级兼容场景已移除，不减少真实消费者，也不以源码目录替代安装包。
+tarball smoke 使用两个独立仓库：alpha 通过真实 Node 子进程执行完整 managed check，同时验证 CRLF 源文件与内部 junction，再通过实装 CLI recover 验证已停止历史不被重写、未重新安装或执行检查；beta 通过实装 CLI 执行 workspace check，再提交 managed 配置并验证外来 slot 在安装和应用命令前被拒绝。alpha 核对当前 schema3 宿主证据和真实关闭状态；两者均核对冻结命令环境、锁文件字节、源文件/分支和远端 refs 不变。alpha 保留未跟踪辅助文件，beta 将辅助文件明确写入忽略规则，遵守 workspace 的脏树门禁。真实 postinstall 失败、同 slot/路径重试、失败回执与缓存保留由 managed-resume 专项继续验证。上述默认检查不执行云发布；completion扩展另外保留受控云边界的公开publish/CLI续验，不能当作线上生产成功。旧格式 journal 的人为降级兼容场景已移除，不减少真实消费者，也不以源码目录替代安装包。
 
 推送后果矩阵的首次失败由上述阶段worker产生，状态中的intent、身份、scope、终止凭证和失败receipt使用真实生产ManagedSession/原子存储。main拒绝、main已接受但协调器被杀、dev已接受但响应丢失分别保留真实Git时点；失败receipt明确只是阶段输入。丢响应后的第二次发布仍走公开publish，核对归档pendingPush、原终止凭证、dev只推一次和main的新推送。[managed-release.test.ts](managed-release.test.ts) 的双ref代表链保留完整发布成功，再在来源配置改变后通过公开verify执行原冻结验收。协调器失败报告接线由 managed-publication-report 的组件用例承担，真实远端后果与原生停止事实由阶段worker承担；不把阶段receipt当作公开协调器成功，也不在每个远端后果场景重跑整条成功准备链。
 

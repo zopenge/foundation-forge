@@ -4,6 +4,32 @@ export interface ReleaseCheck {
   readonly args?: readonly string[];
   readonly timeoutMs?: number;
 }
+export interface ReleaseCompletionConfig {
+  readonly idempotent: true;
+  readonly jobs: readonly ReleaseCheck[];
+}
+export type ReleaseCompletionStatus = 'not-started' | 'running' | 'failed' | 'unknown' | 'completed';
+export interface ReleaseCompletionContext {
+  readonly teamId: string; readonly projectId: string; readonly productionUrl: string; readonly candidateUrl: string;
+  readonly sourceSha: string; readonly configSha256: string; readonly artifactSha256: string; readonly deploymentId: string;
+  readonly versionUrl?: string;
+}
+export interface ReleaseCompletionJobResult {
+  readonly index: number; readonly commandId?: string;
+  readonly status: Exclude<ReleaseCompletionStatus, 'not-started'>;
+  readonly startedAt: string; readonly finishedAt?: string; readonly durationMs?: number;
+  readonly error?: ReleaseDiagnostic;
+}
+export interface ReleaseCompletionAttempt {
+  readonly runId: string; readonly status: Exclude<ReleaseCompletionStatus, 'not-started'>;
+  readonly startedAt: string; readonly finishedAt?: string; readonly durationMs?: number;
+  readonly jobs: readonly ReleaseCompletionJobResult[];
+  readonly error?: ReleaseDiagnostic;
+}
+export interface ReleaseCompletionState {
+  readonly schemaVersion: 1; readonly publicationRunId: string; readonly context: ReleaseCompletionContext;
+  readonly status: ReleaseCompletionStatus; readonly attempts: readonly ReleaseCompletionAttempt[];
+}
 export type ReleaseSource = { readonly mode: 'workspace' } | {
   readonly mode: 'managed-commit';
   readonly slotPath: string;
@@ -61,7 +87,7 @@ export interface PrebuiltReleaseState {
   versionAlias?: PrebuiltVersionAliasState;
 }
 export type ReleaseStage = 'source' | 'admission' | 'checkout' | 'install' | 'prepare' | 'checks'
-  | 'artifact' | 'version-alias' | 'promote' | 'push-dev' | 'push-main' | 'deployment' | 'acceptance' | 'recover' | 'retire' | 'complete' | 'failed';
+  | 'artifact' | 'version-alias' | 'promote' | 'push-dev' | 'push-main' | 'deployment' | 'acceptance' | 'completion' | 'recover' | 'retire' | 'complete' | 'failed';
 export interface ReleaseBudget {
   readonly sampleCount: number;
   readonly maxObservedBytes: number;
@@ -73,6 +99,7 @@ export interface ReleaseConfig {
   readonly schemaVersion: 2;
   readonly source: ReleaseSource;
   readonly delivery?: PrebuiltDeliveryConfig;
+  readonly completion?: ReleaseCompletionConfig;
   readonly git: { readonly remote: string; readonly repository: string; readonly developmentBranch: string; readonly releaseBranch: string };
   readonly vercel: { readonly teamId: string; readonly projectId: string; readonly productionUrl: string };
   readonly checks: readonly ReleaseCheck[];
@@ -88,7 +115,7 @@ export const releaseErrorCodes = [
   'SOURCE_UNSUPPORTED', 'SOURCE_CHANGED', 'SLOT_PATH', 'SLOT_FOREIGN', 'SLOT_STATE', 'SLOT_NOT_FAST_FORWARD',
   'BUDGET_EXCEEDED', 'BUDGET_UNKNOWN', 'PROCESS_STATE_UNKNOWN', 'RECOVERY_REQUIRED', 'RECEIPT_SHA_MISMATCH',
   'ARTIFACT_INVALID', 'ARTIFACT_CHANGED', 'ADMISSION_FAILED',
-  'VERSION_ALIAS_CONFLICT',
+  'VERSION_ALIAS_CONFLICT', 'COMPLETION_FAILED',
 ] as const;
 export type ReleaseErrorCode = typeof releaseErrorCodes[number];
 export interface ReleaseDiagnostic { readonly code: ReleaseErrorCode; readonly details: Readonly<Record<string, unknown>> }
@@ -123,6 +150,7 @@ export interface ReleaseReport {
   readonly effects: { developmentPush: ReleasePushEffect; releasePush: ReleasePushEffect;
     deploymentCreate?: ReleaseCloudEffect; deploymentPromote?: ReleaseCloudEffect; versionAliasAssign?: ReleaseCloudEffect };
   readonly prebuilt?: PrebuiltReleaseState;
+  readonly completion?: ReleaseCompletionState;
   readonly candidateContext?: PrebuiltCandidateContext;
   readonly deployment?: ReleaseDeployment;
   readonly error?: ReleaseDiagnostic;
@@ -156,6 +184,7 @@ export interface RunReleaseOptions {
   readonly config?: ReleaseConfig;
   readonly configPath?: string;
   readonly sha?: string;
+  readonly retryCompletion?: boolean;
   readonly runId?: string;
   readonly confirmOrigin?: string;
   readonly signal?: AbortSignal;
