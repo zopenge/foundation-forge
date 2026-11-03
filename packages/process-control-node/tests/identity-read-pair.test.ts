@@ -46,7 +46,7 @@ test('cancels both observations through the original caller signal without retry
 });
 test('does not settle a cancelled real command before its child close barrier', async context => {
   const controller = new AbortController(), signal = AbortSignal.any([context.signal, controller.signal]);
-  const { child, completion } = startIdentityCommand({ command: process.execPath, args: ['-e', 'setInterval(()=>{},1000)'], signal });
+  const { child, completion, events } = startIdentityCommand({ command: process.execPath, args: ['-e', 'setInterval(()=>{},1000)'], signal });
   let closed = false;
   const closure = new Promise<void>(accept => child.once('close', () => { closed = true; accept(); }));
   child.once('spawn', () => { controller.abort(); });
@@ -54,5 +54,9 @@ test('does not settle a cancelled real command before its child close barrier', 
   try {
     expect(await observed).toMatchObject({ code: processControlErrorCodes.operationAborted });
     expect(closed).toBe(true);
+    const phases = events.map(event => event.phase);
+    expect(phases[0]).toBe('spawn');
+    expect(phases).toEqual(expect.arrayContaining(['callback', 'exit', 'close']));
+    expect(phases.at(-1)).toBe('close');
   } finally { controller.abort(); await closure; await observed; }
 });
