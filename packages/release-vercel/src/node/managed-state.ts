@@ -11,6 +11,8 @@ import { metadataReserveBytes } from './managed-metadata.js';
 import { checkoutObservationPlan } from './managed-observation.js';
 import { parsePrebuiltResolutions, parsePrebuiltState } from './prebuilt-state.js';
 import { prebuiltCandidateContext } from './version-alias.js';
+import { parseCompletionState } from './completion-state.js';
+import { parseCompletionInput } from './completion-input.js';
 
 const uuid = /^[a-f0-9-]{36}$/u, sha = /^[a-f0-9]{40}$/u;
 function boundSource(value: unknown, source: FrozenSource): asserts value is FrozenSource {
@@ -30,6 +32,7 @@ export function parseManagedReceipt(value: unknown, source: FrozenSource, slotId
   validateEffects(report.effects);
   const frozen = item.source as FrozenSource;
   const prebuilt = parsePrebuiltState(report.prebuilt, frozen, report.effects as ReleaseReport['effects']);
+  parseCompletionState(report.completion, frozen, prebuilt);
   const expected = prebuiltCandidateContext(frozen.config, prebuilt), context = record(report.candidateContext);
   if (expected ? Object.keys(context).length !== Object.keys(expected).length
     || Object.entries(expected).some(([key, value]) => context[key] !== value) : report.candidateContext !== undefined)
@@ -46,7 +49,10 @@ export function parseManagedState(value: unknown, source: FrozenSource, slotId: 
     || !['check', 'publish', 'verify'].includes(String(item.command)) || !['running', 'closed', 'unknown'].includes(String(item.status))
     || !Number.isSafeInteger(owner.pid) || typeof owner.startToken !== 'string' || !Array.isArray(item.processes)) throw new ReleaseError('SLOT_STATE', { reason: 'STATE' });
   boundSource(item.source, source); validateEffects(item.effects);
-  parsePrebuiltState(item.prebuilt, item.source as FrozenSource, item.effects as ReleaseReport['effects']);
+  const prebuilt = parsePrebuiltState(item.prebuilt, item.source as FrozenSource, item.effects as ReleaseReport['effects']);
+  parseCompletionState(item.completion, item.source as FrozenSource, prebuilt);
+  parseCompletionInput(item.completionInput, item.completion !== undefined);
+  if (item.completion !== undefined && item.schemaVersion !== 3) throw new ReleaseError('SLOT_STATE', { reason: 'COMPLETION_HISTORY_BINDING' });
   parsePrebuiltResolutions(item.prebuiltResolutions);
   if (item.host !== undefined && !validRetirementHost(item.host)) throw new ReleaseError('SLOT_STATE', { reason: 'HOST_OBSERVATION' });
   if (item.schemaVersion === 3) {

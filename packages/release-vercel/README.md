@@ -136,6 +136,33 @@ Reports record `prebuilt` and independent `effects.deploymentCreate` / `effects.
 
 The source and upload copies are checked again before writes. Artifact-copy growth is admitted against the existing slot budget and free-space floor; account for dependencies, the original output and its upload copy. Temporary output is owned by the normal fixed slot and can be regenerated; it is not a prerequisite for a fresh checkout. Recovery of an interrupted run still requires that run's original durable local evidence.
 
+### Optional post-promotion completion
+
+Managed prebuilt delivery can opt into a finite list of consumer-owned, idempotent jobs:
+
+```json
+"completion": {
+  "idempotent": true,
+  "jobs": [{ "command": "node", "args": ["scripts/complete-release.mjs"], "timeoutMs": 120000 }]
+}
+```
+
+Omitting this field preserves existing behavior. It is supported only with managed prebuilt delivery, with 1–32 jobs and the normal command, cancellation, resource and foreground-close budgets. Jobs run after promotion of the exact deployment, production alias/marker/build-info verification, and optional version-route verification. Admission runs again with `FORGE_RELEASE_PHASE=completion`. Keep the same external project serialization through completion and any explicit retry.
+
+Jobs run in the original frozen checkout under the same local slot lock, native process runner and journal. Protected `FORGE_RELEASE_COMPLETION_CONTEXT` contains only `teamId`, `projectId`, `sourceSha`, `configSha256`, `artifactSha256`, `deploymentId`, `candidateUrl`, `productionUrl` and optional `versionUrl`. `FORGE_RELEASE_URL` is the stable production origin during completion; candidate acceptance continues to use its original route. Inherited metadata cannot override these values. Consumers own business authorization, remote idempotency and proof that each job's external effects completed. Do not print secrets in command output.
+
+Reports expose `completion.status` (`not-started`, `running`, `failed`, `unknown`, `completed`) and append-only attempts with per-job durations and command evidence. Completion failure, cancellation or uncertain process closure keeps the accepted create/alias/promote effects and returns failure. The tool does not roll back, upload again, reassign or promote again to repair a job. A new SHA `check` or `publish` cannot replace the pending candidate's original checkout, Git metadata or sealed artifact.
+
+Observe with `status`. When local stop is unproved, finish the normal `recover` procedure first. A plain `verify` never replays pending completion. Explicitly retry all declared jobs for the original SHA only when their consumer-owned idempotency makes this safe:
+
+```sh
+pnpm exec forge-vercel-release verify --sha <original-full-sha> --retry-completion
+```
+
+The SDK equivalent is `runRelease({ command: 'verify', cwd, sha, retryCompletion: true })`. It reads the original committed configuration and artifact without installing, rebuilding or copying them, re-verifies the same production target, and appends a new attempt. Earlier failed or unknown attempts and original receipts remain unchanged. There are at most 32 attempts. Verified completion releases the input pin; repeating verify observes completed evidence without rerunning jobs. Changed or missing original inputs, divergent history, conflicting targets and unknown native stop remain blocked. Losing the local slot is not a supported way to recover an unfinished business operation.
+
+If the coordinator exits before its publish receipt is committed, recovery can use only the anchor-bound, archived original intent after local stop is proved. A finalized normal retirement can separately prove cessation after a subsequent boot, bound to that exact run/slot/source/anchor; its original unknown command is unchanged and cannot prove job success. Such intent is never reported as a successful publish receipt; `recovery.reportExists` is `false` while that receipt is absent. Fresh checkouts need no prior temporary files for normal development or publication; resuming an interrupted operation requires its original durable local evidence.
+
 ### Optional version hostname
 
 For a version URL that must be known before building, add this optional field inside `delivery`:
@@ -224,7 +251,7 @@ Reports include schema 2, timestamps, SHA/config digest, source/execution roots,
 | `GIT_FAILED`, `GIT_DIRTY`, `GIT_BRANCH`, `GIT_REPOSITORY`, `GIT_DIVERGED` | Git execution, dirty source, wrong branch/root/remote, or missing/non-fast-forward remote branches. |
 | `CANDIDATE_CHANGED` | HEAD, tracked/untracked source, remote identity, or config changed during checks. |
 | `ARTIFACT_INVALID`, `ARTIFACT_CHANGED`, `ADMISSION_FAILED` | Unsafe/non-self-contained Build Output, changed local/remote artifact binding, or rejected consumer quota/content admission. |
-| `CHECK_FAILED`, `ACCEPTANCE_FAILED` | A configured check or production acceptance command failed. |
+| `CHECK_FAILED`, `ACCEPTANCE_FAILED`, `COMPLETION_FAILED` | A configured check, acceptance or post-promotion completion command failed. |
 | `COMMAND_TIMEOUT`, `COMMAND_FAILED`, `CANCELLED` | A bounded process timed out, executable could not be resolved, or operation was cancelled. |
 | `LOCKED`, `LOCK_OWNERSHIP` | Another lock exists, or the lock changed ownership before release. |
 | `AUTH_REQUIRED`, `VERCEL_API` | Official CLI authentication required, failed/malformed API response, bounded request timeout or output overflow. |

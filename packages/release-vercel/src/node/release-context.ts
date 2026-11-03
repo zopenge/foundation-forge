@@ -1,4 +1,4 @@
-import type { PrebuiltReleaseState, ReleaseCommand, ReleaseConfig, ReleaseReport, ReleaseStage, ReleaseTransport } from '../contracts.js';
+import type { PrebuiltReleaseState, ReleaseCommand, ReleaseCompletionState, ReleaseConfig, ReleaseReport, ReleaseStage, ReleaseTransport } from '../contracts.js';
 import type { OwnedLock } from './lock.js';
 import type { CommandObserver, CommandResult, CommandRunner, CommandSpec, CommandTerminationReason } from '@openge/forge-command-runner';
 import type { ProcessScopeClosure } from '@openge/forge-process-control';
@@ -17,6 +17,11 @@ export interface FrozenSource {
 }
 export interface FileIdentity { readonly dev: string; readonly ino: string }
 export interface MetadataFile { readonly identity: FileIdentity; readonly sha256: string }
+export interface CompletionInputBinding {
+  readonly schemaVersion: 1;
+  readonly checkout: FileIdentity; readonly git: FileIdentity; readonly output: FileIdentity; readonly upload: FileIdentity;
+  readonly manifest: MetadataFile;
+}
 export interface ManagedHistoryReference { readonly path: string; readonly file: { readonly identity: FileIdentity; readonly sha256: string } }
 export interface ManagedPaths {
   readonly sourceRoot: string; readonly slotRoot: string; readonly checkoutRoot: string;
@@ -60,6 +65,8 @@ export interface ManagedState {
   effects: ReleaseReport['effects'];
   pendingPush?: 'developmentPush' | 'releasePush';
   prebuilt?: PrebuiltReleaseState;
+  completion?: ReleaseCompletionState;
+  completionInput?: CompletionInputBinding;
   prebuiltResolutions?: readonly PrebuiltEffectResolution[];
 }
 export interface ManagedReceipt { readonly schemaVersion: 2; readonly slotId: string; readonly source: FrozenSource; readonly report: ReleaseReport }
@@ -80,6 +87,7 @@ export interface ManagedSlot {
   readonly lock: OwnedLock; readonly store: ManagedStateStore;
   assertMetadataOwned(): Promise<void>;
   readonly runId: string; readonly coordinator: RecordedIdentity;
+  readonly completionResume?: { readonly prebuilt: PrebuiltReleaseState; readonly completion: ReleaseCompletionState; readonly input: CompletionInputBinding };
 }
 export interface ExecutionLifecycle {
   execute(runner: CommandRunner, name: string, spec: CommandSpec, observer?: CommandObserver): Promise<CommandResult>;

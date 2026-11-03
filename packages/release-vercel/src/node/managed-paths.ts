@@ -16,6 +16,8 @@ import { hasFinalizedRetirement } from './retirement-record.js';
 import { metadataReserveBytes } from './managed-metadata.js';
 import { archiveManagedDisposition, hasManagedDisposition } from './managed-disposition.js';
 import { assertManagedHistory } from './managed-history.js';
+import { admitCompletionSlot } from './completion-history.js';
+import type { ManagedSession } from './release-context.js';
 
 export async function assertManagementUntracked(source: FrozenSource, execution: Execution): Promise<void> {
   assertNoGitContext();
@@ -78,7 +80,7 @@ export async function assertManagedPaths(paths: ManagedPaths): Promise<void> {
     }
   }
 }
-export async function openManagedSlot(source: FrozenSource, execution: Execution): Promise<ManagedSlot> {
+export async function openManagedSlot(source: FrozenSource, execution: Execution, command?: ManagedSession['command']): Promise<ManagedSlot> {
   let paths = await resolveManagedPaths(source, execution);
   const existingAnchor = record(await readBoundedJson(paths.anchorPath, 65_536));
   const anchored = Object.keys(existingAnchor).length > 0;
@@ -130,6 +132,7 @@ export async function openManagedSlot(source: FrozenSource, execution: Execution
       if (state.status !== 'closed' || state.pendingPush || Object.values(state.effects).includes('unknown') || !state.processes.every(hasVerifiedManagedClosure)) throw new ReleaseError('RECOVERY_REQUIRED', { runId: state.runId });
       await archiveManagedDisposition(paths, state, state, guard, undefined, true);
     }
-    return { paths, source, slotId, lock, store, runId, coordinator, assertMetadataOwned: () => rawLock.assertOwned() };
+    const completionResume = await admitCompletionSlot(paths, slotId, source, command, state, execution.signal);
+    return { paths, source, slotId, lock, store, runId, coordinator, ...(completionResume ? { completionResume } : {}), assertMetadataOwned: () => rawLock.assertOwned() };
   } catch (error) { await lock.release(); throw error; }
 }

@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import process from 'node:process';
 import { releaseErrorCodes } from '@openge/forge-release-vercel';
 import { runRelease, validateReleaseConfig } from '@openge/forge-release-vercel/node';
+import { verifyCompletionConsumer } from './completion-consumer.mjs';
 
 if (!releaseErrorCodes.includes('CANDIDATE_CHANGED') || !releaseErrorCodes.includes('ARTIFACT_CHANGED')
   || !releaseErrorCodes.includes('VERSION_ALIAS_CONFLICT') || typeof runRelease !== 'function') throw new Error('release contracts missing');
@@ -128,4 +129,5 @@ for (const name of ['alpha', 'beta']) {
   await rm(executionOutput, { recursive: true });
   const loaded = execute(root, process.execPath, ['-e', 'process.stdout.write(require(process.argv[1]))', resolve(moved, '.vercel/output/functions/alias.func/index.cjs')]);
   if (loaded !== 'public-tarball-layout') throw new Error('public tarball moved link closure failed');
+  if (name === 'alpha') await verifyCompletionConsumer({ cwd, config: prebuilt, git, binary: binaries['forge-vercel-release'] });
 }

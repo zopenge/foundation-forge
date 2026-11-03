@@ -5,6 +5,8 @@ import { candidateId, candidateOrigin } from './prebuilt-vercel.js';
 import { measureManagedUsage } from './managed-io.js';
 import { metadataReserveBytes } from './managed-metadata.js';
 import { versionAliasOrigin } from './version-alias.js';
+import { createCompletionState } from './completion-state.js';
+import { captureCompletionInput } from './completion-input.js';
 
 export function parsePrebuiltResolutions(value: unknown): readonly PrebuiltEffectResolution[] {
   if (value === undefined) return [];
@@ -81,6 +83,12 @@ export function managedPrebuiltContext(session: ManagedSession): ExecutionContex
       session.state.effects.deploymentCreate = value.createEffect;
       session.state.effects.deploymentPromote = value.promoteEffect;
       if (value.versionAlias) session.state.effects.versionAliasAssign = value.versionAlias.effect;
+      if (session.slot.source.config.completion && value.promoteEffect !== 'not-attempted' && !session.state.completion) {
+        if (session.command !== 'publish') throw new ReleaseError('SLOT_STATE', { reason: 'COMPLETION_INTENT_MISSING' });
+        const input = await captureCompletionInput(session.execution.cwd);
+        session.state.completion = createCompletionState(session.slot.source, value, session.state.runId);
+        session.state.completionInput = input;
+      }
       parsePrebuiltState(session.state.prebuilt, session.slot.source, session.state.effects);
       await session.persist(); context.state = session.state.prebuilt;
     },

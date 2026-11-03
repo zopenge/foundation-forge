@@ -164,6 +164,20 @@ Windows 原生 mutex / Linux 对原槽目录 fd 的 flock 串行化 recover 和 
 
 锁保存 PID、独占 token 和获取时间，每次 push、落报告和释放前都必须仍属本调用。已有锁不自动抢占，归属变化时保留他人的锁并失败。崩溃或强杀后须人工核对精确锁归属与远程状态，才处理陈旧锁。正常退出、失败、超时和取消释放自己的锁；命令执行器负责子进程生命周期。请求、轮询与输出都有明确上限。认证实时输出按完整行缓冲，跨分块脱敏后按每个流同一字节预算转发，结束时处理最后的未换行尾部。已知凭据格式会脱敏，但配置的命令属于受信任代码，仍不应输出秘密。
 
+## 发布后的显式完成阶段
+
+managed prebuilt 可声明 `completion: { idempotent: true, jobs: [...] }`，沿用受管 command/args/timeoutMs；1至32项，其他来源或交付模式拒绝。默认不声明时行为及配置摘要不变。任务只在同一deployment的生产promote、精确alias、marker和build-info复核通过后执行；可选版本alias也须通过。completion前再次运行admission，`FORGE_RELEASE_PHASE=completion`，外部串行协调须持续覆盖整个阶段及恢复。
+
+原槽、原锁、原生runner及journal共同监督任务。受保护的 `FORGE_RELEASE_COMPLETION_CONTEXT` 只提供team/project、精确source/config/artifact/deployment、candidateUrl、稳定productionUrl与可选versionUrl；此阶段 `FORGE_RELEASE_URL` 明确为生产origin。不能从父环境伪造目标，不能把该context当业务授权。任务的远端幂等、权限、完成事实与输出脱敏仍归消费者负责。
+
+报告独立记录completion的not-started/running/failed/unknown/completed、尝试、逐job耗时及真实command证据；失败、超时、取消或关闭未知不会回滚已接受的发布效果，也不重复create、alias或promote。pending时保留原checkout、Git元数据、output/upload目录及封存manifest的精确身份；新SHA的check/publish在准备输入前拒绝复用。
+
+先status观察；本地关闭未证明时先按原recover门禁处理。普通verify不重放业务任务；明确 `verify --sha <原40位SHA> --retry-completion`（SDK `retryCompletion: true`）才可在原候选追加下一次尝试，最多32次。续验只读原配置及artifact，不安装、构建、复制或修复marker；原失败/未知尝试、archive和发布收据保持不变。completed由同绑定真实journal及正常关闭证明支撑，重复verify不重跑；完成后才解除输入pin。
+
+若原命令停止只能由现有retire的后续开机门禁证明，续验只消费同run/slot/source/anchor绑定的final封存记录作为停止准入；原UNKNOWN不变，不能由此宣称job成功。未final、错误绑定或缺失封存证据仍拒绝。发布收据缺失时也沿这份原始封存意图选择失败descriptor，不制造成功收据。
+
+若协调器在发布收据提交前退出，只允许从anchor绑定、已封存且证明停止的原意图续验；报告保留 `recovery.reportExists: false`，不补造成功收据。输入、配置、metadata或历史变化继续阻断。新checkout的正常开发/发布不依赖历史临时文件；旧中断事务的恢复仍需要其原始本地证据，不能靠删槽、换目录或当前manifest猜成功。
+
 ## 错误码
 
 完整代码列表从根入口 `releaseErrorCodes` 导出；逐项含义见[错误码表](../../../packages/release-vercel/README.md#error-codes)。配置与参数使用 `ARGUMENT_INVALID`、`CONFIG_INVALID`、`CONFIG_READ`；Git 门禁使用 `GIT_*`、`CANDIDATE_CHANGED`；检查与验收使用 `CHECK_FAILED`、`ACCEPTANCE_FAILED`；生命周期使用 `COMMAND_TIMEOUT`、`COMMAND_FAILED`、`CANCELLED`、`LOCKED`、`LOCK_OWNERSHIP`；Vercel 与域名复核使用 `AUTH_REQUIRED`、`VERCEL_API`、`DEPLOYMENT_*`、`ALIAS_MISMATCH`、`BUILD_INFO`、`BUILD_REVISION`；其他本地错误使用 `IO_FAILED`。
