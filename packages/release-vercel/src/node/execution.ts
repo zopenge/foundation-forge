@@ -34,9 +34,13 @@ export function resolveInvocation(command: string, args: readonly string[]): { c
   }
   throw new ReleaseError('COMMAND_FAILED', { executable: command, reason: 'JS_CLI_UNAVAILABLE' });
 }
-export function vercelInvocation(args: readonly string[]): { command: string; args: readonly string[] } {
+export function vercelInvocation(args: readonly string[], options: { preserveArchiveModes?: boolean } = {}): { command: string; args: readonly string[] } {
   const require = createRequire(import.meta.url);
-  return { command: process.execPath, args: [resolve(dirname(require.resolve('vercel/package.json')), 'dist/vc.js'), ...args] };
+  const cli = resolve(dirname(require.resolve('vercel/package.json')), 'dist/vc.js');
+  // tar-fs 会使用当前进程的 umask；只在独立部署子进程中消除掩码，保持封存的文件/链接归档头模式。
+  const bootstrap = 'import { pathToFileURL } from "node:url"; process.umask(0); await import(pathToFileURL(process.argv[1]).href);';
+  return { command: process.execPath, args: options.preserveArchiveModes
+    ? ['--input-type=module', '-e', bootstrap, cli, ...args] : [cli, ...args] };
 }
 export class Execution {
   private readonly runner: ReturnType<typeof createNodeCommandRunner>;

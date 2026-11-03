@@ -8,7 +8,7 @@ const boundary = vi.hoisted(() => ({ counter: '', mode: 'ok' }));
 vi.mock('../src/node/execution.js', async importOriginal => {
   const original = await importOriginal<typeof import('../src/node/execution.js')>();
   return { ...original, vercelInvocation: (args: readonly string[]) => {
-    if (args[0] !== 'deploy') throw new Error('unexpected CLI operation in controlled-cloud fixture');
+    if (args[0] !== '--global-config' || args[2] !== 'deploy') throw new Error('unexpected CLI operation in controlled-cloud fixture');
     return { command: process.execPath, args: [resolve(import.meta.dirname, 'helpers/prebuilt-cli.mjs'), boundary.counter, boundary.mode, ...args] };
   } };
 });

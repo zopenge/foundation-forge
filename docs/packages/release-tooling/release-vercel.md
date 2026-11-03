@@ -60,9 +60,15 @@ status/verify 选择最近 publish 收据，后来源 HEAD、配置或 check 不
 
 已提交 prepare 步骤生成完整、自包含的 `.vercel/output/`，符合 Build Output API version 3。可通过消费者自己声明并固定版本的官方构建工具生成 standalone 产物；原生依赖须匹配 Vercel 的 Linux x64 运行环境。不得以历史任务目录作为输入，Windows 静态 fixture 通过也不代表原生云运行已通过。Git 字段继续冻结真实源码和开发分支，prebuilt 不推送任何分支，也不以 releaseBranch、caller meta 或伪造 gitSource 授权来源。
 
-逐文件路径、模式、长度、SHA-256 与 commit、配置摘要一起冻结。上传槽只含 Build Output 和明确的 project/team 上下文，拒绝外部链接、大小写冲突、危险路径、Git/常见环境及凭据文件；生成的 `static/.well-known/forge-prebuilt.json` 为保留路径。任意编译文件中嵌入的秘密仍须消费者审查，路径过滤不构成通用秘密证明。复制前预留新增物理用量和卷余量，仍受既有槽位总预算约束。
+逐文件及目录的路径、模式、长度、SHA-256 与 commit、配置摘要一起冻结。Build Output 内允许完整闭包中的相对 symlink，包括 pnpm 依赖链接和 `.func` 别名；逐项绑定链接文本、目标类型和解析后的目标。物理文件只复制一次，不展开链接目录；复制后原输出与副本必须保持相同的可移植解析结果。绝对链接、junction、外逃、断链、链接或目录循环、大小写冲突、Windows 与可移植解析不一致均拒绝。链接占用既有 maxFiles 数量预算，目标文本的 UTF-8 字节计入 maxBytes，不提高原阈值；Git 源码、槽位根和元数据仍沿用原有链接拒绝。
 
-check 仅构建、检查和冻结本地产物，不访问云。publish 在消费者准入和目标复核后调用固定 CLI 64.7.0 的 `deploy --prebuilt --prod --skip-domain --no-wait --json`，明确 project/team 且不允许隐式创建项目。保存 CLI 返回的真实 deployment ID，再从公开 API 核验账号、项目、production、CLI 来源和 READY，并真实读回制品标记。验收针对该候选 URL 执行，通过后再做准入及产物复核，最后提升同一 ID 并回读生产 alias、标记和 revision。不会把 Preview 重建称作同制品提升。
+上传槽只含 Build Output 和明确的 project/team 上下文，拒绝危险路径、Git/常见环境及凭据文件；生成的 `static/.well-known/forge-prebuilt.json` 为保留路径。任意编译文件中嵌入的秘密仍须消费者审查，路径过滤不构成通用秘密证明。复制前预留新增物理用量和卷余量，仍受既有槽位总预算约束。消费者须在封存和上传期间保持产物静止；这些检查不是对抗恶意并发写入的操作系统沙箱。
+
+check 仅构建、检查和冻结本地产物，不访问云。publish 在消费者准入和目标复核后调用固定 CLI 64.7.0 的 `deploy --prebuilt --archive=tgz --prod --skip-domain --no-wait --json`，以官方归档保留相对链接，明确 project/team 且不允许隐式创建项目。保存 CLI 返回的真实 deployment ID，再从公开 API 核验账号、项目、production、CLI 来源和 READY，并真实读回制品标记。验收针对该候选 URL 执行，通过后再做准入及产物复核，最后提升同一 ID 并回读生产 alias、标记和 revision。不会把 Preview 重建称作同制品提升。
+
+固定 CLI 只归档文件和链接，父目录由这些条目物化，不发送独立目录项。无法物化的空目录会明确拒绝，只有工具必定生成 marker 的父目录例外。目录模式用于本地原输出和副本的一致性检查，不承诺云端还原目录权限。部署子进程单独使用零 umask 保留文件及链接归档头模式；父进程不变。CLI 的配置与缓存位于现场生成的私有目录，直接读取标准 `VERCEL_TOKEN` 环境变量，不将凭据放入参数或写入认证文件，也不依赖用户级 CLI 登录。成功或失败后均回收私有目录；失败时保留原创建效果，不因清理失败丢掉已持久保存的候选 ID。运行时自行生成这些资源，不依赖 Codex 或历史临时内容。
+
+仓库回归在受控 loopback API 上运行真实固定版本 CLI，检查上传 tgz 中的链接、文件摘要和模式，移除原输出及上传槽后再真实加载两层 pnpm 依赖及函数别名。Linux 使用真实 umask 022 和系统 tar 解压；Windows 常规场景保持真实 API，另一个明确命名的场景在 CLI 子进程模拟 POSIX umask 查询/设置。Windows 系统 tar 无法使用非提权链接标志时，由测试内 Node 还原已核对的条目。真实 tarball 的公开 SDK 和 CLI 也覆盖移动后的独立布局。此证据属于本地协议和消费者验收，不代表真实 Vercel 云端或任意原生模块已经运行通过。
 
 默认 prebuilt 写入通过正常受保护配置提供 `VERCEL_TOKEN`；不依赖 Codex 或临时认证脚本。固定 CLI 的 promote/api POST 内部有重试，因此提升使用相同官方公开 endpoint 的单次 HTTPS 请求，受超时、输出和连接关闭约束，不修改或深引 CLI 实现。自定义 transport 的 promote 也必须只写一次并响应取消。
 
