@@ -4,7 +4,7 @@ import { record, ReleaseError } from './errors.js';
 import { atomicJson, readBoundedJson } from './managed-io.js';
 import { validateReleaseConfig } from './config.js';
 import { resolve } from 'node:path';
-import { hasVerifiedManagedClosure, hasVerifiedManagedStop } from './managed-closure.js';
+import { hasNoStartWitness, hasVerifiedManagedClosure, hasVerifiedManagedStop } from './managed-closure.js';
 import type { ManagedCommand } from './release-context.js';
 import { validRetirementHost } from './retirement-host.js';
 import { metadataReserveBytes } from './managed-metadata.js';
@@ -73,7 +73,8 @@ export function parseManagedState(value: unknown, source: FrozenSource, slotId: 
     if (command.kind !== undefined) {
       const observations = command.observations;
       if (item.schemaVersion !== 3 || command.kind !== 'checkout-observation' || command.name !== 'checkout-frozen' || !uuid.test(command.id)
-        || command.identity !== undefined || command.scope !== undefined || command.pid !== undefined || command.closure !== undefined || command.descendants.length !== 0
+        || command.identity !== undefined || command.scope !== undefined || command.pid !== undefined || command.closure !== undefined
+        || command.notStarted !== undefined || command.descendants.length !== 0
         || !Array.isArray(observations) || observations.length > 5 || !['intent', 'closed', 'stopped', 'unknown'].includes(String(command.status))
         || JSON.stringify(command.plan) !== JSON.stringify(checkoutObservationPlan(item.source as FrozenSource))
         || observations.some((entry, index) => {
@@ -89,6 +90,10 @@ export function parseManagedState(value: unknown, source: FrozenSource, slotId: 
       continue;
     }
     if (command.plan !== undefined || command.observations !== undefined) throw new ReleaseError('SLOT_STATE', { reason: 'OBSERVATION_KIND' });
+    if (command.notStarted !== undefined && (item.schemaVersion !== 3 || !hasNoStartWitness(value as ManagedCommand)
+      || !String(record(command.notStarted).binding).startsWith(`${String(item.runId)}:${command.id}:`))) {
+      throw new ReleaseError('SLOT_STATE', { reason: 'NO_START_WITNESS' });
+    }
     for (const value of [command.identity, ...command.descendants].filter(value => value !== undefined)) {
       const identity = record(value);
       if (!Number.isSafeInteger(identity.pid) || Number(identity.pid) <= 0 || typeof identity.startToken !== 'string' || identity.startToken === '') throw new ReleaseError('SLOT_STATE', { reason: 'PROCESS_IDENTITY' });

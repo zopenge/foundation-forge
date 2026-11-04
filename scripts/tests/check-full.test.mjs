@@ -11,6 +11,20 @@ const pending = () => {
 };
 const turn = () => new Promise(accept => setImmediate(accept));
 
+test('explicit CI gates retain all non-coverage stages and finalization for serial and wide budgets', async () => {
+  for (const limit of [1, 4]) {
+    const calls = [];
+    const context = { budget: { limit, stop: () => calls.push('stop') }, finalize: async () => { calls.push('finalize'); } };
+    await runFullCheck({ label: 'check:ci-gates', coverage: false,
+      run: async name => { calls.push(name); }, createContext: async () => context,
+      verify: async ({ onBuilt }) => { calls.push('pack:check'); await onBuilt({ packages: [] }); },
+      scriptTests: async () => { calls.push('test:scripts'); },
+    });
+    assert.deepEqual([...calls].sort(), ['lint', 'pack:check', 'typecheck:built', 'packages:check-cycles:built', 'test:scripts', 'finalize'].sort());
+    assert.equal(calls.at(-1), 'finalize');
+  }
+});
+
 test('full heavy stages wait for lint, packing and consumers before types, scripts and coverage', async () => {
   const phases = ['lint', 'build', 'packing', 'consumers', 'typecheck:built', 'packages:check-cycles:built', 'test:scripts', 'test:coverage'];
   const gates = Object.fromEntries(phases.map(name => [name, pending()])), calls = [];

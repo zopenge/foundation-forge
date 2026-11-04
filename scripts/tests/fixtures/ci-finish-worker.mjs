@@ -12,8 +12,13 @@ if (!root) throw new Error('owned test root required');
 const module = (name, namedExports) => mock.module(new URL(`../../${name}`, import.meta.url).href, { namedExports });
 await module('check-fingerprint.mjs', { collectWorkspaceFingerprint: async () => ({ files: {}, environmentDigest: 'fixture' }), collectDistDigests: async () => ({}) });
 await module('workspace-packages.mjs', { discoverWorkspacePackageModel: async () => ({ packages: [] }) });
+let finalized = 0;
 const context = { root, budget: { limit: 1 }, run: async () => { throw primary; },
-  finalize: async () => { if (phase.startsWith('own-')) throw cleanup; controller.abort(reason); } };
+  finalize: async () => {
+    finalized++;
+    if (phase.startsWith('own-') || phase.startsWith('coverage-failure')) throw cleanup;
+    if (phase !== 'coverage-before-write') controller.abort(reason);
+  } };
 await module('test-run-context.mjs', { createTestRunContext: async () => context });
 await mock.module('node:child_process', { namedExports: { spawnSync: () => ({ status: 0, stdout: 'a'.repeat(40) }) } });
 const deniedFs = Object.fromEntries(Object.entries(fs).filter(([key]) => key !== 'default').map(([key, value]) =>
@@ -26,7 +31,7 @@ const fakeFs = { ...deniedFs,
   readFile: async path => {
     if (String(path).replaceAll('\\', '/').endsWith('/node_modules/vitest/package.json')) return '{"version":"4.1.9"}';
     if (resolve(path) === resolve(root, 'summary.json')) {
-      if (phase === 'before-write') controller.abort(reason);
+      if (['before-write', 'coverage-before-write'].includes(phase)) controller.abort(reason);
       return '{}';
     }
     assert.equal(resolve(path), resolve(root, 'blob.json')); return Buffer.from('fixture blob');
@@ -41,9 +46,15 @@ if (phase.startsWith('own-')) {
   await assert.rejects(operation, error =>
     error instanceof AggregateError && error.errors.includes(primary) && error.errors.includes(cleanup) && error.cause === primary);
 } else {
-  await module('check-full.mjs', { runFullCheck: async options => { await options.coverage({ context, packages: [] }); } });
+  await module('check-full.mjs', { runFullCheck: async options => {
+    assert.equal(phase.startsWith('coverage-'), false, 'coverage-only must not repeat common gates');
+    await options.coverage({ context, packages: [] });
+  } });
   await module('run-workspace-coverage-batch.mjs', {
-    runWorkspaceCoverageBatch: async () => ({ blobPath: `${root}/blob.json`, result: { testResults: [], numPassedTests: 0, numPendingTests: 0 } }),
+    runWorkspaceCoverageBatch: async () => {
+      if (phase.startsWith('coverage-failure')) throw primary;
+      return { blobPath: `${root}/blob.json`, result: { testResults: [], numPassedTests: 0, numPendingTests: 0 } };
+    },
     mergeWorkspaceCoverage: async () => {},
   });
   let persisted = 0;
@@ -52,6 +63,11 @@ if (phase.startsWith('own-')) {
     readCoverageShardArtifacts: async () => ({ expected: {}, blobs: [] }),
   });
   const { runCiCheck } = await import('../../check-ci.mjs');
-  await assert.rejects(runCiCheck(['shard', 'before-write'].includes(phase) ? ['--shard', '1/2'] : ['--merge', root], controller.signal), error => error === reason);
-  if (phase === 'before-write') assert.equal(persisted, 0);
+  const args = phase.startsWith('coverage-') ? ['--coverage-shard', '1/2']
+    : ['shard', 'before-write'].includes(phase) ? ['--shard', '1/2'] : ['--merge', root];
+  await assert.rejects(runCiCheck(args, controller.signal), error => phase.startsWith('coverage-failure')
+    ? error instanceof AggregateError && error.errors.includes(primary) && error.errors.includes(cleanup) && error.cause === primary
+    : error === reason);
+  if (phase.startsWith('coverage-')) assert.equal(finalized, 1);
+  if (['before-write', 'coverage-before-write'].includes(phase) || phase.startsWith('coverage-failure')) assert.equal(persisted, 0);
 }

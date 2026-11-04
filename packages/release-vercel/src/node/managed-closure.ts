@@ -1,5 +1,16 @@
 import type { ManagedCommand } from './release-context.js';
 
+/** SDK 在调用 runner 前观察到取消；该见证不声称存在 OS 进程或关闭事实。 */
+export function hasNoStartWitness(command: ManagedCommand): boolean {
+  const witness = command.notStarted;
+  return command.kind === undefined && command.status === 'stopped' && command.observationComplete
+    && command.pid === undefined && command.identity === undefined && command.scope === undefined && command.closure === undefined
+    && command.descendants.length === 0 && witness?.schemaVersion === 1 && witness.reason === 'cancelled-before-runner'
+    && typeof witness.observedAt === 'string' && Number.isFinite(Date.parse(witness.observedAt))
+    && typeof witness.binding === 'string' && /^[a-f0-9-]{36}:[a-f0-9-]{36}:[a-f0-9-]{36}$/u.test(witness.binding)
+    && witness.binding.split(':')[1] === command.id;
+}
+
 /** 历史轮询见证保留可读；只有同一实例和绑定的 OS 关闭事实可以复用。 */
 export function hasVerifiedManagedClosure(command: ManagedCommand): boolean {
   if (command.kind === 'checkout-observation') return command.status === 'closed'
@@ -17,6 +28,7 @@ export function hasVerifiedManagedClosure(command: ManagedCommand): boolean {
 export function hasVerifiedManagedStop(command: ManagedCommand): boolean {
   if (command.kind === 'checkout-observation') return /^[a-f0-9]{64}$/u.test(command.terminalSha256 ?? '') && hasObservationStopWitness(command);
   if (hasVerifiedManagedClosure(command)) return true;
+  if (hasNoStartWitness(command)) return true;
   const closure = command.closure, owned = closure?.ownedScope;
   return command.status === 'stopped' && command.observationComplete && !!command.identity && !!command.scope && !!closure
     && ['abort', 'timeout'].includes(closure.requestedTermination ?? '') && Number.isFinite(Date.parse(closure.observedAt))
@@ -29,7 +41,7 @@ export function hasVerifiedManagedStop(command: ManagedCommand): boolean {
 export function hasObservationStopWitness(command: ManagedCommand): boolean {
   return command.kind === 'checkout-observation' && ['closed', 'stopped'].includes(command.status)
     && command.observationComplete && command.identity === undefined && command.scope === undefined
-    && command.pid === undefined && command.closure === undefined && command.descendants.length === 0
+    && command.pid === undefined && command.closure === undefined && command.notStarted === undefined && command.descendants.length === 0
     && command.plan?.length === 5 && !!command.observations && command.observations.length <= 5
     && command.observations.every(item => item.kind === undefined && hasVerifiedManagedStop(item))
     && (command.status !== 'closed' || command.observations.every(hasVerifiedManagedClosure));

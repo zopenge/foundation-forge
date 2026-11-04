@@ -96,21 +96,30 @@ async function assertInternalLink(root: string, path: string, active: () => void
     }
   }
 }
-export async function measureManagedUsageOnce(paths: ManagedPaths, signal?: AbortSignal): Promise<{ bytes: number; freeBytes: number }> {
+export interface ManagedUsageProgress {
+  entriesVisited: number;
+  phase: 'path-guard' | 'scan' | 'root' | 'entry' | 'link' | 'directory-open' | 'directory-read' | 'anchor' | 'volume' | 'complete';
+}
+export async function measureManagedUsageOnce(paths: ManagedPaths, signal?: AbortSignal, progress?: ManagedUsageProgress): Promise<{ bytes: number; freeBytes: number }> {
   let bytes = 0, entries = 0;
+  const phase = (value: ManagedUsageProgress['phase']) => { if (progress) { progress.phase = value; progress.entriesVisited = entries; } };
   const active = () => { if (signal?.aborted) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'OBSERVATION_DEADLINE' }); };
   const visit = async (path: string): Promise<void> => {
     active();
     if (++entries > 500_000) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'ENTRY_LIMIT' });
+    phase('entry');
     const stat = await lstat(path, { bigint: true });
     if (stat.isSymbolicLink()) {
+      phase('link');
       await assertInternalLink(paths.slotRoot, path, active);
       if (!sameIdentity(stat, await lstat(path, { bigint: true }))) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'LINK_REPLACED' });
       bytes += Number(stat.size);
     } else if (stat.isDirectory()) {
+      phase('directory-open');
       const directory = await opendir(path);
       if (signal?.aborted) { await directory.close(); active(); }
-      for await (const entry of directory) await visit(resolve(path, entry.name));
+      phase('directory-read');
+      for await (const entry of directory) { await visit(resolve(path, entry.name)); phase('directory-read'); }
     } else if (stat.isFile()) bytes += Number(stat.size);
     else throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'FILE_TYPE' });
     if (!Number.isSafeInteger(bytes)) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'SIZE_OVERFLOW' });
@@ -119,25 +128,26 @@ export async function measureManagedUsageOnce(paths: ManagedPaths, signal?: Abor
     const assertRoot = async () => {
       if (!sameIdentity(await fileIdentity(paths.slotRoot), paths.slotIdentity) || await realpath(paths.slotRoot) !== paths.slotRoot) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'ROOT_REPLACED' });
     };
-    await assertRoot();
+    phase('root'); await assertRoot();
     await visit(paths.slotRoot);
+    phase('anchor');
     if (await pathExists(paths.anchorPath)) {
       const stat = await lstat(paths.anchorPath);
       if (!stat.isFile()) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'ANCHOR_TYPE' });
       bytes += stat.size;
     }
-    const volume = await statfs(paths.slotRoot, { bigint: true });
-    await assertRoot();
+    phase('volume'); const volume = await statfs(paths.slotRoot, { bigint: true });
+    phase('root'); await assertRoot();
     active();
     const available = volume.bavail * volume.bsize;
     if (available < 0n || available > BigInt(Number.MAX_SAFE_INTEGER)) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'VOLUME_SIZE' });
-    return { bytes, freeBytes: Number(available) };
+    phase('complete'); return { bytes, freeBytes: Number(available) };
   } catch (error) { if (error instanceof ReleaseError) throw error; throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'IO_OBSERVATION', ioCode: record(error).code,
     entry: typeof record(error).path === 'string' ? relative(paths.slotRoot, String(record(error).path)) : undefined }); }
 }
-export async function measureManagedUsage(paths: ManagedPaths, signal?: AbortSignal, scan = measureManagedUsageOnce): Promise<{ bytes: number; freeBytes: number }> {
+export async function measureManagedUsage(paths: ManagedPaths, signal?: AbortSignal, scan = measureManagedUsageOnce, progress?: ManagedUsageProgress): Promise<{ bytes: number; freeBytes: number }> {
   for (let attempt = 0; ; attempt++) {
-    try { return await scan(paths, signal); }
+    try { return await scan(paths, signal, progress); }
     catch (error) {
       // 正常 rename 可令已枚举条目消失；丢弃整次扫描，不能累计部分清单。
       if (attempt >= 2 || !(error instanceof ReleaseError) || error.details.reason !== 'IO_OBSERVATION' || error.details.ioCode !== 'ENOENT') throw error;

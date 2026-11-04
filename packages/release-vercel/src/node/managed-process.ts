@@ -131,6 +131,16 @@ class ManagedProcess implements ExecutionLifecycle {
       };
       try {
         const environment = spec.environment ?? { mode: 'inherit' as const };
+        if (combined.aborted) {
+          // 启动意图已耐久化，但此分支从未调用 runner；独立封印这一事实，不伪造 OS closure。
+          command.status = 'stopped'; command.observationComplete = true;
+          command.notStarted = { schemaVersion: 1, reason: 'cancelled-before-runner', binding, observedAt: new Date().toISOString() };
+          phase = 'terminal';
+          if (!batch) command.terminalSha256 = await terminal.write(command);
+          phase = 'closed-state';
+          if (!batch) await this.persist();
+          throw new ReleaseError('CANCELLED');
+        }
         running = runner.start({ ...spec, signal: combined, ownedScope: { start: 'manual', binding },
           environment: { ...environment, values: { ...environment.values, ...isolatedGitEnvironment(),
             ...versionAliasBuildEnvironment(this.slot.source.config, this.slot.source.sha, this.slot.source.configSha256),
@@ -173,11 +183,21 @@ class ManagedProcess implements ExecutionLifecycle {
         return command.status === 'stopped' && requestedTermination ? { ...result, terminationReason: requestedTermination } : result;
       } catch (error) {
         failed.abort(); await running?.terminate(); await this.tail;
-        if (batch ? !hasVerifiedManagedStop(command) : !command.terminalSha256) { command.status = 'unknown'; command.observationComplete = false; }
+        if (batch ? !hasVerifiedManagedStop(command) : !command.terminalSha256) {
+          command.status = 'unknown'; command.observationComplete = false; delete command.notStarted;
+        }
         if (!batch) try { await this.persist(); } catch { /* 最后已持久化的意图仍不是关闭证明，不能释放槽。 */ }
         throw lifecycleError(error, 'PROCESS_LIFECYCLE_FAILED', name, phase);
       }
-    }, spec.signal); } finally { if (batch) batch.executing = false; }
+    }, spec.signal); } catch (error) {
+      if (error instanceof ReleaseError && ['BUDGET_UNKNOWN', 'BUDGET_EXCEEDED'].includes(error.code) && command.closure) {
+        // 保留预算错误，同时给出已记录的命令结果；最终观察失败不能抹掉已发生的超时或非零退出。
+        throw new ReleaseError(error.code, { ...error.details, step: name,
+          commandTermination: command.closure.requestedTermination ?? command.closure.termination,
+          commandExitCode: command.closure.exitCode, commandObservedAt: command.closure.observedAt });
+      }
+      throw error;
+    } finally { if (batch) batch.executing = false; }
   }
 }
 export async function createManagedSession(slot: ManagedSlot, command: 'check' | 'publish' | 'verify', signal?: AbortSignal): Promise<ManagedSession> {

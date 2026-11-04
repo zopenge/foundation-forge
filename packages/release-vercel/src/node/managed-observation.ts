@@ -1,4 +1,5 @@
 import type { FrozenSource, ManagedCommand, RecordedIdentity } from './release-context.js';
+import { hasNoStartWitness } from './managed-closure.js';
 
 /** 仅固定 checkout 检查可声明此计划；逐条执行仍验证实际完整 argv。 */
 export function checkoutObservationPlan(source: FrozenSource): NonNullable<ManagedCommand['plan']> {
@@ -15,7 +16,13 @@ export function checkoutObservationPlan(source: FrozenSource): NonNullable<Manag
 /** 磁盘意图只能由同一有限计划的证明归并，旧批次及子项不能相互替代。 */
 export function matchesObservationBinding(intent: ManagedCommand, proof: ManagedCommand): boolean {
   if (intent.kind !== proof.kind) return false;
-  if (intent.kind === undefined) return true;
+  if (intent.kind === undefined) {
+    if (proof.notStarted === undefined) return intent.notStarted === undefined;
+    return hasNoStartWitness(proof) && (intent.status === 'intent' || hasNoStartWitness(intent))
+      && intent.pid === undefined && intent.identity === undefined && intent.scope === undefined && intent.closure === undefined
+      && intent.descendants.length === 0
+      && (intent.notStarted === undefined || JSON.stringify(intent.notStarted) === JSON.stringify(proof.notStarted));
+  }
   return JSON.stringify(intent.plan) === JSON.stringify(proof.plan)
     && !!intent.observations && !!proof.observations && intent.observations.length <= proof.observations.length
     && intent.observations.every((item, index) => JSON.stringify(item) === JSON.stringify(proof.observations?.[index]));

@@ -2,7 +2,7 @@ import { relative } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { Execution } from '../src/node/execution.js';
 import { assertCheckoutFrozen, prepareCheckout } from '../src/node/managed-checkout.js';
-import { hasVerifiedManagedClosure } from '../src/node/managed-closure.js';
+import { hasVerifiedManagedClosure, hasVerifiedManagedStop } from '../src/node/managed-closure.js';
 import { openManagedSlot } from '../src/node/managed-paths.js';
 import { createManagedSession } from '../src/node/managed-process.js';
 import { parseManagedState } from '../src/node/managed-state.js';
@@ -58,6 +58,32 @@ it('persists one checkout observation batch while proving all five real query sc
   batch.observations[0].scope = { ...batch.observations[0].scope, binding: `${state.runId}:${batch.observations[0].id}:00000000-0000-0000-0000-000000000000` };
   expect(hasVerifiedManagedClosure(batch)).toBe(false);
   expect(() => parseManagedState(state, session.slot.source, session.slot.slotId)).toThrow(ReleaseError);
+});
+
+it('seals a checkout batch cancelled before its third query starts while preserving two real closures', { timeout: 120_000 }, async () => {
+  const controller = new AbortController(), { session, slot } = await prepared(controller.signal);
+  const sample = session.budget.sample.bind(session.budget);
+  let cancelled = false;
+  vi.spyOn(session.budget, 'sample').mockImplementation(async () => {
+    await sample();
+    const batch = session.state.processes.at(-1);
+    if (!cancelled && batch?.observations?.length === 3 && batch.observations[2]?.status === 'intent') {
+      cancelled = true; controller.abort();
+    }
+  });
+  await expect(assertCheckoutFrozen(session)).rejects.toMatchObject({ code: 'CANCELLED' });
+  expect(cancelled).toBe(true);
+  const disk = await slot.store.read(), batch = disk?.processes.at(-1);
+  expect(batch).toMatchObject({ kind: 'checkout-observation', status: 'stopped', observationComplete: true });
+  expect(batch?.terminalSha256).toMatch(/^[a-f0-9]{64}$/u);
+  expect(batch?.observations).toHaveLength(3);
+  expect(batch?.observations?.slice(0, 2).every(hasVerifiedManagedClosure)).toBe(true);
+  const last = batch?.observations?.[2];
+  expect(last).toMatchObject({ name: 'git-stream', status: 'stopped', notStarted: { reason: 'cancelled-before-runner' } });
+  expect(last?.identity).toBeUndefined(); expect(last?.scope).toBeUndefined(); expect(last?.closure).toBeUndefined();
+  expect(last && hasVerifiedManagedClosure(last)).toBe(false);
+  expect(batch && hasVerifiedManagedStop(batch)).toBe(true);
+  await session.assertStopped();
 });
 
 it('keeps fresh management guards between queries when the source index changes', { timeout: 120_000 }, async () => {
