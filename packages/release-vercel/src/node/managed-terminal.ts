@@ -4,7 +4,7 @@ import type { ManagedCommand, ManagedPaths, ManagedSlot, ManagedState } from './
 import { record, ReleaseError } from './errors.js';
 import { assertMetadataFile, assertMetadataPaths, inspectMetadataFile, metadataDigest, sameMetadataFile, terminalLimit, writeReservedMetadata, type MetadataFile } from './managed-metadata.js';
 import { readRetirementHost, validRetirementHost, type RetirementHost } from './retirement-host.js';
-import { hasObservationStopWitness, hasVerifiedManagedStop } from './managed-closure.js';
+import { hasNoStartWitness, hasObservationStopWitness, hasVerifiedManagedStop } from './managed-closure.js';
 import { matchesObservationBinding } from './managed-observation.js';
 import { pathExists, readBoundedJson } from './managed-io.js';
 import { parseManagedState } from './managed-state.js';
@@ -137,8 +137,9 @@ export async function createTerminalWriter(slot: ManagedSlot, state: ManagedStat
     const currentHost = await readRetirementHost();
     if (currentHost.hostId !== host.hostId || currentHost.platform !== host.platform) throw new ReleaseError('SLOT_STATE', { reason: 'TERMINAL_HOST_CHANGED' });
     const batch = command.kind === 'checkout-observation';
-    if (batch ? !hasObservationStopWitness(command) || command.observations?.some(item => item.scope?.binding.startsWith(`${state.runId}:${item.id}:`) !== true)
-      : !hasVerifiedManagedStop(command) || command.scope?.binding.startsWith(`${state.runId}:${command.id}:`) !== true) throw new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'TERMINAL_STOP_UNPROVEN' });
+    const bound = (item: ManagedCommand) => (hasNoStartWitness(item) ? item.notStarted?.binding : item.scope?.binding)?.startsWith(`${state.runId}:${item.id}:`) === true;
+    if (batch ? !hasObservationStopWitness(command) || command.observations?.some(item => !bound(item))
+      : !hasVerifiedManagedStop(command) || !bound(command)) throw new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'TERMINAL_STOP_UNPROVEN' });
     const copy = structuredClone(command); delete copy.terminalSha256;
     const body = { schemaVersion: 1 as const, kind: 'managed-terminal' as const, runId: state.runId, slotId: state.slotId,
       sourceSha: state.source.sha, configSha256: state.source.configSha256, host, files: { ...files }, command: copy };

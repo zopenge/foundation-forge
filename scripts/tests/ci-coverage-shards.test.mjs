@@ -31,6 +31,7 @@ for (const [name, change] of [
   ['missing shard', parts => parts.pop()],
   ['duplicate shard', parts => { parts[1] = part(1); }],
   ['different source', parts => { parts[1].binding = { ...binding, commit: 'd'.repeat(40) }; }],
+  ['different Node patch', parts => { parts[1].binding = { ...binding, node: 'v24.11.2' }; }],
   ['different shard count', parts => { parts[1].shard.count = 3; }],
   ['duplicate test file', parts => { parts[1].files = [...parts[0].files]; }],
   ['missing test file', parts => { parts[1].files = []; }],

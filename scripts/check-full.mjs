@@ -72,7 +72,7 @@ export const runFullCheck = async ({ run = runPnpmScript, verify = verifyLocalPa
         await timed('typecheck:built', () => run('typecheck:built', { signal: activeSignal }));
         await timed('packages:check-cycles:built', () => run('packages:check-cycles:built', { signal: activeSignal }));
       });
-      start(async () => {
+      if (coverage !== false) start(async () => {
         await scripts;
         await timed('test:coverage', () => coverage({ packages: workspace.packages, context: testRun }));
       });
@@ -92,7 +92,7 @@ export const runFullCheck = async ({ run = runPnpmScript, verify = verifyLocalPa
       await timed('typecheck:built', () => run('typecheck:built', { signal: activeSignal }));
       await timed('packages:check-cycles:built', () => run('packages:check-cycles:built', { signal: activeSignal }));
       await timed('test:scripts', () => scriptTests(testRun));
-      await timed('test:coverage', () => coverage({ packages: workspace.packages, context: testRun }));
+      if (coverage !== false) await timed('test:coverage', () => coverage({ packages: workspace.packages, context: testRun }));
     }
   } catch (error) {
     fail(error);

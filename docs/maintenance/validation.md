@@ -10,7 +10,7 @@ quick 复用 `selectCheckMode` 的传递影响选择。脚本快速回归按 `sc
 
 quick 输出精确包/脚本/测试文件及 NOT RUN 清单；未运行的完整发布/恢复、tarball 消费者和 coverage 不报告通过。它不写成功收据、不发布局部覆盖报告。并发设置可仅为 quick 的影响选择使用独立环境摘要，full 发布准入仍核对原完整环境摘要（含 worker 设置）、所有输入、dist 和真实 tarball 字节。
 
-所有 npm 发布命令先显式 full；`publishIfNeeded` 在调用、每次打包及 publish 前独立核验 full 收据。旧收据、quick、增量结果、输入/环境/产物变化或缺失均不能授权发布。main 自动 Changesets 发布流程、首次发布 registry 门禁及手动 CI 触发策略保持不变；CI 的验证命令显式使用 `pnpm check:full`。
+所有 npm 发布命令先显式 full；`publishIfNeeded` 在调用、每次打包及 publish 前独立核验 full 收据。旧收据、quick、增量结果、输入/环境/产物变化或缺失均不能授权发布。main 自动 Changesets 发布流程、首次发布 registry 门禁及手动 CI 触发策略保持不变；独立 CI 采用下面的公共门禁、覆盖率分片和完整合并，不能生成或替代发布 full 收据。
 
 ## 原有内部增量验证
 
@@ -83,22 +83,28 @@ Vitest调度编号可能在旧worker退出前复用，因此真实fork槽持有�
 1. 确认候选提交已推送，工作区干净，并记录 `git rev-parse HEAD` 与 `git ls-remote origin refs/heads/<branch>` 返回的精确 SHA，两者必须一致。
 2. 在 GitHub Actions 的 CI 页面选择验收分支并执行 Run workflow，或显式运行 `gh workflow run ci.yml --ref <branch>`。默认分支必须已包含 `workflow_dispatch` 配置。不要自动重试或用占位成功状态替代验收。
 3. 使用 `gh run list --workflow ci.yml --branch <branch> --event workflow_dispatch --json databaseId,headSha,event,status,conclusion` 找到本次运行，再用 `gh run view <run-id> --json headSha,event,status,conclusion,jobs` 核对事件、精确 SHA 和结果。必须是候选 SHA，所有矩阵任务均成功，不能接受旧运行、跳过任务或仅有部分平台通过。
-4. 保留运行链接和候选 SHA 作为验收证据。Linux Ubuntu 24.04 使用 Node.js 24 运行冻结依赖安装与`pnpm check:full`；Windows 2025 的 Node.js 24 使用下述两个单 worker 分片及必需汇总，完整保留构建、lint、类型检查、循环依赖、覆盖率、浏览器边界和真实 tarball 消费验证。CI 矩阵收敛不修改公开包的 Node.js 兼容范围；矩阵外版本不再具有每轮完整 CI 的兼容性证据。
+4. 保留运行链接和候选 SHA 作为验收证据。Linux Ubuntu 24.04 与 Windows 2025 都只使用 Node.js 24，各自执行公共门禁和下述单 worker 覆盖率分片及必需汇总，完整保留构建、lint、类型检查、循环依赖、覆盖率、浏览器边界和真实 tarball 消费验证。CI 矩阵收敛不修改公开包的 Node.js 兼容范围；矩阵外版本不再具有每轮完整 CI 的兼容性证据。
 5. 候选提交发生任何变化后重新验收并核对新 SHA；合并或发布时再次确认实际交付 SHA 与验收证据一致。
 
 切换前只读核实目标分支的 required status checks、规则集及合并队列。手动运行绑定候选提交；若保护要求其他提交或自动事件的检查，先明确满足方式和所需最小规则调整，再由维护者确认。不得自行降低保护、伪造状态或绕过权限错误；未解决的 required checks 应作为合并阻塞报告，避免永久 pending。
 
 独立的 `.github/workflows/release.yml` 继续沿用 main push 与手动预发布入口，按[发布流程](releases.md)执行；它不会代为启动 CI。手动 CI 策略不取消发布流程自身的 `pnpm check:full`、构建、打包验证与发布门禁，main 更新仍保留原有自动发包契约。
 
-## Windows CI 覆盖率分片
+## CI 公共门禁与覆盖率分片
 
-Windows 的两个独立作业分别调用 `pnpm check:ci --shard 1/2` 和 `pnpm check:ci --shard 2/2`。每台机器仍由根预算限制为一个测试 worker；两个作业都保留原构建、静态检查、脚本测试、真实 tarball、安装和消费者验证，只将工作区覆盖测试文件交给 Vitest 的公开 sequencer 扩展分配。用例、断言、隔离、取消、超时及原生关闭规则均不减少。
+两个操作系统分别通过 `pnpm check:ci --gates` 执行一次完整构建、静态检查、脚本测试、真实 tarball、安装和消费者验证。它明确不执行工作区覆盖率，不生成 full 收据。覆盖率在独立干净作业中先 `pnpm build`，再调用 `pnpm check:ci --coverage-shard <index/count>`；Windows 八片、Linux 四片，每台机器仍由根预算限制为一个测试 worker。旧 `--shard` 保留包含公共门禁的行为，供已有调用使用。用例、断言、隔离、取消、超时及原生关闭规则均不减少。
+
+所有生产分片、公共门禁和合并作业从 workflow 顶层 `FORGE_CI_NODE_VERSION` 取得同一精确 Node 24 补丁版本。不能只向 setup-node 传主版本或范围：不同 runner 的预装缓存可能选择不同补丁，从而被 blob 的严格运行时绑定拒绝。升级该值时重新验收整组作业；Linux 仍只有一个 Node 版本，合并校验继续拒绝补丁不同的输入，不通过忽略版本差异恢复。
+
+长的 prebuilt publication 和 completion 文件按职责拆成可独立调度的小文件；共享 helper 只集中原夹具、mock 注册与收尾，每个用例仍创建自己的真实资源。原十三个展开用例的完整调用体与断言保持一致，不共享已成功的动态槽位，也不依赖历史 `.tmp/`。质量按场景、失败机制、原断言及完整覆盖率共同核对，不能用用例计数单独声称质量百分比。
 
 包可在自己的 `package.verify.json` 声明 `coverageShardWeights`，将实际存在的相对测试文件路径映射到正的相对耗时权重；未声明的文件按 1 计。调度按权重从大到小，将下一文件放入当前累计权重最小的片，路径顺序用于稳定处理并列；提示仅由所属包维护，中央脚本不保存包名或测试清单。非法、缺失或未进入当前测试集合的提示会失败。权重不是超时、通过条件或缓存，原完整文件并集与覆盖率门禁独立核对。普通本地及发布 full 不启用此 CI 调度器。
 
 单片通过且原 context 最终审计成功后，才生成标为 `ci-coverage-shard` 的报告和官方 blob。报告只包含源码/构建指纹、运行时、workflow run/attempt、文件与计数、blob 摘要及 worker 审计，不保存完整环境或凭据，也不写出 full 发布收据。artifact 只上传该片的两个结果文件，保留一天；不上传整个 `.tmp/` 或消费者工作目录。
 
-必需的 Windows 汇总作业等待两片成功，重新从同一提交安装和构建，再下载同一 run/attempt 的两个 artifact。缺片、重复或遗漏文件、源码/构建/运行时变化、blob 损坏、原作业未收尾均失败。通过后由真实 Vitest 合并原始覆盖率，核对全部当前测试文件及计数，再沿原覆盖率报告事务发布；不重新执行测试，也不把部分成功当完整成功。若人工重跑，须让两片及汇总属于同一次 attempt，不能混用旧片。
+两个平台的必需汇总作业等待所有覆盖率分片成功，重新从同一提交安装和构建，再按平台下载同一 run/attempt 的 artifact。上传保留唯一的 `part-N/` 层，合并下载不会覆盖其他片；缺片、重复或遗漏文件、源码/构建/运行时变化、blob 损坏及原作业未收尾仍失败。真实 Vitest 合并原始覆盖率，核对全部当前测试文件及计数，再沿原覆盖率报告事务发布；不重新执行测试，不把部分成功当完整成功。若人工重跑，全部片及汇总必须属于同一次 attempt，不能混用旧片。
+
+公共门禁和覆盖率合并可独立收尾，避免把汇总固定排在慢消费者之后。最终 `Complete CI` 同时依赖两个操作系统公共门禁和两个完整汇总，并用 `always()` 保证上游失败后仍实际检查两组结果必须为 success；失败、取消或跳过不能通过其断言。实际测试和合并作业不使用该条件。它只检查这些真实结果，不执行替代性测试、不补造 PASS 或 full 收据。验收记录仍检查整个 workflow 的所有必需作业终态与墙钟，包括队列等待。
 
 异步写入、合并及收尾后仍检查晚到取消，CLI 在返回成功前同步读取取消门闩；这次末尾检查是成功提交点。其前取消会返回失败，已有局部报告可保留诊断，但该失败作业不会上传或满足汇总依赖。提交点后的取消不追改已完成的作业。原始合并错误与收尾错误同时发生时，两者及原始 cause 都保留。
 

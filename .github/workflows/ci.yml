@@ -6,19 +6,19 @@ on:
 permissions:
   contents: read
 
+env:
+  FORGE_CI_NODE_VERSION: '24.22.2'
+
 jobs:
-  verify:
-    name: ${{ matrix.os }} / Node.js ${{ matrix.node-version }}
+  verify-gates:
+    name: ${{ matrix.os }} / Node.js 24 / common gates
     runs-on: ${{ matrix.os }}
     env:
-      FORGE_CHECK_TEST_WORKERS: '2'
+      FORGE_CHECK_TEST_WORKERS: '1'
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-24.04
-        node-version:
-          - 24
+        os: [ubuntu-24.04, windows-2025]
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v6
@@ -26,11 +26,45 @@ jobs:
           version: 10.33.2
       - uses: actions/setup-node@v6
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: ${{ env.FORGE_CI_NODE_VERSION }}
           cache: pnpm
           registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile
-      - run: pnpm check:full
+      - run: pnpm check:ci --gates
+
+  verify:
+    name: ${{ matrix.os }} / Node.js ${{ matrix.node-version }} / shard ${{ matrix.shard }}
+    runs-on: ${{ matrix.os }}
+    env:
+      FORGE_CHECK_TEST_WORKERS: '1'
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+        node-version:
+          - 24
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.FORGE_CI_NODE_VERSION }}
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm check:ci --coverage-shard ${{ matrix.shard }}/4
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ubuntu-24.04-coverage-${{ matrix.shard }}-${{ github.run_attempt }}
+          path: .tmp/ci-shards/
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 1
 
   verify-windows:
     name: windows-2025 / Node.js 24 / shard ${{ matrix.shard }}
@@ -41,7 +75,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v6
@@ -49,25 +83,30 @@ jobs:
           version: 10.33.2
       - uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version: ${{ env.FORGE_CI_NODE_VERSION }}
           cache: pnpm
           registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile
-      - run: pnpm check:ci --shard ${{ matrix.shard }}/2
+      - run: pnpm build
+      - run: pnpm check:ci --coverage-shard ${{ matrix.shard }}/8
       - uses: actions/upload-artifact@v7
         with:
-          name: windows-coverage-${{ matrix.shard }}-${{ github.run_attempt }}
-          path: .tmp/ci-shards/part-${{ matrix.shard }}
+          name: windows-2025-coverage-${{ matrix.shard }}-${{ github.run_attempt }}
+          path: .tmp/ci-shards/
           if-no-files-found: error
           include-hidden-files: true
           retention-days: 1
 
-  merge-windows:
-    name: windows-2025 / Node.js 24 / complete coverage
-    needs: verify-windows
-    runs-on: windows-2025
+  merge:
+    name: ${{ matrix.os }} / Node.js 24 / complete coverage
+    needs: [verify, verify-windows]
+    runs-on: ${{ matrix.os }}
     env:
       FORGE_CHECK_TEST_WORKERS: '1'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v6
@@ -75,17 +114,26 @@ jobs:
           version: 10.33.2
       - uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version: ${{ env.FORGE_CI_NODE_VERSION }}
           cache: pnpm
           registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - uses: actions/download-artifact@v8
         with:
-          name: windows-coverage-1-${{ github.run_attempt }}
-          path: .tmp/ci-shards/part-1
-      - uses: actions/download-artifact@v8
-        with:
-          name: windows-coverage-2-${{ github.run_attempt }}
-          path: .tmp/ci-shards/part-2
+          pattern: ${{ matrix.os }}-coverage-*-${{ github.run_attempt }}
+          merge-multiple: true
+          path: .tmp/ci-shards
       - run: pnpm check:ci --merge .tmp/ci-shards
+
+  complete:
+    name: Complete CI
+    if: ${{ always() }}
+    needs: [verify-gates, merge]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require all real gates and complete coverage
+        shell: bash
+        run: |
+          test '${{ needs.verify-gates.result }}' = success
+          test '${{ needs.merge.result }}' = success

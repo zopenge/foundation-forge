@@ -5,6 +5,7 @@ import process from 'node:process';
 import { releaseErrorCodes } from '@openge/forge-release-vercel';
 import { runRelease, validateReleaseConfig } from '@openge/forge-release-vercel/node';
 import { verifyCompletionConsumer } from './completion-consumer.mjs';
+import { verifyNotStartedConsumer } from './not-started-consumer.mjs';
 
 if (!releaseErrorCodes.includes('CANDIDATE_CHANGED') || !releaseErrorCodes.includes('ARTIFACT_CHANGED')
   || !releaseErrorCodes.includes('VERSION_ALIAS_CONFLICT') || typeof runRelease !== 'function') throw new Error('release contracts missing');
@@ -78,6 +79,7 @@ for (const name of ['alpha', 'beta']) {
       || recovered.processes?.status !== 'closed' || recovered.steps.some(step => step.name === 'install' || step.name.startsWith('check:')))
       throw new Error(`tarball managed CLI recovery failed: ${JSON.stringify(recovered.error)}`);
     if (!(await readFile(resolve(cwd, '.tmp/release-slot/state.json'))).equals(before)) throw new Error('CLI recovery changed stopped history');
+    await verifyNotStartedConsumer({ cwd, binary: binaries['forge-vercel-release'], sha, execute });
   }
   const sourceState = { branch: git('branch', '--show-current'), tracked: git('status', '--porcelain=v1', '--untracked-files=no'), note: await readFile(resolve(cwd, 'user-note'), 'utf8') };
   if (sourceState.branch !== 'dev' || sourceState.tracked !== '' || sourceState.note !== 'preserve') throw new Error(`source changed: ${JSON.stringify(sourceState)}`);

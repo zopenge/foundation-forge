@@ -2,6 +2,12 @@
 
 测试按要捕获的失败机制划分。组件测试减少无关流程的重复执行，不把合成状态或边界错误当作完整发布成功；测试数量、覆盖率数字本身不能证明语义等价。
 
+CI 调度将 managed-prebuilt-publication 的八项展开用例分到普通发布、alias 恢复和历史 promotion 三个文件；managed-completion 的五项分到正常/失败恢复与 native 取消/超时两个文件。两个共享 publication-fixture helper 只承载原夹具、边界注册和 afterEach；原十三项调用体与断言逐项保持一致，每项仍生成和回收独立真实资源。标准本地 full 执行全部文件；CI 仍核对完整文件并集、全部结果及原始覆盖率，不以拆文件减少测试或共享成功槽位。
+
+managed-not-started 验证启动意图已写入、runner 尚未调用时的真实取消，封印绑定运行与命令的独立未启动证明；保留普通 state 提交中断后的只读归并，拒绝旧 UNKNOWN、已有 PID/identity/scope/closure、错运行或未封印输入。managed-checkout-observation 另保留前两个真实 Git scope 已关闭、第三个查询尚未启动的批次取消。停止不会成为正常关闭或发布成功。managed-budget-diagnostics 用测试私有时钟验证原观察期限及无内容进度，以真实非零退出和真实十秒 timeout 验证后续预算异常仍保留命令上下文；所有真实目标都必须观察关闭并回收，时间戳不当作因果证明。
+
+真实 tarball 的未启动消费者只经过公开 SDK 与实装 CLI。测试专用 Node 模块注入仅包装 node:fs/promises.rename：先完成原 state rename，再触发原 AbortController；Git、锁、文件身份、原生进程与关闭保持真实，实验警告继续输出。公开 recover 必须成功，且不执行安装或检查、不改写原 CANCELLED 收据和 state 字节。helper 与 worker 随 package-consumer 维护，普通开发和发布不加载该注入，不依赖历史临时目录或 Codex。
+
 completion-config/state/history/input分别验证显式旗标/配置、格式与绑定、追加历史和关闭门禁、真实目录及封存manifest身份；合成journal仅用于协议反例，不作为OS成功证明。managed-completion保留真实独立Git、安装、受管runner/journal和发布协调链，覆盖生产后目标/metadata、运行中并发拒绝、失败后新SHA保护、无旗标拒绝重试、显式追加、已完成不重放、解除pin及真实超时/取消。managed-completion-crash让独立协调器在publish收据写入前真实退出，核对真实stop、原意图封存、无成功收据续验及旧archive不变。
 
 managed-completion的运行中超时用测试私有注入时钟推进原1000ms命令期限，先确认payload已记录真实生产证明，再触发原runner的timeout回调；启动、身份、观察与原生关闭仍用真实期限，停止证明仍来自真实Job。另一个用例保留真实1000ms到期，延迟completion宿主身份交付，核对零payload、原发布副作用和UNKNOWN，不能把清空的Job补造为已验证身份或成功。completion-deadline验证时钟推进、普通定时器透传及清理；不修改宿主时钟或产品计时语义。

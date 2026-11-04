@@ -40,6 +40,7 @@ export interface ManagedCommand {
   descendants: RecordedIdentity[];
   observationComplete: boolean;
   scope?: { readonly scopeId: string; readonly binding: string };
+  notStarted?: { readonly schemaVersion: 1; readonly reason: 'cancelled-before-runner'; readonly binding: string; readonly observedAt: string };
   terminalSha256?: string;
   closure?: { readonly observedAt: string; readonly exitCode: number | null; readonly termination: CommandTerminationReason; readonly requestedTermination?: 'abort' | 'timeout'; readonly ownedScope?: ProcessScopeClosure };
 }

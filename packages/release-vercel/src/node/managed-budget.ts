@@ -1,19 +1,32 @@
 import type { ManagedSourceConfig, ReleaseBudget } from '../contracts.js';
 import type { ManagedPaths } from './release-context.js';
+import { performance } from 'node:perf_hooks';
 import { ReleaseError } from './errors.js';
-import { measureManagedUsage, measureManagedUsageOnce } from './managed-io.js';
+import { measureManagedUsage, measureManagedUsageOnce, type ManagedUsageProgress } from './managed-io.js';
 import { assertManagedPaths } from './managed-paths.js';
 
 export interface BudgetObservation { readonly bytes: number; readonly freeBytes: number; readonly observedAt: number }
 export async function observeBudget(paths: ManagedPaths, config: ManagedSourceConfig, scan = measureManagedUsageOnce): Promise<BudgetObservation> {
   const controller = new AbortController();
+  const started = performance.now(), budgetMs = 30_000 + config.sampleIntervalMs;
+  const progress: ManagedUsageProgress = { entriesVisited: 0, phase: 'path-guard' };
+  let scanAttempts = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_accept, reject) => {
-    timer = setTimeout(() => { controller.abort(); reject(new ReleaseError('BUDGET_UNKNOWN', { reason: 'OBSERVATION_DEADLINE' })); }, 30_000 + config.sampleIntervalMs);
+    timer = setTimeout(() => {
+      const error = new ReleaseError('BUDGET_UNKNOWN', { reason: 'OBSERVATION_DEADLINE', budgetMs,
+        elapsedMs: Math.floor(performance.now() - started), observedAt: new Date().toISOString(),
+        scanAttempts, entriesVisited: progress.entriesVisited, phase: progress.phase });
+      controller.abort(); reject(error);
+    }, budgetMs);
   });
   const observation = async () => {
     await assertManagedPaths(paths);
-    const value = await measureManagedUsage(paths, controller.signal, scan); return { ...value, observedAt: Date.now() };
+    const value = await measureManagedUsage(paths, controller.signal, (paths, signal, progress) => {
+      scanAttempts++; if (progress) { progress.entriesVisited = 0; progress.phase = 'scan'; }
+      return scan(paths, signal, progress);
+    }, progress);
+    return { ...value, observedAt: Date.now() };
   };
   try { return await Promise.race([observation(), deadline]); }
   catch (error) { if (error instanceof ReleaseError) throw error; throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'OBSERVATION_FAILED' }); }

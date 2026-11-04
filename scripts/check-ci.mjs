@@ -17,8 +17,11 @@ const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
 export function parseCiCheckArguments(args) {
+  if (args.length === 1 && args[0] === '--gates') return { kind: 'gates' };
   if (args.length !== 2) throw new Error('CI_ARGUMENT: --shard <index/count> | --merge <directory>');
-  if (args[0] === '--shard') { parseCoverageShard(args[1]); return { kind: 'shard', shard: args[1] }; }
+  if (['--shard', '--coverage-shard'].includes(args[0])) {
+    parseCoverageShard(args[1]); return { kind: args[0] === '--shard' ? 'shard' : 'coverage-shard', shard: args[1] };
+  }
   if (args[0] === '--merge' && args[1] && !args[1].startsWith('--')) return { kind: 'merge', directory: args[1] };
   throw new Error('CI_ARGUMENT');
 }
@@ -45,15 +48,30 @@ export async function runCiCheck(args, signal) {
   if (testWorkerLimit() !== 1) throw new Error('CI_SINGLE_WORKER_REQUIRED');
   const model = await discoverWorkspacePackageModel({ repositoryRoot });
   const before = await collectWorkspaceFingerprint(repositoryRoot);
-  if (command.kind === 'shard') {
+  if (command.kind === 'gates') {
+    await runFullCheck({ signal, label: 'check:ci-gates', coverage: false });
+    await assertUnchanged(before); signal?.throwIfAborted();
+    process.stdout.write('CI common gates complete; coverage shards and their complete merge are still required.\n');
+    return;
+  }
+  if (command.kind === 'shard' || command.kind === 'coverage-shard') {
     const shard = parseCoverageShard(command.shard), directory = resolve(repositoryRoot, '.tmp/ci-shards');
     try { await lstat(resolve(directory, `part-${shard.index}`)); throw new Error('CI_SHARD_OUTPUT_EXISTS'); }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
     let partial, context;
-    await runFullCheck({ signal, label: 'check:ci-shard', coverage: async options => {
-      context = options.context;
-      partial = await runWorkspaceCoverageBatch({ ...options, shard: command.shard });
-    } });
+    const coverage = async options => {
+      context = options.context; partial = await runWorkspaceCoverageBatch({ ...options, shard: command.shard });
+    };
+    if (command.kind === 'shard') await runFullCheck({ signal, label: 'check:ci-shard', coverage });
+    else {
+      // build由同一干净CI作业显式执行；本入口只产出部分coverage，不代替公共门禁或full收据。
+      context = await createTestRunContext({ packages: model.packages, workers: 1, signal });
+      const failures = [];
+      try { await coverage({ packages: model.packages, context }); } catch (error) { failures.push(error); }
+      try { await context.finalize(); } catch (error) { failures.push(error); }
+      if (failures.length === 1) throw failures[0];
+      if (failures.length > 1) throw new AggregateError(failures, 'CI coverage and cleanup failed', { cause: failures[0] });
+    }
     if (!partial || !context) throw new Error('CI_SHARD_INCOMPLETE');
     await assertUnchanged(before);
     const blob = await readFile(partial.blobPath), part = {
