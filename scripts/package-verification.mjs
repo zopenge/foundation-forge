@@ -1,4 +1,4 @@
-import { access, readFile } from 'node:fs/promises';
+import { access, lstat, readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { testWorkerTiers } from './test-worker-budget.mjs';
 
@@ -51,7 +51,21 @@ export const loadPackageVerification = async (packageValue) => {
   if (packageValue.bins.length > 0 && consumerScript === undefined) {
     throw new Error(`${packageValue.name} exposes a binary and requires a consumer smoke`);
   }
-  return { browserExports, consumerScript, coverageWorkers, ...(quickTests ? { quickTests } : {}) };
+  const coverageShardWeights = configuration.coverageShardWeights;
+  if (coverageShardWeights !== undefined) {
+    if (!coverageShardWeights || typeof coverageShardWeights !== 'object' || Array.isArray(coverageShardWeights)
+      || Object.keys(coverageShardWeights).length > 128) throw new Error(`${packageValue.name} has invalid coverageShardWeights`);
+    for (const [path, weight] of Object.entries(coverageShardWeights)) {
+      if (!/^tests\/.+\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(path) || path.includes('\\') || path.split('/').some(part => !part || part === '.' || part === '..')
+        || typeof weight !== 'number' || !Number.isFinite(weight) || weight <= 0 || weight > 86_400) throw new Error(`${packageValue.name} has invalid coverageShardWeights`);
+      try {
+        const info = await lstat(resolve(packageValue.packageRoot, path));
+        if (!info.isFile() || info.isSymbolicLink()) throw new Error('test weight requires a regular file');
+      } catch (error) { throw new Error(`${packageValue.name} coverageShardWeights references a missing test`, { cause: error }); }
+    }
+  }
+  return { browserExports, consumerScript, coverageWorkers, ...(quickTests ? { quickTests } : {}),
+    ...(coverageShardWeights === undefined ? {} : { coverageShardWeights }) };
 };
 
 const importSpecifierPattern = /(?:\b(?:import|export)\s+(?:[^'";]*?\s+from\s*)?['"]([^'"]+)['"]|\bimport\s*\(\s*['"]([^'"]+)['"]\s*\))/gu;

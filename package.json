@@ -31,6 +31,7 @@
     "pack:check": "node ./scripts/verify-packages.mjs",
     "check": "node ./scripts/check-runner.mjs --quick",
     "check:full": "node ./scripts/check-runner.mjs --full",
+    "check:ci": "node ./scripts/check-ci.mjs",
     "check:serial": "node ./scripts/check-runner.mjs --full --serial",
     "changeset": "changeset",
     "version:packages": "changeset version && pnpm install --lockfile-only --no-frozen-lockfile --ignore-scripts",

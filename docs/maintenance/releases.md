@@ -51,9 +51,9 @@ Release workflow 在 Changesets 之前会对 canonical npm registry 执行一次
 分支、`Version Packages` PR、tag 与 GitHub Release 时使用仓库范围的 App token；
 npm publish 继续只使用 `npm` environment 约束的 OIDC Trusted Publishing。
 
-配置完成后的真实事件验收应由一次新的 `main` push 触发。确认生成或更新的
-`Version Packages` PR 自动产生 `pull_request` workflow run，并实际启动 Node
-22、24、26 三个 job；不通过关闭/重开 PR、手工批准、重跑或跳过 CI 来制造成功。
+配置完成后的发布事件验收应由一次新的 `main` push 触发，确认 Release workflow
+生成或更新 `Version Packages` PR。独立 CI 只由维护者显式手动启动，使用 Node 24
+验证 Linux，以及 Windows 的两个单 worker 覆盖率片和必需汇总；不通过关闭/重开 PR、手工批准、重跑或跳过 CI 来制造成功。
 本地 YAML 与测试通过只能证明配置结构和凭据映射正确，不能替代这次 GitHub 事件验收。
 
 仓库、package、版本、public exports、内部依赖和发布顺序均从 workspace、

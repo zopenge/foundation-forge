@@ -5,7 +5,8 @@ import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import { discoverWorkspacePackageModel } from './workspace-packages.mjs';
 import { createTestRunContext } from './test-run-context.mjs';
-import { publishCoverageReports } from './run-workspace-coverage.mjs';
+import { discoverPackageTestFiles, publishCoverageReports } from './run-workspace-coverage.mjs';
+import { parseCoverageShard } from './ci-coverage-shards.mjs';
 
 const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
 const within = (root, path) => { const child = relative(root, path); return child && child !== '..' && !child.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) && !isAbsolute(child); };
@@ -33,22 +34,26 @@ export function partitionWorkspaceReports(packages, coverage, result) {
   return rows;
 }
 
-export async function runWorkspaceCoverageBatch({ packages, context, signal } = {}) {
+async function coveragePackages(packages) {
   const model = await discoverWorkspacePackageModel({ repositoryRoot });
   const selected = (packages ?? model.packages)
     .filter(value => value.manifest.scripts?.['test:coverage']);
   for (const value of selected) if (value.manifest.scripts['test:coverage'] !== 'vitest run --coverage') throw new Error(`WORKSPACE_COVERAGE_SCRIPT_UNSUPPORTED: ${value.name}`);
-  const own = !context;
-  context ??= await createTestRunContext({ packages: model.packages, signal });
-  const started = performance.now();
-  try {
-    const logRoot = resolve(context.root, 'coverage-workspace');
-    await context.run({ name: 'workspace coverage', workers: context.budget.limit, command: process.execPath,
-      args: [resolve(repositoryRoot, 'node_modules/vitest/vitest.mjs'), 'run', '--coverage', '--config', resolve(repositoryRoot, 'scripts/vitest-unified-budget-config.mjs')],
-      cwd: repositoryRoot, logRoot, env: { ...process.env, FORGE_CHECK_PACKAGE_ROOTS: JSON.stringify(selected.map(value => value.packageRoot)) } });
+  return { model, selected };
+}
+
+const coverageArgs = () => [resolve(repositoryRoot, 'node_modules/vitest/vitest.mjs'), 'run', '--coverage',
+  '--config', resolve(repositoryRoot, 'scripts/vitest-unified-budget-config.mjs')];
+
+async function finishCoverageContext(context, own, failures) {
+  if (own) try { await context.finalize(); } catch (error) { failures.push(error); }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) throw new AggregateError(failures, 'workspace coverage and cleanup failed', { cause: failures[0] });
+}
+
+async function publishWorkspaceCoverage(selected, context, logRoot, result) {
     const rows = partitionWorkspaceReports(selected,
-      JSON.parse(await readFile(resolve(logRoot, 'coverage/coverage-final.json'), 'utf8')),
-      JSON.parse(await readFile(resolve(logRoot, 'results.json'), 'utf8')));
+      JSON.parse(await readFile(resolve(logRoot, 'coverage/coverage-final.json'), 'utf8')), result);
     const require = createRequire(import.meta.resolve('@vitest/coverage-v8/package.json'));
     const { createCoverageMap } = require('istanbul-lib-coverage'), { createContext } = require('istanbul-lib-report'), reports = require('istanbul-reports');
     const outputs = [], summary = [];
@@ -63,8 +68,59 @@ export async function runWorkspaceCoverageBatch({ packages, context, signal } = 
     }
     context.signal?.throwIfAborted();
     await publishCoverageReports({ reports: outputs, root: context.root, summary });
-    process.stdout.write(`Workspace coverage passed for ${selected.length} packages in ${((performance.now() - started) / 1000).toFixed(2)}s.\n`);
-  } finally { if (own) await context.finalize(); }
+}
+
+export async function runWorkspaceCoverageBatch({ packages, context, signal, shard } = {}) {
+  const selection = shard === undefined ? undefined : parseCoverageShard(shard);
+  const { model, selected } = await coveragePackages(packages);
+  const own = !context;
+  context ??= await createTestRunContext({ packages: model.packages, signal });
+  const started = performance.now();
+  const failures = [];
+  let partial;
+  try {
+    const logRoot = resolve(context.root, selection ? `coverage-shard-${selection.index}` : 'coverage-workspace');
+    const args = coverageArgs(), blobPath = resolve(logRoot, 'blob.json');
+    if (selection) args.push('--shard', shard, '--reporter=default', '--reporter=json', '--reporter=blob', `--outputFile.blob=${blobPath}`);
+    await context.run({ name: 'workspace coverage', workers: context.budget.limit, command: process.execPath,
+      args,
+      cwd: repositoryRoot, logRoot, env: { ...process.env, FORGE_CHECK_COVERAGE_SHARD: selection ? '1' : undefined,
+        FORGE_CHECK_PACKAGE_ROOTS: JSON.stringify(selected.map(value => value.packageRoot)) } });
+    const result = JSON.parse(await readFile(resolve(logRoot, 'results.json'), 'utf8'));
+    if (!result.success || result.numFailedTests) throw new Error('WORKSPACE_COVERAGE_INCOMPLETE');
+    if (selection) partial = { logRoot, blobPath, result };
+    else {
+      await publishWorkspaceCoverage(selected, context, logRoot, result);
+      process.stdout.write(`Workspace coverage passed for ${selected.length} packages in ${((performance.now() - started) / 1000).toFixed(2)}s.\n`);
+    }
+  } catch (error) { failures.push(error); }
+  await finishCoverageContext(context, own, failures);
+  return partial;
+}
+
+export async function mergeWorkspaceCoverage({ packages, context, blobsDirectory, expected } = {}) {
+  const { model, selected } = await coveragePackages(packages);
+  const own = !context;
+  context ??= await createTestRunContext({ packages: model.packages });
+  let result;
+  const failures = [];
+  try {
+    const logRoot = resolve(context.root, 'coverage-merge');
+    await context.run({ name: 'workspace coverage merge', command: process.execPath, cwd: repositoryRoot,
+      args: [...coverageArgs(), '--merge-reports', blobsDirectory], logRoot,
+      env: { ...process.env, FORGE_CHECK_COVERAGE_SHARD: '1', FORGE_CHECK_PACKAGE_ROOTS: JSON.stringify(selected.map(value => value.packageRoot)) } });
+    result = JSON.parse(await readFile(resolve(logRoot, 'results.json'), 'utf8'));
+    const files = result.testResults.map(value => resolve(value.name)).sort();
+    const allFiles = (await Promise.all(selected.map(async value => (await discoverPackageTestFiles(value.packageRoot))
+      .map(file => resolve(value.packageRoot, file))))).flat().sort();
+    if (new Set(files).size !== files.length || JSON.stringify(files) !== JSON.stringify(allFiles)
+      || (expected && (result.numPassedTests !== expected.passed || result.numPendingTests !== expected.skipped))) {
+      throw new Error('CI_SHARD_MERGED_FILES');
+    }
+    await publishWorkspaceCoverage(selected, context, logRoot, result);
+  } catch (error) { failures.push(error); }
+  await finishCoverageContext(context, own, failures);
+  return result;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

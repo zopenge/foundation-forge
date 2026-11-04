@@ -1,2 +1,3 @@
 { "browserExports": ["."], "coverageWorkers": 8,
-  "quickTests": ["tests/config.test.ts", "tests/git.test.ts", "tests/retirement-cli.test.ts"] }
+  "quickTests": ["tests/config.test.ts", "tests/git.test.ts", "tests/retirement-cli.test.ts"],
+  "coverageShardWeights": { "tests/managed-prebuilt-publication.test.ts": 900 } }
