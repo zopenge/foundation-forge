@@ -134,6 +134,22 @@ test('allows CI only through an explicit manual dispatch', async () => {
   assert.deepEqual(workflow.on, { workflow_dispatch: null });
 });
 
+test('every CI producer and merger uses one exact Node patch instead of a floating cache match', async () => {
+  const workflow = await readWorkflow(ciWorkflowUrl);
+  const version = workflow.env?.FORGE_CI_NODE_VERSION;
+  assert.match(version ?? '', /^24\.\d+\.\d+$/u);
+  for (const [name, job] of Object.entries(workflow.jobs)) {
+    if (name === 'complete') continue;
+    const setup = job.steps.filter(step => step.uses === 'actions/setup-node@v6');
+    assert.equal(setup.length, 1, name);
+    const env = { ...workflow.env, ...job.env, ...setup[0].env };
+    const request = String(setup[0].with['node-version']).replace(/\$\{\{\s*env\.([\w_]+)\s*\}\}/gu,
+      (_, key) => String(env[key] ?? ''));
+    assert.match(request, /^24\.\d+\.\d+$/u, name);
+    assert.equal(request, version, name);
+  }
+});
+
 test('keeps Node 24 and requires common gates plus complete per-platform coverage without App credentials', async () => {
   const [workflow, source] = await Promise.all([
     readWorkflow(ciWorkflowUrl),
@@ -153,7 +169,7 @@ test('keeps Node 24 and requires common gates plus complete per-platform coverag
   assert.equal(windows['runs-on'], 'windows-2025');
   assert.deepEqual(windows.strategy.matrix.shard, [1, 2, 3, 4, 5, 6, 7, 8]);
   assert.equal(windows.strategy['fail-fast'], false);
-  assert.equal(windows.steps.find(step => step.uses === 'actions/setup-node@v6').with['node-version'], 24);
+  assert.equal(windows.steps.find(step => step.uses === 'actions/setup-node@v6').with['node-version'], '${{ env.FORGE_CI_NODE_VERSION }}');
   assert.ok(windows.steps.some(step => step.run === 'pnpm build'));
   assert.ok(windows.steps.some(step => step.run === 'pnpm check:ci --coverage-shard ${{ matrix.shard }}/8'));
   const upload = windows.steps.find(step => step.uses === 'actions/upload-artifact@v7');
@@ -183,8 +199,7 @@ test('keeps Node 24 and requires common gates plus complete per-platform coverag
   assert.equal(complete.steps[0].run.trim(), "test '${{ needs.verify-gates.result }}' = success\ntest '${{ needs.merge.result }}' = success");
   for (const job of [workflow.jobs.verify, windows, gates, merge]) {
     assert.equal(job.if, undefined);
-    assert.equal(job.steps.find(step => step.uses === 'actions/setup-node@v6').with['node-version'] === 24
-      || job.steps.find(step => step.uses === 'actions/setup-node@v6').with['node-version'] === '${{ matrix.node-version }}', true);
+    assert.equal(job.steps.find(step => step.uses === 'actions/setup-node@v6').with['node-version'], '${{ env.FORGE_CI_NODE_VERSION }}');
     assert.ok(job.steps.some(step => step.run === 'pnpm install --frozen-lockfile'));
   }
   for (const job of [workflow.jobs.verify, windows, gates, merge])
