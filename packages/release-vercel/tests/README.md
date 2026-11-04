@@ -2,6 +2,8 @@
 
 测试按要捕获的失败机制划分。组件测试减少无关流程的重复执行，不把合成状态或边界错误当作完整发布成功；测试数量、覆盖率数字本身不能证明语义等价。
 
+`managed-directory-observation` 在真实目录枚举和子文件元数据暂停之间执行祖先目录重命名，覆盖 Windows 搜索句柄阻塞安装器的反例，并核对旧扫描被丢弃、在原预算内完整重启。另一个真实反例将祖先替换成外部 junction，必须拒绝观察成功；容量、取消和祖先待处理名称上限继续核对句柄关闭和原 500000 条目门槛。`managed-install-policy` 经真实 Git clone 和真实 pnpm 验证 Windows copy 参数、冻结锁字节、同槽依赖标记、旧硬链接身份及源码不变；POSIX 保留原安装参数。它们不冒充消费者生产发布，也不改变观察截止、三次整扫重试或恢复证据要求。
+
 CI 调度将 managed-prebuilt-publication 的八项展开用例分到普通发布、alias 恢复和历史 promotion 三个文件；managed-completion 的五项分到正常/失败恢复与 native 取消/超时两个文件。两个共享 publication-fixture helper 只承载原夹具、边界注册和 afterEach；原十三项调用体与断言逐项保持一致，每项仍生成和回收独立真实资源。标准本地 full 执行全部文件；CI 仍核对完整文件并集、全部结果及原始覆盖率，不以拆文件减少测试或共享成功槽位。
 
 managed-not-started 验证启动意图已写入、runner 尚未调用时的真实取消，封印绑定运行与命令的独立未启动证明；保留普通 state 提交中断后的只读归并，拒绝旧 UNKNOWN、已有 PID/identity/scope/closure、错运行或未封印输入。managed-checkout-observation 另保留前两个真实 Git scope 已关闭、第三个查询尚未启动的批次取消。停止不会成为正常关闭或发布成功。managed-budget-diagnostics 用测试私有时钟验证原观察期限及无内容进度，以真实非零退出和真实十秒 timeout 验证后续预算异常仍保留命令上下文；所有真实目标都必须观察关闭并回收，时间戳不当作因果证明。

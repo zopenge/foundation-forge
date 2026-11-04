@@ -63,7 +63,11 @@ test('a pool drain failure rejects the CLI even when its descendant subsequently
           await delay(10);
         }
         assert.equal(reported, true);
-      } finally { trace('release-start'); await writeFile(release, 'release'); trace('release-written'); }
+      } finally {
+        trace('release-start'); await writeFile(release, 'release'); trace('release-written');
+        // 观察断言失败时也先等待实际命令收尾，再让外层审计和fixture回收。
+        await terminal;
+      }
       const outcome = await terminal;
       trace('terminal-settled', { exitCode: outcome.error?.result?.exitCode, closure: outcome.error?.result?.closure, diagnostics: outcome.error?.result?.diagnostics });
       assert.ok(outcome.error, 'pool teardown failure must reject even with an empty normally closed Job');

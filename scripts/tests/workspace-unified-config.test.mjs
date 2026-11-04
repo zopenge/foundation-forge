@@ -35,6 +35,17 @@ test('only explicit CI shard mode discovers package-owned scheduling hints', asy
   assert.deepEqual(sharded.test.provide.forgeCoverageShardWeights, { [resolve(packages[0].packageRoot, 'tests/heavy.test.ts')]: 900 });
 });
 
+test('explicit fast full ordering uses the same package-owned hints without enabling a shard', async () => {
+  const value = await create({ ...options, workers: 6,
+    packages: [{ ...packages[0], verification: { coverageWorkers: 8, coverageShardWeights: { 'tests/heavy.test.ts': 900 } } }],
+    env: { FORGE_CHECK_COVERAGE_FULL_ORDER: '1' } });
+  assert.equal(typeof value.test.sequence?.sequencer, 'function');
+  assert.equal(value.test.provide.forgeCoverageFullOrder, true);
+  assert.deepEqual(value.test.provide.forgeCoverageShardWeights, { [resolve(packages[0].packageRoot, 'tests/heavy.test.ts')]: 900 });
+  assert.equal(value.test.shard, undefined);
+  assert.equal(value.test.include.length, 1); assert.equal(value.test.isolate, true); assert.equal(value.test.bail, 1);
+});
+
 test('unified execution refuses a lower package limit or configuration it cannot preserve', async () => {
   await assert.rejects(create({ ...options, packages: [{ ...packages[0], verification: { coverageWorkers: 1 } }] }), /WORKSPACE_UNIFIED_CONFIG_UNSUPPORTED/u);
   for (const extra of [{ setupFiles: ['setup.ts'] }, { environment: 'jsdom' }, { coverage: { provider: 'v8', thresholds: { lines: 100 } } }]) {

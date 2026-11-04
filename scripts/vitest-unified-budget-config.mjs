@@ -40,14 +40,16 @@ export async function createUnifiedVitestBudgetConfig({ packages, repositoryRoot
     coverageInclude.push(`${prefix}/src/**/*.ts`);
   }
   const shardMode = env.FORGE_CHECK_COVERAGE_SHARD === '1';
-  const sequencer = shardMode ? (await import('./vitest-shard-sequencer.mjs')).default : undefined;
+  const fullOrder = env.FORGE_CHECK_COVERAGE_FULL_ORDER === '1';
+  const sequencer = shardMode || fullOrder ? (await import('./vitest-shard-sequencer.mjs')).default : undefined;
   const weights = Object.fromEntries(packages.flatMap(value => Object.entries(value.verification?.coverageShardWeights ?? {})
     .map(([path, weight]) => [resolve(value.packageRoot, path), weight])));
   return { root: repositoryRoot, cacheDir: resolve(jobRoot, 'cache'), test: {
     pool: createHiddenVitestPool({ workers }), maxWorkers: workers, fileParallelism: workers > 1, isolate: true, bail: 1,
     include, setupFiles: [fileURLToPath(new URL('./vitest-package-setup.mjs', import.meta.url))],
-    provide: { forgePackageSettings: settings, ...(shardMode ? { forgeCoverageShardWeights: weights } : {}) },
-    ...(shardMode ? { sequence: { sequencer } } : {}),
+    provide: { forgePackageSettings: settings, ...(shardMode || fullOrder ? { forgeCoverageShardWeights: weights } : {}),
+      ...(fullOrder ? { forgeCoverageFullOrder: true } : {}) },
+    ...(sequencer ? { sequence: { sequencer } } : {}),
     reporters: ['default', 'json'], outputFile: { json: resolve(jobRoot, 'results.json') },
     coverage: { provider: 'v8', reporter: ['json'], reportsDirectory: resolve(jobRoot, 'coverage'), include: coverageInclude },
   } };

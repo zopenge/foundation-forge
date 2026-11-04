@@ -8,8 +8,27 @@ const boundary = vi.hoisted(() => ({ counter: '', deadline: undefined as ReturnT
   blockCompletionIdentity: false }));
 vi.mock('@openge/forge-command-runner/node', async importOriginal => {
   const actual = await importOriginal<typeof import('@openge/forge-command-runner/node')>();
-  return { ...actual, createNodeCommandRunner: (options: Parameters<typeof actual.createNodeCommandRunner>[0]) =>
-    actual.createNodeCommandRunner({ ...options, ...boundary.deadline?.timers }) };
+  return { ...actual, createNodeCommandRunner: (options: Parameters<typeof actual.createNodeCommandRunner>[0]) => {
+    const runner = actual.createNodeCommandRunner({ ...options, ...boundary.deadline?.timers });
+    return { ...runner, start: (...args: Parameters<typeof runner.start>) => {
+      const running = runner.start(...args);
+      // 仅失败时保存有界分类，不输出命令参数、环境或凭据；真实执行和回执保持原样。
+      void running.result.then(result => {
+        if (result.terminationReason === 'exit') return;
+        const cause = (value: unknown, depth = 0): Record<string, unknown> => {
+          if (!value || typeof value !== 'object' || depth > 3) return {};
+          const row = value as Record<string, unknown>;
+          const details = row.details && typeof row.details === 'object' ? row.details as Record<string, unknown> : {};
+          return { code: row.code, stage: details.stage, reason: details.reason,
+            ...(row.cause ? { cause: cause(row.cause, depth + 1) } : {}) };
+        };
+        process.stderr.write(`COMPLETION_COMMAND_FAILURE ${JSON.stringify({ termination: result.terminationReason,
+          durationMs: result.durationMs, exitCode: result.exitCode, closure: result.ownedScope,
+          diagnostics: result.diagnostics.slice(0, 16).map(value => cause(value)) })}\n`);
+      }, () => {});
+      return running;
+    } };
+  } };
 });
 vi.mock('../../src/node/owned-command-runner.js', async importOriginal => {
   const actual = await importOriginal<typeof import('../../src/node/owned-command-runner.js')>();

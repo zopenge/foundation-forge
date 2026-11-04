@@ -41,7 +41,7 @@ const createCheckWorkspace = async (context, scenario) => {
   }
   await put('.tmp/check-cache/packs/tarballs.json',
     JSON.stringify(Object.fromEntries(packages.map(({ name }) => [name, name + '.tgz']))));
-  for (const name of ['check-runner.mjs', 'check-mode.mjs']) {
+  for (const name of ['check-runner.mjs', 'check-mode.mjs', 'check-options.mjs']) {
     await mkdir(resolve(root, 'scripts'), { recursive: true });
     await copyFile(new URL('../' + name, import.meta.url), resolve(root, 'scripts', name));
   }

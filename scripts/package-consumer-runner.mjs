@@ -283,7 +283,13 @@ const packageInstallationPath = (consumerRoot, packageName) => resolve(
   ...packageName.split('/'),
 );
 
-export const runConsumerChecks = async ({ importCheck, smokeChecks }) => {
+export const runConsumerChecks = async ({ importCheck, smokeChecks, serial = false }) => {
+  if (typeof serial !== 'boolean') throw new Error('CONSUMER_CHECK_POLICY');
+  if (serial) {
+    const result = await importCheck();
+    await smokeChecks();
+    return result;
+  }
   const start = (task) => {
     try { return Promise.resolve(task()); }
     catch (error) { return Promise.reject(error); }
@@ -302,8 +308,10 @@ export const runCleanPackageConsumer = async ({
   install = async ({ cwd, env }) => runPnpmAsync(['install', '--prefer-offline', '--frozen-lockfile=false'], { cwd, env }),
   env = process.env,
   onPhase = () => {},
+  serialChecks = false,
   testRun,
 }) => {
+  if (typeof serialChecks !== 'boolean') throw new Error('CONSUMER_CHECK_POLICY');
   const started = performance.now();
   const { dependencies, overrides } = createConsumerConfiguration({
     packages: model.packages,
@@ -343,7 +351,7 @@ export const runCleanPackageConsumer = async ({
   const own = !testRun;
   testRun ??= await createTestRunContext({ packages: (await discoverWorkspacePackageModel({ repositoryRoot: toolingRoot })).packages });
   let importOutput;
-  try { importOutput = await runConsumerChecks({
+  try { importOutput = await runConsumerChecks({ serial: serialChecks,
     importCheck: async () => {
       const start = performance.now();
       const output = await testRun.run({ name: 'consumer imports', workers: 1, command: process.execPath,
@@ -353,7 +361,7 @@ export const runCleanPackageConsumer = async ({
     },
     smokeChecks: async () => {
       const start = performance.now();
-      await runBounded(smokes, testRun.budget.limit, async (packageValue, index) => {
+      await runBounded(smokes, serialChecks ? 1 : testRun.budget.limit, async (packageValue, index) => {
         // 为 consumer 内的 Git fixture 留出路径空间，包名不进入临时目录。
         const targetRoot = resolve(consumerRoot, 'smoke', index.toString(36));
         await cp(resolve(packageValue.packageRoot, 'package-consumer'), targetRoot, { recursive: true });
@@ -373,7 +381,8 @@ export const runCleanPackageConsumer = async ({
   return `${importOutput}\nClean package consumer executed discovered smoke fixtures.`;
 };
 
-export const verifyLocalPackages = async ({ repositoryRoot, verificationRoot, tarballCacheRoot, onBuilt, testRun }) => {
+export const verifyLocalPackages = async ({ repositoryRoot, verificationRoot, tarballCacheRoot, onBuilt,
+  onConsumerReady, serialConsumerChecks = false, testRun }) => {
   if (relative(repositoryRoot, verificationRoot).startsWith('..')) {
     throw new Error('package verification directory escaped the repository');
   }
@@ -403,7 +412,8 @@ export const verifyLocalPackages = async ({ repositoryRoot, verificationRoot, ta
       const tarball = tarballs.get(name);
       return [name, `file:${relative(consumerRoot, tarball).replaceAll('\\', '/')}`];
     }));
-    process.stdout.write(`${await runCleanPackageConsumer({ consumerRoot, model, references, testRun })}\n`);
+    process.stdout.write(`${await runCleanPackageConsumer({ consumerRoot, model, references, testRun,
+      serialChecks: serialConsumerChecks, onPhase: phase => phase === 'checks' ? onConsumerReady?.() : undefined })}\n`);
     reportPhase('clean consumer');
     if (tarballCacheRoot !== undefined) {
       await mkdir(tarballCacheRoot, { recursive: true });

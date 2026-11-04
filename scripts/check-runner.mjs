@@ -16,6 +16,7 @@ import { createTestRunContext } from './test-run-context.mjs';
 import { runWorkspaceCoverage } from './run-workspace-coverage.mjs';
 import { runScriptTestSuite } from './run-script-tests.mjs';
 import { openCheckCancellation } from './check-cancellation.mjs';
+import { readFastCheckResources, resolveCheckOptions } from './check-options.mjs';
 
 const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
 const cacheRoot = resolve(repositoryRoot, '.tmp', 'check-cache');
@@ -290,15 +291,14 @@ export const runCheck = async ({ signal, full = false } = {}) => {
 if (process.argv[1] && resolve(process.argv[1]) === scriptPath) {
   let cancellation;
   try {
-    const args = process.argv.slice(2);
-    if (new Set(args).size !== args.length || args.some(arg => !['--quick', '--full', '--serial'].includes(arg))
-      || args.includes('--quick') && args.includes('--full') || args.includes('--serial') && !args.includes('--full')) throw new Error('CHECK_ARGUMENT_INVALID');
-    if (args.includes('--serial')) process.env.FORGE_CHECK_TEST_WORKERS = '1';
+    const options = await resolveCheckOptions(process.argv.slice(2), {
+      env: process.env, resources: () => readFastCheckResources(repositoryRoot),
+    });
     cancellation = openCheckCancellation();
     process.stdout.write(`check cancellation file: ${cancellation.path}\n`);
-    const result = args.includes('--quick')
+    const result = options.quick
       ? await (await import('./check-quick.mjs')).runQuickCheck({ signal: cancellation.signal })
-      : await runCheck({ signal: cancellation.signal, full: args.includes('--full') });
+      : await runCheck({ signal: cancellation.signal, full: options.full });
     if (result !== stateCommitted) cancellation.assertRunning();
   }
   catch (error) { process.stderr.write(`${error?.stack ?? error}\n`); process.exitCode = 1; }

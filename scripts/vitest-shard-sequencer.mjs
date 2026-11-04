@@ -21,6 +21,18 @@ export function balanceCoverageShards(files, weights, count) {
 }
 
 export default class CoverageShardSequencer extends BaseSequencer {
+  async sort(files) {
+    const ordered = await super.sort(files);
+    if (!this.ctx.config.provide.forgeCoverageFullOrder) return ordered;
+    const hints = new Map(Object.entries(this.ctx.config.provide.forgeCoverageShardWeights ?? {})
+      .map(([path, weight]) => [resolve(path), weight]));
+    const paths = new Set(files.map(spec => resolve(spec.moduleId)));
+    if (paths.size !== files.length || [...hints].some(([path, weight]) => !paths.has(path)
+      || typeof weight !== 'number' || !Number.isFinite(weight) || weight <= 0 || weight > 86_400)) throw new Error('FULL_COVERAGE_WEIGHT_INVALID');
+    // 无提示的文件保留原排序；只将包内声明的长场景提到前面，不改变测试集合。
+    return ordered.map((spec, index) => ({ spec, index, weight: hints.get(resolve(spec.moduleId)) ?? 1 }))
+      .sort((a, b) => b.weight - a.weight || a.index - b.index).map(value => value.spec);
+  }
   async shard(files) {
     const { index, count } = this.ctx.config.shard;
     return balanceCoverageShards(files, this.ctx.config.provide.forgeCoverageShardWeights ?? {}, count)[index - 1];

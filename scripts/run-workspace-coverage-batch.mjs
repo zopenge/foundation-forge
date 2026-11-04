@@ -7,6 +7,7 @@ import { discoverWorkspacePackageModel } from './workspace-packages.mjs';
 import { createTestRunContext } from './test-run-context.mjs';
 import { discoverPackageTestFiles, publishCoverageReports } from './run-workspace-coverage.mjs';
 import { parseCoverageShard } from './ci-coverage-shards.mjs';
+import { testWorkerLimit } from './test-worker-budget.mjs';
 
 const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
 const within = (root, path) => { const child = relative(root, path); return child && child !== '..' && !child.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) && !isAbsolute(child); };
@@ -51,7 +52,7 @@ async function finishCoverageContext(context, own, failures) {
   if (failures.length > 1) throw new AggregateError(failures, 'workspace coverage and cleanup failed', { cause: failures[0] });
 }
 
-async function publishWorkspaceCoverage(selected, context, logRoot, result) {
+async function publishWorkspaceCoverage(selected, context, logRoot, result, workers = context.budget.limit) {
     const rows = partitionWorkspaceReports(selected,
       JSON.parse(await readFile(resolve(logRoot, 'coverage/coverage-final.json'), 'utf8')), result);
     const require = createRequire(import.meta.resolve('@vitest/coverage-v8/package.json'));
@@ -64,13 +65,15 @@ async function publishWorkspaceCoverage(selected, context, logRoot, result) {
       const reportContext = createContext({ dir: directory, coverageMap: createCoverageMap(row.coverage) });
       for (const reporter of ['text', 'json', 'html']) reports.create(reporter).execute(reportContext);
       outputs.push({ packageRoot: row.packageRoot, logRoot: target });
-      summary.push({ name: row.name, workers: context.budget.limit, logRoot: target, files: row.files, passed: row.passed, skipped: row.skipped });
+      summary.push({ name: row.name, workers, logRoot: target, files: row.files, passed: row.passed, skipped: row.skipped });
     }
     context.signal?.throwIfAborted();
     await publishCoverageReports({ reports: outputs, root: context.root, summary });
 }
 
-export async function runWorkspaceCoverageBatch({ packages, context, signal, shard } = {}) {
+export async function runWorkspaceCoverageBatch({ packages, context, signal, shard, workers = context?.budget.limit ?? testWorkerLimit() } = {}) {
+  workers = testWorkerLimit(workers);
+  if (context && workers > context.budget.limit) throw new Error('WORKSPACE_COVERAGE_WORKERS');
   const selection = shard === undefined ? undefined : parseCoverageShard(shard);
   const { model, selected } = await coveragePackages(packages);
   const own = !context;
@@ -82,15 +85,16 @@ export async function runWorkspaceCoverageBatch({ packages, context, signal, sha
     const logRoot = resolve(context.root, selection ? `coverage-shard-${selection.index}` : 'coverage-workspace');
     const args = coverageArgs(), blobPath = resolve(logRoot, 'blob.json');
     if (selection) args.push('--shard', shard, '--reporter=default', '--reporter=json', '--reporter=blob', `--outputFile.blob=${blobPath}`);
-    await context.run({ name: 'workspace coverage', workers: context.budget.limit, command: process.execPath,
+    await context.run({ name: 'workspace coverage', workers, command: process.execPath,
       args,
       cwd: repositoryRoot, logRoot, env: { ...process.env, FORGE_CHECK_COVERAGE_SHARD: selection ? '1' : undefined,
+        FORGE_CHECK_COVERAGE_FULL_ORDER: !selection && context.budget.limit === 8 && workers === 6 ? '1' : undefined,
         FORGE_CHECK_PACKAGE_ROOTS: JSON.stringify(selected.map(value => value.packageRoot)) } });
     const result = JSON.parse(await readFile(resolve(logRoot, 'results.json'), 'utf8'));
     if (!result.success || result.numFailedTests) throw new Error('WORKSPACE_COVERAGE_INCOMPLETE');
     if (selection) partial = { logRoot, blobPath, result };
     else {
-      await publishWorkspaceCoverage(selected, context, logRoot, result);
+      await publishWorkspaceCoverage(selected, context, logRoot, result, workers);
       process.stdout.write(`Workspace coverage passed for ${selected.length} packages in ${((performance.now() - started) / 1000).toFixed(2)}s.\n`);
     }
   } catch (error) { failures.push(error); }

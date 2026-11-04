@@ -88,3 +88,18 @@ test('observer failure rejects before execution and leaves no occupied worker', 
   await assert.rejects(budget.run({ name: 'not-started', workers: 2 }, async () => { started = true; }), /log unavailable/u);
   assert.equal(started, false); assert.equal(budget.summary().activeWorkers, 0); assert.equal(budget.summary().failed, true);
 });
+
+test('six coverage workers leave room for a consumer within one eight-worker budget', async () => {
+  const budget = create({ limit: 8 }), close = gate(), calls = [];
+  const work = budget.run({ name: 'coverage', workers: 6 }, async lease => {
+    const pool = create({ limit: lease.workers });
+    await pool.run({ name: 'six actual workers', workers: 6 }, async () => { calls.push('coverage'); await close.promise; });
+    assert.equal(pool.summary().activeWorkers, 0);
+  });
+  const consumer = budget.run({ name: 'consumer', workers: 1 }, async () => { calls.push('consumer'); await close.promise; });
+  const settled = Promise.allSettled([work, consumer]);
+  try { await setImmediate(); assert.deepEqual([...calls].sort(), ['consumer', 'coverage']); assert.equal(budget.summary().activeWorkers, 7); }
+  finally { close.resolve(); await settled; }
+  await work; await consumer;
+  assert.equal(budget.summary().peakWorkers, 7); assert.equal(budget.summary().activeWorkers, 0);
+});
