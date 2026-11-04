@@ -83,9 +83,23 @@ Vitest调度编号可能在旧worker退出前复用，因此真实fork槽持有�
 1. 确认候选提交已推送，工作区干净，并记录 `git rev-parse HEAD` 与 `git ls-remote origin refs/heads/<branch>` 返回的精确 SHA，两者必须一致。
 2. 在 GitHub Actions 的 CI 页面选择验收分支并执行 Run workflow，或显式运行 `gh workflow run ci.yml --ref <branch>`。默认分支必须已包含 `workflow_dispatch` 配置。不要自动重试或用占位成功状态替代验收。
 3. 使用 `gh run list --workflow ci.yml --branch <branch> --event workflow_dispatch --json databaseId,headSha,event,status,conclusion` 找到本次运行，再用 `gh run view <run-id> --json headSha,event,status,conclusion,jobs` 核对事件、精确 SHA 和结果。必须是候选 SHA，所有矩阵任务均成功，不能接受旧运行、跳过任务或仅有部分平台通过。
-4. 保留运行链接和候选 SHA 作为验收证据。Linux Ubuntu 24.04 上的 Node.js 22、24、26，以及 Windows 2025 上的 Node.js 24 均运行冻结依赖安装与`pnpm check:full`，涵盖构建、lint、类型检查、循环依赖、覆盖率、浏览器边界和真实 tarball 消费验证。
+4. 保留运行链接和候选 SHA 作为验收证据。Linux Ubuntu 24.04 使用 Node.js 24 运行冻结依赖安装与`pnpm check:full`；Windows 2025 的 Node.js 24 使用下述两个单 worker 分片及必需汇总，完整保留构建、lint、类型检查、循环依赖、覆盖率、浏览器边界和真实 tarball 消费验证。CI 矩阵收敛不修改公开包的 Node.js 兼容范围；矩阵外版本不再具有每轮完整 CI 的兼容性证据。
 5. 候选提交发生任何变化后重新验收并核对新 SHA；合并或发布时再次确认实际交付 SHA 与验收证据一致。
 
 切换前只读核实目标分支的 required status checks、规则集及合并队列。手动运行绑定候选提交；若保护要求其他提交或自动事件的检查，先明确满足方式和所需最小规则调整，再由维护者确认。不得自行降低保护、伪造状态或绕过权限错误；未解决的 required checks 应作为合并阻塞报告，避免永久 pending。
 
 独立的 `.github/workflows/release.yml` 继续沿用 main push 与手动预发布入口，按[发布流程](releases.md)执行；它不会代为启动 CI。手动 CI 策略不取消发布流程自身的 `pnpm check:full`、构建、打包验证与发布门禁，main 更新仍保留原有自动发包契约。
+
+## Windows CI 覆盖率分片
+
+Windows 的两个独立作业分别调用 `pnpm check:ci --shard 1/2` 和 `pnpm check:ci --shard 2/2`。每台机器仍由根预算限制为一个测试 worker；两个作业都保留原构建、静态检查、脚本测试、真实 tarball、安装和消费者验证，只将工作区覆盖测试文件交给 Vitest 的公开 sequencer 扩展分配。用例、断言、隔离、取消、超时及原生关闭规则均不减少。
+
+包可在自己的 `package.verify.json` 声明 `coverageShardWeights`，将实际存在的相对测试文件路径映射到正的相对耗时权重；未声明的文件按 1 计。调度按权重从大到小，将下一文件放入当前累计权重最小的片，路径顺序用于稳定处理并列；提示仅由所属包维护，中央脚本不保存包名或测试清单。非法、缺失或未进入当前测试集合的提示会失败。权重不是超时、通过条件或缓存，原完整文件并集与覆盖率门禁独立核对。普通本地及发布 full 不启用此 CI 调度器。
+
+单片通过且原 context 最终审计成功后，才生成标为 `ci-coverage-shard` 的报告和官方 blob。报告只包含源码/构建指纹、运行时、workflow run/attempt、文件与计数、blob 摘要及 worker 审计，不保存完整环境或凭据，也不写出 full 发布收据。artifact 只上传该片的两个结果文件，保留一天；不上传整个 `.tmp/` 或消费者工作目录。
+
+必需的 Windows 汇总作业等待两片成功，重新从同一提交安装和构建，再下载同一 run/attempt 的两个 artifact。缺片、重复或遗漏文件、源码/构建/运行时变化、blob 损坏、原作业未收尾均失败。通过后由真实 Vitest 合并原始覆盖率，核对全部当前测试文件及计数，再沿原覆盖率报告事务发布；不重新执行测试，也不把部分成功当完整成功。若人工重跑，须让两片及汇总属于同一次 attempt，不能混用旧片。
+
+异步写入、合并及收尾后仍检查晚到取消，CLI 在返回成功前同步读取取消门闩；这次末尾检查是成功提交点。其前取消会返回失败，已有局部报告可保留诊断，但该失败作业不会上传或满足汇总依赖。提交点后的取消不追改已完成的作业。原始合并错误与收尾错误同时发生时，两者及原始 cause 都保留。
+
+普通开发与发布继续使用 `pnpm check` / `pnpm check:full`；它们仍执行原完整流程。分片是独立 CI 的等待时间优化，不是发布门禁的缓存或替代。所需 fixture 和生成逻辑随仓库维护，干净 checkout 会现场生成输入及报告，不需要历史 `.tmp/` 内容。实际收益须以候选 CI 的完整终态及墙钟为准。

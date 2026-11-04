@@ -25,6 +25,16 @@ test('one workspace project shares transforms and retains every package root and
   assert.equal(value.test.isolate, true); assert.equal(value.test.bail, 1);
 });
 
+test('only explicit CI shard mode discovers package-owned scheduling hints', async () => {
+  const hinted = [{ ...packages[0], verification: { coverageWorkers: 8,
+    coverageShardWeights: { 'tests/heavy.test.ts': 900 } } }, packages[1]];
+  const normal = await create({ ...options, packages: hinted, env: {} });
+  assert.equal(normal.test.sequence, undefined);
+  const sharded = await create({ ...options, packages: hinted, env: { FORGE_CHECK_COVERAGE_SHARD: '1' } });
+  assert.equal(typeof sharded.test.sequence.sequencer, 'function');
+  assert.deepEqual(sharded.test.provide.forgeCoverageShardWeights, { [resolve(packages[0].packageRoot, 'tests/heavy.test.ts')]: 900 });
+});
+
 test('unified execution refuses a lower package limit or configuration it cannot preserve', async () => {
   await assert.rejects(create({ ...options, packages: [{ ...packages[0], verification: { coverageWorkers: 1 } }] }), /WORKSPACE_UNIFIED_CONFIG_UNSUPPORTED/u);
   for (const extra of [{ setupFiles: ['setup.ts'] }, { environment: 'jsdom' }, { coverage: { provider: 'v8', thresholds: { lines: 100 } } }]) {

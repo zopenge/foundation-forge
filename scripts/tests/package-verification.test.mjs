@@ -34,6 +34,19 @@ test('packages without a lower explicit cap can use the approved shared worker t
   assert.equal((await loadPackageVerification(value)).coverageWorkers, 8);
 });
 
+test('coverage shard weights are package-owned hints with existing bounded test-file paths', async context => {
+  const value = await createPackage(context, { files: { 'tests/slow.test.ts': 'export {};\n' } });
+  const path = join(value.packageRoot, 'package.verify.json');
+  const coverageShardWeights = { 'tests/slow.test.ts': 900 };
+  await writeFile(path, JSON.stringify({ browserExports: ['.'], coverageShardWeights }));
+  assert.deepEqual((await loadPackageVerification(value)).coverageShardWeights, coverageShardWeights);
+  for (const hints of [[], { '../outside.test.ts': 1 }, { 'tests/missing.test.ts': 1 },
+    { 'tests/slow.test.ts': 0 }, { 'tests/slow.test.ts': -1 }, { 'tests/slow.test.ts': '1' }]) {
+    await writeFile(path, JSON.stringify({ browserExports: ['.'], coverageShardWeights: hints }));
+    await assert.rejects(loadPackageVerification(value), /coverageShardWeights/u);
+  }
+});
+
 test('documentation links reject missing local targets and accept present targets', async (context) => {
   assert.equal(typeof packageRunner.verifyDocumentationLinks, 'function');
   await mkdir(join('.tmp', 'tests'), { recursive: true });

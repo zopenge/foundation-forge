@@ -3,10 +3,29 @@ import { resolve } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { managedRuns } from './helpers/managed-runs.js';
 import { completionFixture } from './helpers/completion-fixture.js';
+import { completionDeadline } from './helpers/completion-deadline.js';
 import { git } from './helpers/managed-fixture.js';
 import { hasVerifiedManagedClosure, hasVerifiedManagedStop } from '../src/node/managed-closure.js';
 
-const boundary = vi.hoisted(() => ({ counter: '' }));
+const boundary = vi.hoisted(() => ({ counter: '', deadline: undefined as ReturnType<typeof completionDeadline> | undefined,
+  blockCompletionIdentity: false }));
+vi.mock('@openge/forge-command-runner/node', async importOriginal => {
+  const actual = await importOriginal<typeof import('@openge/forge-command-runner/node')>();
+  return { ...actual, createNodeCommandRunner: (options: Parameters<typeof actual.createNodeCommandRunner>[0]) =>
+    actual.createNodeCommandRunner({ ...options, ...boundary.deadline?.timers }) };
+});
+vi.mock('../src/node/owned-command-runner.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('../src/node/owned-command-runner.js')>();
+  return { ...actual, managedOwnedScopeProvider: () => {
+    const provider = actual.managedOwnedScopeProvider();
+    return { start: (request: Parameters<typeof provider.start>[0], observer: Parameters<typeof provider.start>[1]) => {
+      const scope = provider.start(request, observer);
+      if (!boundary.blockCompletionIdentity || !request.args?.some(value => value.endsWith('completion-job.mjs'))) return scope;
+      // 宿主仍真实启动并清空；身份保持未知，授权与payload绝不能执行。
+      return { ...scope, rootPid: scope.completion.then(() => { throw new Error('FIXTURE_COMPLETION_IDENTITY_DELAYED'); }) };
+    } };
+  } };
+});
 // 真实 CLI 子进程验证原 prebuilt argv；无真实云写入。
 vi.mock('../src/node/execution.js', async importOriginal => {
   const actual = await importOriginal<typeof import('../src/node/execution.js')>();
@@ -19,6 +38,7 @@ const fixtures: Awaited<ReturnType<typeof completionFixture>>[] = [];
 const runs = managedRuns(), runRelease = runs.run;
 afterEach(async () => {
   await runs.close();
+  boundary.deadline?.dispose(); boundary.deadline = undefined; boundary.blockCompletionIdentity = false;
   vi.unstubAllEnvs();
   for (const fixture of fixtures.splice(0)) await fixture.dispose();
   boundary.counter = '';
@@ -109,10 +129,25 @@ it('pins a failed production completion before a later SHA check can replace the
 
 it.each(['timeout', 'cancel'] as const)('preserves promoted effects and native stop proof when completion ends by %s', async kind => {
   const controller = new AbortController();
+  const deadline = kind === 'timeout' ? completionDeadline(1000) : undefined;
+  boundary.deadline = deadline;
   const value = await fixture({ mode: 'wait', ...(kind === 'timeout' ? { jobTimeoutMs: 1000 } : {}) });
   const pending = runRelease({ command: 'publish', cwd: value.cwd, signal: controller.signal, transport: value.transport });
   try {
-    await expect.poll(async () => (await value.results()).length, { timeout: 120_000, interval: 100 }).toBe(1);
+    try {
+      await expect.poll(async () => (await value.results()).length, { timeout: 120_000, interval: 100 }).toBe(1);
+    } catch (error) {
+      controller.abort();
+      const report = await pending;
+      throw new AggregateError([error, new Error(JSON.stringify({ stage: report.stage, error: report.error }))],
+        'completion observation failed', { cause: error });
+    }
+    if (deadline) {
+      deadline.advance(999);
+      expect(JSON.parse(await readFile(resolve(value.cwd, '.tmp/release-slot/state.json'), 'utf8')))
+        .toMatchObject({ completion: { status: 'running' } });
+      deadline.advance(1);
+    }
     if (kind === 'cancel') controller.abort();
     const report = await pending;
     expect(report, JSON.stringify(report.error)).toMatchObject({ ok: false,
@@ -129,4 +164,21 @@ it.each(['timeout', 'cancel'] as const)('preserves promoted effects and native s
     expect(await value.results()).toHaveLength(1);
     expect(await value.counts()).toEqual({ creates: 1, promotions: 1, assignments: 1 });
   } finally { controller.abort(); }
+}, 180_000);
+
+it('fails closed when the real deadline expires before completion identity becomes available', async () => {
+  boundary.blockCompletionIdentity = true;
+  const value = await fixture({ mode: 'wait', jobTimeoutMs: 1000 });
+  const report = await runRelease({ command: 'publish', cwd: value.cwd, transport: value.transport });
+  expect(report, JSON.stringify(report.error)).toMatchObject({ ok: false, error: { code: 'PROCESS_STATE_UNKNOWN' },
+    prebuilt: { createEffect: 'accepted', promoteEffect: 'accepted', promotionVerified: true },
+    completion: { status: 'unknown', attempts: [{ status: 'unknown', jobs: [{ status: 'unknown' }] }] },
+    processes: { status: 'unknown' } });
+  const state = JSON.parse(await readFile(resolve(value.cwd, '.tmp/release-slot/state.json'), 'utf8'));
+  const command = state.processes.find((item: { name: string }) => item.name === 'completion:0');
+  expect(command).toMatchObject({ status: 'unknown', closure: { requestedTermination: 'timeout',
+    ownedScope: { status: 'unknown', reason: 'terminated', empty: true } } });
+  expect(hasVerifiedManagedStop(command)).toBe(false); expect(hasVerifiedManagedClosure(command)).toBe(false);
+  expect(await value.results()).toHaveLength(0);
+  expect(await value.counts()).toEqual({ creates: 1, promotions: 1, assignments: 1 });
 }, 180_000);

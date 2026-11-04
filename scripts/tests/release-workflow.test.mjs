@@ -56,12 +56,8 @@ test('a cancelled CI budget probe waits for its actual child close before reject
 
 test('CI worker selections reach the real repository budget and serialize Windows reservations', async t => {
   const workflow = await readWorkflow(ciWorkflowUrl);
-  for (const [os, expected] of [['windows-2025', 1], ['ubuntu-24.04', 2]]) {
-    const selected = Object.fromEntries(Object.entries(workflow.jobs.verify.env).map(([key, value]) => {
-      const expression = /^\$\{\{\s*matrix\.os == '([^']+)' && '([^']*)' \|\| '([^']*)'\s*\}\}$/u.exec(value);
-      assert.ok(expression, 'CI worker environment requires an explicit OS selection');
-      return [key, os === expression[1] ? expression[2] : expression[3]];
-    }));
+  for (const [job, expected] of [['verify', 2], ['verify-windows', 1]]) {
+    const selected = workflow.jobs[job].env;
     // 在独立子进程中清除外层测试的预算注入，重现 Actions 根命令的实际环境。
     const { completion } = startWorkflowProbe(['--input-type=module', '-e', `
       import {setImmediate} from 'node:timers/promises';
@@ -74,7 +70,7 @@ test('CI worker selections reach the real repository budget and serialize Window
       console.log(JSON.stringify({limit:budget.limit,peak:observed,active:budget.summary().activeWorkers}));
     `], { signal: t.signal, windowsHide: true, env: { ...process.env,
       VITEST_MAX_WORKERS: undefined, FORGE_CHECK_TEST_WORKERS: undefined, ...selected } });
-    assert.deepEqual(JSON.parse((await completion).stdout), { limit: expected, peak: expected, active: 0 }, os);
+    assert.deepEqual(JSON.parse((await completion).stdout), { limit: expected, peak: expected, active: 0 }, job);
   }
 });
 
@@ -138,21 +134,37 @@ test('allows CI only through an explicit manual dispatch', async () => {
   assert.deepEqual(workflow.on, { workflow_dispatch: null });
 });
 
-test('keeps App credentials out of manual CI and preserves the supported matrix', async () => {
+test('keeps Node 24 CI targets and requires complete Windows shard merging without App credentials', async () => {
   const [workflow, source] = await Promise.all([
     readWorkflow(ciWorkflowUrl),
     readFile(ciWorkflowUrl, 'utf8'),
   ]);
 
   assert.deepEqual(workflow.permissions, { contents: 'read' });
-  assert.deepEqual(workflow.jobs.verify.strategy.matrix['node-version'], [22, 24, 26]);
+  assert.deepEqual(workflow.jobs.verify.strategy.matrix['node-version'], [24]);
   assert.deepEqual(workflow.jobs.verify.strategy.matrix.os, ['ubuntu-24.04']);
-  assert.deepEqual(workflow.jobs.verify.strategy.matrix.include, [
-    { os: 'windows-2025', 'node-version': 24 },
-  ]);
+  assert.equal(workflow.jobs.verify.strategy.matrix.include, undefined);
   const steps = workflow.jobs.verify.steps;
   assert.ok(steps.some((step) => step.run === 'pnpm install --frozen-lockfile'));
   assert.ok(steps.some((step) => step.run === 'pnpm check:full'));
+  const windows = workflow.jobs['verify-windows'];
+  assert.equal(windows['runs-on'], 'windows-2025');
+  assert.deepEqual(windows.strategy.matrix.shard, [1, 2]);
+  assert.equal(windows.strategy['fail-fast'], false);
+  assert.equal(windows.steps.find(step => step.uses === 'actions/setup-node@v6').with['node-version'], 24);
+  assert.ok(windows.steps.some(step => step.run === 'pnpm check:ci --shard ${{ matrix.shard }}/2'));
+  const upload = windows.steps.find(step => step.uses === 'actions/upload-artifact@v7');
+  assert.equal(upload.with['if-no-files-found'], 'error');
+  assert.equal(upload.with['include-hidden-files'], true);
+  const merge = workflow.jobs['merge-windows'];
+  assert.equal(merge.needs, 'verify-windows');
+  assert.equal(merge['runs-on'], 'windows-2025');
+  assert.equal(merge.if, undefined);
+  assert.ok(merge.steps.some(step => step.run === 'pnpm build'));
+  assert.ok(merge.steps.some(step => step.run === 'pnpm check:ci --merge .tmp/ci-shards'));
+  assert.deepEqual(merge.steps.filter(step => step.uses === 'actions/download-artifact@v8').map(step => step.with.name),
+    ['windows-coverage-1-${{ github.run_attempt }}', 'windows-coverage-2-${{ github.run_attempt }}']);
+  assert.doesNotMatch(source, /continue-on-error|if:\s*(?:always|failure)|--no-coverage|--passWithNoTests/u);
   assert.doesNotMatch(source, /RELEASE_APP_|create-github-app-token|permission-contents|permission-pull-requests/u);
 });
 

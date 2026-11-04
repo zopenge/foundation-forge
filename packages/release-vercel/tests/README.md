@@ -4,6 +4,8 @@
 
 completion-config/state/history/input分别验证显式旗标/配置、格式与绑定、追加历史和关闭门禁、真实目录及封存manifest身份；合成journal仅用于协议反例，不作为OS成功证明。managed-completion保留真实独立Git、安装、受管runner/journal和发布协调链，覆盖生产后目标/metadata、运行中并发拒绝、失败后新SHA保护、无旗标拒绝重试、显式追加、已完成不重放、解除pin及真实超时/取消。managed-completion-crash让独立协调器在publish收据写入前真实退出，核对真实stop、原意图封存、无成功收据续验及旧archive不变。
 
+managed-completion的运行中超时用测试私有注入时钟推进原1000ms命令期限，先确认payload已记录真实生产证明，再触发原runner的timeout回调；启动、身份、观察与原生关闭仍用真实期限，停止证明仍来自真实Job。另一个用例保留真实1000ms到期，延迟completion宿主身份交付，核对零payload、原发布副作用和UNKNOWN，不能把清空的Job补造为已验证身份或成功。completion-deadline验证时钟推进、普通定时器透传及清理；不修改宿主时钟或产品计时语义。
+
 真实tarball的alpha额外通过公开SDK完成受控云发布后的任务失败，再由实装公开CLI明确重试；核对精确context、追加attempt、旧收据字节、create/promote各一次。云API及部署CLI的I/O叶边界只连接自有loopback替身，应用命令、进程、Git、原锁与持久化保持原实现；不操作真实云，不将其声明为线上生产验收。共享helper随package-consumer维护，所有输入在本次私有fixture中现场生成，不依赖ignored诊断脚本或旧.tmp内容。
 
 Windows崩溃夹具通过[windows-fixture-ancestry.ts](helpers/windows-fixture-ancestry.ts)在单个PowerShell命令内发现自有父链并复核同一PID集合，每次CIM查询都带明确过滤，保留原10秒期限。返回前逐项核对协调器身份、父边、实例身份和完整集合；额外进程、替换、缺失或环均拒绝。[windows-fixture-ancestry.test.ts](windows-fixture-ancestry.test.ts)同时验证协议反例和真实父子进程，不以全机枚举或合成身份代替清理归属证明。

@@ -27,7 +27,7 @@ const runPnpmScript = (name, { signal } = {}) => new Promise((resolvePromise, re
 });
 
 export const runFullCheck = async ({ run = runPnpmScript, verify = verifyLocalPackages,
-  createContext = createTestRunContext, scriptTests = runScriptTestSuite, coverage = runWorkspaceCoverage, signal } = {}) => {
+  createContext = createTestRunContext, scriptTests = runScriptTestSuite, coverage = runWorkspaceCoverage, signal, label = 'check:full' } = {}) => {
   const started = performance.now();
   let testRun, workspace;
   const failures = [], background = [], cancellation = new globalThis.AbortController();
@@ -51,7 +51,7 @@ export const runFullCheck = async ({ run = runPnpmScript, verify = verifyLocalPa
     try { activeSignal.throwIfAborted(); result = task(); }
     catch (error) { result = Promise.reject(error); }
     return Promise.resolve(result).then(value => { activeSignal.throwIfAborted(); return value; }).finally(() => {
-      process.stdout.write(`check:full ${name}: ${((performance.now() - start) / 1_000).toFixed(2)}s\n`);
+      process.stdout.write(`${label} ${name}: ${((performance.now() - start) / 1_000).toFixed(2)}s\n`);
     });
   };
   let built = false;
@@ -106,7 +106,7 @@ export const runFullCheck = async ({ run = runPnpmScript, verify = verifyLocalPa
   if (failures.length === 1) throw failures[0];
   if (failures.length > 1) throw new AggregateError(failures, 'full check failed and context cleanup failed', { cause: failures[0] });
   signal?.throwIfAborted();
-  process.stdout.write(`check:full complete: ${((performance.now() - started) / 1_000).toFixed(2)}s\n`);
+  process.stdout.write(`${label} complete: ${((performance.now() - started) / 1_000).toFixed(2)}s\n`);
 };
 
 if (process.argv[1] && resolve(process.argv[1]) === scriptPath) {
