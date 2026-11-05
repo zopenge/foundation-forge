@@ -110,7 +110,20 @@ it('keeps an accepted remote push unknown after a real coordinator crash instead
       }
       if (Date.now() > deadline) throw new Error('post-receive barrier timed out');
       const early = await Promise.race([worker.result.then(result => ({ result })), new Promise<undefined>(accept => setTimeout(accept, 250))]);
-      if (early) throw new Error(`coordinator exited before barrier: ${new TextDecoder().decode(early.result.stdout)}`);
+      if (early) {
+        const { identity, exitCode, signal, durationMs, terminationReason, ownedScope, diagnostics, stdout, stderr } = early.result;
+        // 仅失败时提取有限结构字段，保留Provider错误链，不记录参数或环境。
+        const cause = (value: unknown, depth = 0): Record<string, unknown> => {
+          if (!value || typeof value !== 'object' || depth > 3) return {};
+          const row = value as Record<string, unknown>;
+          const details = row.details && typeof row.details === 'object' ? row.details as Record<string, unknown> : {};
+          return { code: row.code, stage: details.stage, reason: details.reason, nativeCode: details.nativeCode,
+            ...(row.cause ? { cause: cause(row.cause, depth + 1) } : {}) };
+        };
+        throw new Error(`coordinator exited before barrier: ${JSON.stringify({ identity, exitCode, signal, durationMs,
+          terminationReason, ownedScope, diagnostics: diagnostics.slice(0, 16).map(value => cause(value)),
+          stdout: new TextDecoder().decode(stdout).slice(0, 8192), stderr: new TextDecoder().decode(stderr).slice(0, 8192) })}`);
+      }
     }
     expect(f.ref('main')).toBe(f.sha);
     const pending = JSON.parse(await readFile(resolve(f.cwd, '.tmp/release-slot/state.json'), 'utf8'));

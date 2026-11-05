@@ -111,9 +111,16 @@ it('keeps config writes and configured commands on their original identity journ
   expect(session.state.processes.at(-1)).toMatchObject({ status: 'closed', identity: expect.any(Object), scope: expect.any(Object) });
   expect(session.state.processes.at(-1)).not.toHaveProperty('kind');
   const output = await session.execution.run('outside-batch', { command: 'node', args: ['-e',
-    'const p=JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")).processes.at(-1);process.stdout.write(JSON.stringify({identified:p.status==="identified"&&!!p.identity&&!!p.scope,permission:!!process.permission,inspector:require("node:inspector").url()??null}))', slot.paths.statePath] }, 'CHECK_FAILED');
+    'const p=JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")).processes.at(-1);process.stdout.write(JSON.stringify({identified:p.status==="identified"&&!!p.identity&&!!p.scope,permission:!!process.permission,inspector:require("node:inspector").url()??null}))', slot.paths.statePath] }, 'CHECK_FAILED').catch((error: unknown) => {
+    process.stderr.write(`${JSON.stringify({ kind: 'CHECKOUT_OUTSIDE_BATCH_FAILURE',
+      ...(error instanceof ReleaseError ? { code: error.code, details: error.details } : {}),
+      commands: session.state.processes.map(({ name, status, identity, closure }) => ({ name, status, identity, closure })) })}\n`);
+    throw error;
+  });
   expect(JSON.parse(output)).toMatchObject({ identified: true, inspector: null });
   if (process.env.FORGE_OBSERVATION_POLICY === '1') expect(JSON.parse(output).permission).toBe(false);
-  const store = await session.execution.run('package-manager-store-path', { command: 'pnpm', args: ['store', 'path'] }, 'COMMAND_FAILED');
-  expect(store).not.toBe('');
+  const command = session.state.processes.at(-1);
+  expect(command).toMatchObject({ name: 'outside-batch', status: 'closed', identity: expect.any(Object), scope: expect.any(Object) });
+  expect(command).not.toHaveProperty('kind');
+  expect(command && hasVerifiedManagedClosure(command)).toBe(true);
 });

@@ -21,6 +21,19 @@ test('starts two independent observations before awaiting either, within one can
   finally { first.resolve(); second.resolve(); await pair; }
   await expect(pair).resolves.toEqual([found, found]);
 });
+
+test('starts distinct identity readers together and drains both before comparison', async context => {
+  const first = deferred(), second = deferred(), started: string[] = [];
+  const readers = [
+    { readIdentity: () => { started.push('native'); return first.promise; } },
+    { readIdentity: () => { started.push('command'); return second.promise; } },
+  ] as const;
+  const pair = readIdentityPair(readers, 42, context.signal);
+  const observed = pair.then(value => ({ value }), (error: unknown) => ({ error }));
+  try { expect(started).toEqual(['native', 'command']); }
+  finally { first.resolve(); second.resolve(); await observed; }
+  await expect(observed).resolves.toEqual({ value: [found, found] });
+});
 test.for(['async', 'sync'] as const)('drains the other observation before exposing the original %s failure', async (kind, context) => {
   const second = deferred(), failure = new Error('FIXTURE_IDENTITY_FAILED'); let calls = 0, settled = false;
   const reader: ProcessIdentityReader = { readIdentity: () => {

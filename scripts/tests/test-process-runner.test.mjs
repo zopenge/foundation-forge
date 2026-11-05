@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { lstat, mkdtemp, mkdir, readFile, realpath, rm, rmdir, writeFile, copyFile } from 'node:fs/promises';
 import { resolve, relative, isAbsolute } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { performance } from 'node:perf_hooks';
+import { setTimeout as startTimer, clearTimeout as stopTimer } from 'node:timers';
 import test from 'node:test';
 import { createTestWorkerBudget } from '../test-worker-budget.mjs';
 import { discoverWorkspacePackageModel } from '../workspace-packages.mjs';
@@ -42,6 +44,96 @@ async function waitJson(path) {
   }
   throw new Error('fixture readiness deadline');
 }
+
+async function waitFixtureExit(reader, identity, signal, options = {}) {
+  const now = options.now ?? (() => performance.now());
+  const pause = options.pause ?? (milliseconds => delay(milliseconds, undefined, { signal }));
+  const started = now(); let polls = 0;
+  // Job 空与原实例退出分别观察；不重发终止，也不把仍存活或未知当成功。
+  while (true) {
+    signal?.throwIfAborted();
+    const remaining = 1000 - (now() - started);
+    assert.ok(remaining > 0, 'fixture exit observation deadline');
+    const deadline = new globalThis.AbortController();
+    const timer = startTimer(() => deadline.abort(new Error('fixture exit observation deadline')), remaining);
+    const readSignal = signal ? globalThis.AbortSignal.any([signal, deadline.signal]) : deadline.signal;
+    let observed;
+    try { observed = await reader.readIdentity({ pid: identity.pid, signal: readSignal }); polls++; }
+    catch (error) {
+      signal?.throwIfAborted(); if (deadline.signal.aborted) throw deadline.signal.reason;
+      throw error;
+    } finally { stopTimer(timer); }
+    signal?.throwIfAborted();
+    const elapsedMs = now() - started;
+    assert.ok(elapsedMs < 1000, `fixture exit observation deadline: ${JSON.stringify({ pid: identity.pid, polls, elapsedMs, observed })}`);
+    if (observed.status === 'ABSENT') return { ...observed, polls, elapsedMs };
+    assert.equal(observed.status, 'FOUND'); assert.equal(observed.identity.pid, identity.pid);
+    if (observed.identity.startToken !== identity.startToken) return { ...observed, polls, elapsedMs };
+    await pause(Math.min(20, 1000 - elapsedMs));
+  }
+}
+
+test('fixture exit observation waits for a fresh absence without terminating again', async t => {
+  const identity = { pid: 123, startToken: 'owned' }, calls = [];
+  let clock = 0;
+  const result = await waitFixtureExit({ readIdentity: async request => {
+    calls.push(request); return calls.length === 1 ? { status: 'FOUND', identity } : { status: 'ABSENT' };
+  } }, identity, t.signal, { now: () => clock, pause: async milliseconds => { clock += milliseconds; } });
+  assert.equal(result.status, 'ABSENT'); assert.equal(calls.length, 2);
+  assert.ok(calls.every(request => request.pid === identity.pid && request.signal instanceof globalThis.AbortSignal));
+});
+
+test('fixture exit observation rejects a persistently live original instance within its bound', async t => {
+  const identity = { pid: 123, startToken: 'owned' }; let clock = 0;
+  await assert.rejects(waitFixtureExit({ readIdentity: async () => ({ status: 'FOUND', identity }) }, identity, t.signal,
+    { now: () => clock, pause: async milliseconds => { clock += milliseconds; } }), /fixture exit observation deadline/u);
+  assert.equal(clock, 1000);
+});
+
+test('fixture exit observation retains lookup errors without retrying', async t => {
+  const failure = new Error('fixture query failed'); let calls = 0;
+  await assert.rejects(waitFixtureExit({ readIdentity: async () => { calls++; throw failure; } },
+    { pid: 123, startToken: 'owned' }, t.signal), error => error === failure);
+  assert.equal(calls, 1);
+});
+
+test('fixture exit observation cancels an in-flight lookup at the remaining deadline', { timeout: 3000 }, async t => {
+  let calls = 0, cancelled = false;
+  await assert.rejects(waitFixtureExit({ readIdentity: request => new Promise((_accept, reject) => {
+    calls++;
+    request.signal.addEventListener('abort', () => { cancelled = true; reject(request.signal.reason); }, { once: true });
+  }) }, { pid: 123, startToken: 'owned' }, t.signal), /fixture exit observation deadline/u);
+  assert.equal(calls, 1); assert.equal(cancelled, true);
+});
+
+test('fixture exit observation stops on cancellation before another lookup', async () => {
+  const controller = new globalThis.AbortController(), failure = new Error('fixture cancelled'); let calls = 0;
+  const identity = { pid: 123, startToken: 'owned' };
+  await assert.rejects(waitFixtureExit({ readIdentity: async () => {
+    calls++; controller.abort(failure); return { status: 'FOUND', identity };
+  } }, identity, controller.signal), error => error === failure);
+  assert.equal(calls, 1);
+});
+
+test('fixture exit observation never queries after an already cancelled caller', async () => {
+  const controller = new globalThis.AbortController(), failure = new Error('fixture cancelled'); let calls = 0;
+  controller.abort(failure);
+  await assert.rejects(waitFixtureExit({ readIdentity: async () => { calls++; return { status: 'ABSENT' }; } },
+    { pid: 123, startToken: 'owned' }, controller.signal), error => error === failure);
+  assert.equal(calls, 0);
+});
+
+test('fixture exit observation accepts a replacement instance without targeting it', async t => {
+  const identity = { pid: 123, startToken: 'replacement' };
+  assert.equal((await waitFixtureExit({ readIdentity: async () => ({ status: 'FOUND', identity }) },
+    { pid: 123, startToken: 'owned' }, t.signal)).identity.startToken, 'replacement');
+});
+
+test('fixture exit observation rejects an absence returned after its own deadline', async t => {
+  let clock = 0;
+  await assert.rejects(waitFixtureExit({ readIdentity: async () => { clock = 1000; return { status: 'ABSENT' }; } },
+    { pid: 123, startToken: 'owned' }, t.signal, { now: () => clock }), /fixture exit observation deadline/u);
+});
 
 test('scope setup failure records its phase and bounded structured cause without private output', async t => {
   assert.ifError(module.error);
@@ -146,8 +238,10 @@ test('a real Vitest worker crash closes descendants, drains its sibling and neve
     const child = await waitJson(ready), identity = await control.reader.readIdentity({ pid: child.pid }); assert.equal(identity.status, 'FOUND');
     await writeFile(kill, 'kill'); await Promise.all([rejected, cancelled]);
     assert.equal(queued, false); assert.equal(siblingClosed, false); assert.equal(budget.summary().activeWorkers, 1);
-    const after = await control.reader.readIdentity({ pid: child.pid }); assert.ok(after.status === 'ABSENT' || after.identity.startToken !== identity.identity.startToken);
+    const observed = await waitFixtureExit(control.reader, identity.identity, t.signal);
     closeSibling(); await sibling; assert.equal(siblingClosed, true); assert.equal(budget.summary().activeWorkers, 0);
     assert.ok(failure.result.closure.empty);
+    if (observed.polls > 1) t.diagnostic(JSON.stringify({ kind: 'FIXTURE_CRASH_EXIT_OBSERVATION',
+      pid: child.pid, polls: observed.polls, elapsedMs: observed.elapsedMs, finalStatus: observed.status, closure: failure.result.closure }));
   } finally { await writeFile(kill, 'kill'); closeSibling(); await Promise.allSettled([crash, sibling, next]); }
 });

@@ -15,7 +15,11 @@ export async function closeFixtureIdentity(identity: ProcessIdentity, options: C
       process: identity, policy: { mode: 'force' }, ...signal,
     });
   } catch (error) {
-    if (!(error instanceof Error && 'code' in error && error.code === 'PROCESS_IDENTITY_UNAVAILABLE')) throw error;
+    if (!(error instanceof Error && 'code' in error)) throw error;
+    const details = 'details' in error ? error.details : undefined;
+    const missingTaskkillTarget = error.code === 'COMMAND_FAILED' && typeof details === 'object' && details !== null
+      && Reflect.get(details, 'command') === 'taskkill.exe' && Reflect.get(details, 'exitCode') === 128;
+    if (error.code !== 'PROCESS_IDENTITY_UNAVAILABLE' && !missingTaskkillTarget) throw error;
     // 原进程可能已被自有 scope 清理；只有重新确认不存在才完成测试清理。
     const current = await (options.reader ?? identityReader()).readIdentity({ pid: identity.pid, ...signal });
     if (current.status !== 'ABSENT') throw error;

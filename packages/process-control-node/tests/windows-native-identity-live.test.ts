@@ -1,16 +1,32 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { afterEach, expect, test } from 'vitest';
+import { afterEach, expect, onTestFailed, test } from 'vitest';
 import type { OwnedProcessScope } from '@openge/forge-process-control';
 import { createWindowsNativeProcessIdentityReader, createWindowsProcessIdentityReader } from '../src/index.js';
 import { createWindowsOwnedProcessScopeProvider } from '../dist/index.js';
 import { loadOwnedNative } from '../src/owned-scope/native-loader.js';
+import { readIdentityPair } from './helpers/identity-read-pair.js';
+import { startIdentityCommand } from './helpers/identity-command.js';
 
 const supported = process.platform === 'win32' && process.arch === 'x64', scopes: OwnedProcessScope[] = [];
 afterEach(async () => { for (const scope of scopes.splice(0)) await scope.dispose(); });
-test.runIf(supported)('matches the public command reader for this known live process', async () => {
-  const request = { pid: process.pid };
-  expect(await createWindowsNativeProcessIdentityReader().readIdentity(request)).toEqual(await createWindowsProcessIdentityReader().readIdentity(request));
+test.runIf(supported)('matches the public command reader for this known live process', async context => {
+  const controller = new AbortController(), signal = AbortSignal.any([context.signal, controller.signal]);
+  const commands: ReturnType<typeof startIdentityCommand>[] = [];
+  const commandReader = createWindowsProcessIdentityReader({ runner: request => {
+    const command = startIdentityCommand(request); commands.push(command); return command.completion;
+  } });
+  const pair = readIdentityPair([createWindowsNativeProcessIdentityReader(), commandReader], process.pid, signal);
+  const drain = async () => { await pair.then(() => {}, () => {}); };
+  context.onTestFinished(async () => { controller.abort(); await drain(); });
+  onTestFailed(async () => {
+    controller.abort(); await drain();
+    process.stderr.write(`${JSON.stringify({ kind: 'WINDOWS_NATIVE_IDENTITY_PARITY', commands: commands.map(command => command.events) })}\n`);
+  });
+  const [native, command] = await pair;
+  expect(native).toMatchObject({ status: 'FOUND', identity: { pid: process.pid } });
+  expect(native).toEqual(command);
+  expect(commands).toHaveLength(1); expect(commands[0]?.events.at(-1)?.phase).toBe('close');
 });
 test.runIf(supported)('binds a real owned scope with the native identity and retains independent Job closure', async () => {
   const scope = createWindowsOwnedProcessScopeProvider().start({ command: process.execPath, args: ['-e', 'process.exit(0)'], environment: process.env,
