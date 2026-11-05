@@ -1,1 +1,10 @@
-{"browserExports":["."]}
+{
+  "browserExports": ["."],
+  "coverageShardWeights": {
+    "tests/node-cli.test.ts": 10,
+    "tests/node-inventory.test.ts": 13,
+    "tests/node-pipeline.test.ts": 12,
+    "tests/node/reader-cli.test.ts": 11,
+    "tests/snapshot-provenance-node.test.ts": 8
+  }
+}

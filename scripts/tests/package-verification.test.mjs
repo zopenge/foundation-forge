@@ -15,6 +15,39 @@ import * as packageRunner from '../package-consumer-runner.mjs';
 
 const { preparePackagesForPacking, runBounded, runCaptured, runConsumerChecks } = packageRunner;
 
+for (const hookFails of [false, true]) test(`package verification always removes its directory after the cleanup barrier${hookFails ? ' rejects' : ''}`, async context => {
+  const base = resolve('.tmp/tests'); await mkdir(base, { recursive: true });
+  const root = await mkdtemp(join(base, 'verification-cleanup-')), verificationRoot = join(root, 'verification');
+  context.after(() => rm(root, { force: true, recursive: true }));
+  let release, entered, primary;
+  const barrier = new Promise(accept => { release = accept; });
+  const ready = new Promise(accept => { entered = accept; });
+  const hookFailure = new Error('cleanup barrier failed');
+  const work = packageRunner.verifyLocalPackages({ repositoryRoot: root, verificationRoot,
+    onBeforeCleanup: async (failure, hasFailure) => {
+      assert.equal(hasFailure, true);
+      primary = failure;
+      await mkdir(verificationRoot, { recursive: true });
+      await writeFile(join(verificationRoot, 'marker'), 'held');
+      entered(true);
+      await barrier;
+      if (hookFails) throw hookFailure;
+    },
+  });
+  const outcome = Promise.allSettled([work]);
+  try {
+    // 缺失工作区清单触发真实主体错误；清理门闩必须收到它，且自身失败不能跳过删除。
+    assert.equal(await Promise.race([ready, outcome.then(() => false)]), true);
+    assert.ok(primary instanceof Error);
+    assert.equal(primary.code, 'ENOENT');
+    assert.equal(await readFile(join(verificationRoot, 'marker'), 'utf8'), 'held');
+  } finally { release(); await outcome; }
+  await assert.rejects(work, error => hookFails
+    ? error instanceof AggregateError && error.cause === primary && error.errors[0] === primary && error.errors[1] === hookFailure
+    : error === primary);
+  await assert.rejects(readdir(verificationRoot), error => error.code === 'ENOENT');
+});
+
 test('coverage worker metadata accepts only explicitly supported worker tiers', async context => {
   const value = await createPackage(context);
   const path = join(value.packageRoot, 'package.verify.json');

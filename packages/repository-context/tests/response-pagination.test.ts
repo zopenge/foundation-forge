@@ -3,10 +3,16 @@ import { join } from 'node:path';
 import { afterEach, expect, test } from 'vitest';
 import { buildRepositoryCorpus } from '../src/node.js';
 import { runRepositoryContextCli } from '../src/node/cli.js';
-import { createTemporaryRepository, type TemporaryRepository } from './node-fixtures.js';
+import { createTemporaryRepository, createTestTaskScope, type TemporaryRepository } from './node-fixtures.js';
 
 const repositories: TemporaryRepository[] = [];
-afterEach(async () => Promise.all(repositories.splice(0).map((repository) => repository.cleanup())));
+const testTasks = createTestTaskScope();
+afterEach(async () => {
+  const errors = await testTasks.drain();
+  const cleanup = await Promise.allSettled(repositories.splice(0).map((repository) => repository.cleanup()));
+  for (const result of cleanup) if (result.status === 'rejected') errors.push(result.reason);
+  if (errors.length > 0) throw new AggregateError(errors, 'test task or repository cleanup failed');
+});
 
 const run = async (args: readonly string[]) => {
   const outputs: string[] = [];
@@ -49,7 +55,7 @@ const createPagedRepository = async ({
   return repository;
 };
 
-test('investigate pages high-indegree relations within the requested byte budget', async () => {
+test('investigate pages high-indegree relations within the requested byte budget', async () => testTasks.run(async () => {
   const repository = await createPagedRepository({ leafCount: 40 });
   const base = [
     'investigate', '--root', repository.rootDir, '--index', repository.indexRoot,
@@ -73,7 +79,7 @@ test('investigate pages high-indegree relations within the requested byte budget
   } while (cursor !== null);
   expect(seen.size).toBe(40);
   expect(pageCount).toBeGreaterThan(1);
-});
+}));
 test('investigate trims an oversized single-line excerpt without claiming completeness', async () => {
   const repository = await createPagedRepository({ oversizedText: 'ascii' });
   const page = await run([

@@ -102,7 +102,7 @@ export interface ManagedUsageProgress {
 }
 const entryLimit = 500_000;
 export async function readManagedDirectoryNames(path: string, maxEntries: number, signal?: AbortSignal,
-  progress?: ManagedUsageProgress): Promise<string[]> {
+  progress?: ManagedUsageProgress, inspectEntry?: (name: string, directory: boolean) => void): Promise<string[]> {
   if (!Number.isSafeInteger(maxEntries) || maxEntries < 0 || maxEntries > entryLimit) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'ENTRY_LIMIT' });
   const active = () => { if (signal?.aborted) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'OBSERVATION_DEADLINE' }); };
   const directory = await opendir(path);
@@ -113,15 +113,28 @@ export async function readManagedDirectoryNames(path: string, maxEntries: number
   for await (const entry of directory) {
     active();
     if (children.length >= maxEntries) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'ENTRY_LIMIT' });
+    inspectEntry?.(entry.name, entry.isDirectory());
     children.push(entry.name);
   }
   return children;
 }
 export async function measureManagedUsageOnce(paths: ManagedPaths, signal?: AbortSignal, progress?: ManagedUsageProgress): Promise<{ bytes: number; freeBytes: number }> {
   let bytes = 0, entries = 0, pendingEntries = 0;
+  let availableBranches = 3, failed = false, failure: unknown;
   const phase = (value: ManagedUsageProgress['phase']) => { if (progress) { progress.phase = value; progress.entriesVisited = entries; } };
-  const active = () => { if (signal?.aborted) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'OBSERVATION_DEADLINE' }); };
+  const fail = (error: unknown) => { if (!failed) { failed = true; failure = error; } return failure; };
+  const active = () => {
+    if (failed) throw failure;
+    if (signal?.aborted) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'OBSERVATION_DEADLINE' });
+  };
+  const reserveEntry = () => {
+    active();
+    if (entries + pendingEntries >= entryLimit) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'ENTRY_LIMIT' });
+    pendingEntries++;
+  };
   const visit = async (path: string): Promise<void> => {
+    const branches = new Set<Promise<void>>();
+    try {
     active();
     if (++entries > entryLimit) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'ENTRY_LIMIT' });
     phase('entry');
@@ -134,9 +147,24 @@ export async function measureManagedUsageOnce(paths: ManagedPaths, signal?: Abor
     } else if (stat.isDirectory()) {
       phase('directory-open');
       // 已访问与所有祖先尚待处理的名称共用原条目上限，不能为关闭句柄引入无界快照。
-      const children = await readManagedDirectoryNames(path, entryLimit - entries - pendingEntries, signal, progress);
-      pendingEntries += children.length;
-      for (const child of children) { pendingEntries--; await visit(resolve(path, child)); phase('directory-read'); }
+      const directories = new Set<string>();
+      const children = await readManagedDirectoryNames(path, entryLimit - entries - pendingEntries, signal, progress, (name, directory) => {
+        reserveEntry(); if (directory) directories.add(name);
+      });
+      for (const [index, child] of children.entries()) {
+        active(); pendingEntries--;
+        // 不等待分支许可；没有空位时沿当前分支前进，避免递归持有许可后互相等待。
+        // 目录提示只用于调度；visit 仍重新 lstat，目录身份及链接检查不能复用枚举结果。
+        if (directories.has(child) || availableBranches === 0 || index === children.length - 1) await visit(resolve(path, child));
+        else {
+          availableBranches--;
+          const branch: Promise<void> = visit(resolve(path, child)).catch(error => { fail(error); })
+            .finally(() => { availableBranches++; branches.delete(branch); });
+          branches.add(branch);
+        }
+        phase('directory-read');
+      }
+      await Promise.all(branches);
       // 释放搜索句柄后安装器可正常 rename；目录消失须整扫重试，身份或链接替换则拒绝本次观察。
       active(); const after = await lstat(path, { bigint: true });
       if (!after.isDirectory() || after.isSymbolicLink() || !sameIdentity(stat, after) || await realpath(path) !== path)
@@ -144,6 +172,8 @@ export async function measureManagedUsageOnce(paths: ManagedPaths, signal?: Abor
     } else if (stat.isFile()) bytes += Number(stat.size);
     else throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'FILE_TYPE' });
     if (!Number.isSafeInteger(bytes)) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'SIZE_OVERFLOW' });
+    } catch (error) { throw fail(error); }
+    finally { await Promise.all(branches); }
   };
   try {
     const assertRoot = async () => {

@@ -8,6 +8,8 @@ import { hasNoStartWitness, hasObservationStopWitness, hasVerifiedManagedStop } 
 import { matchesObservationBinding } from './managed-observation.js';
 import { pathExists, readBoundedJson } from './managed-io.js';
 import { parseManagedState } from './managed-state.js';
+import { assertManagedHistory, historyFileLimit } from './managed-history.js';
+import { readManagedDisposition } from './managed-disposition.js';
 
 export interface ManagedTerminal {
   readonly schemaVersion: 1; readonly kind: 'managed-terminal'; readonly runId: string; readonly slotId: string;
@@ -50,6 +52,23 @@ export async function discardPreparedState(paths: ManagedPaths, terminal: Manage
   await guard(); await assertMetadataFile(temporary, terminal.stateTransition.to);
   await unlink(temporary);
 }
+/** 只识别当前历史清单绑定的前轮原文件，不把旧停止证明归并到本轮。 */
+async function isArchivedTerminal(paths: ManagedPaths, state: ManagedState, terminal: ManagedTerminal, file: MetadataFile | null): Promise<boolean> {
+  if (state.processes.at(-1)?.terminalSha256 || terminal.runId === state.runId || typeof terminal.runId !== 'string'
+    || !/^[a-f0-9-]{36}$/u.test(terminal.runId)) return false;
+  const reference = state.history?.find(entry => entry.path === `history/${terminal.runId}.json`);
+  if (!reference) return false;
+  await assertManagedHistory(paths, state);
+  const previous = await readManagedDisposition(paths, terminal.runId);
+  if (!previous || previous.runId !== terminal.runId || previous.slotId !== state.slotId || previous.stopped.source.sha !== terminal.sourceSha
+    || previous.stopped.source.configSha256 !== terminal.configSha256 || !sameMetadataFile(previous.files.terminal, file)) return false;
+  await assertMetadataFile(resolve(paths.slotRoot, reference.path), reference.file, historyFileLimit);
+  await assertMetadataFile(resolve(paths.slotRoot, 'terminal.json'), file, terminalLimit);
+  if (JSON.stringify(await readBoundedJson(paths.statePath)) !== JSON.stringify(state)) throw new ReleaseError('SLOT_STATE', { reason: 'TERMINAL_STATE_BINDING' });
+  await assertMetadataFile(resolve(paths.slotRoot, reference.path), reference.file, historyFileLimit);
+  await assertMetadataFile(resolve(paths.slotRoot, 'terminal.json'), file, terminalLimit);
+  return true;
+}
 /** 仅读取并在内存归并；原始状态、失败结果和远端副作用不改写。 */
 export async function restoreManagedTerminal(paths: ManagedPaths, state: ManagedState, options: { allowReleasedLock?: boolean; signal?: AbortSignal } = {}): Promise<{ state: ManagedState; terminal?: ManagedTerminal }> {
   await assertMetadataPaths(paths);
@@ -65,11 +84,14 @@ export async function restoreManagedTerminal(paths: ManagedPaths, state: Managed
   const files = record(body.files), command = record(body.command);
   for (const key of ['owner', 'anchor', 'lock', 'state']) metadataFile(files[key]);
   if (body.stateTransition !== undefined && !metadataFile(record(body.stateTransition).to)) throw new ReleaseError('SLOT_STATE', { reason: 'TERMINAL_STATE_TRANSITION' });
-  if (body.schemaVersion !== 1 || body.kind !== 'managed-terminal' || body.runId !== state.runId || body.slotId !== state.slotId
-    || body.sourceSha !== state.source.sha || body.configSha256 !== state.source.configSha256 || !validRetirementHost(body.host)
+  if (body.schemaVersion !== 1 || body.kind !== 'managed-terminal' || body.slotId !== state.slotId || !validRetirementHost(body.host)
     || !state.host || body.host.hostId !== state.host.hostId || body.host.platform !== state.host.platform
     || typeof proofSha256 !== 'string' || proofDigest(body as TerminalBody) !== proofSha256) throw new ReleaseError('SLOT_STATE', { reason: 'TERMINAL_BINDING' });
   const terminal = value as ManagedTerminal, last = state.processes.at(-1);
+  if (body.runId !== state.runId || body.sourceSha !== state.source.sha || body.configSha256 !== state.source.configSha256) {
+    if (await isArchivedTerminal(paths, state, terminal, original)) return { state };
+    throw new ReleaseError('SLOT_STATE', { reason: 'TERMINAL_BINDING' });
+  }
   // 前一命令已归并的回执不能证明后来意图已停止；保留该意图供恢复层明确报告 unknown。
   if (last && command.id !== last.id && !last.terminalSha256
     && state.processes.some(previous => previous.id === command.id && previous.terminalSha256 === proofSha256)) return { state };

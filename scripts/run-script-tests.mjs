@@ -1,19 +1,47 @@
-import { readdir } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { readFile, readdir } from 'node:fs/promises';
+import { basename, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { discoverWorkspacePackageModel } from './workspace-packages.mjs';
 import { createTestRunContext } from './test-run-context.mjs';
 
 const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
-export const runScriptTestSuite = async (context, { files: selected } = {}) => {
+const invalidScheduling = () => new Error('SCRIPT_TEST_SCHEDULING_INVALID');
+const validWeight = value => typeof value === 'number' && Number.isFinite(value) && value > 0 && value <= 86_400;
+
+/** 权重只影响分组；每个文件仍在原监督Job中逐文件隔离执行。 */
+export const groupScriptTestFiles = (files, scheduling, count, available = files) => {
+  if (!Array.isArray(files) || !files.length || new Set(files).size !== files.length
+    || !Array.isArray(available) || new Set(available).size !== available.length
+    || files.some(file => typeof file !== 'string' || !available.includes(file))
+    || !Number.isInteger(count) || count < 1 || count > 8 || count > files.length
+    || !scheduling || typeof scheduling !== 'object' || Array.isArray(scheduling)
+    || Object.keys(scheduling).some(key => !['defaultWeight', 'weights'].includes(key))
+    || !validWeight(scheduling.defaultWeight) || !scheduling.weights || typeof scheduling.weights !== 'object' || Array.isArray(scheduling.weights)
+    || Object.entries(scheduling.weights).some(([file, weight]) => !available.includes(file) || !validWeight(weight))) throw invalidScheduling();
+  if (count === 1) return [[...files]];
+  const groups = Array.from({ length: count }, () => ({ weight: 0, files: [] }));
+  const ordered = files.map((file, index) => ({ file, index, weight: scheduling.weights[file] ?? scheduling.defaultWeight }))
+    .sort((left, right) => right.weight - left.weight || left.index - right.index);
+  for (const value of ordered) {
+    const group = groups.reduce((least, next) => next.weight < least.weight ? next : least);
+    group.weight += value.weight;
+    group.files.push(value);
+  }
+  return groups.map(group => group.files.sort((left, right) => left.index - right.index).map(value => value.file));
+};
+
+export const runScriptTestSuite = async (context, { files: selected, scheduling: suppliedScheduling } = {}) => {
   const directory = resolve(repositoryRoot, 'scripts/tests');
   const available = (await readdir(directory)).filter(name => name.endsWith('.test.mjs')).sort().map(name => resolve(directory, name));
   const files = selected ? selected.map(path => resolve(repositoryRoot, path)) : available;
   if (!files.length || files.some(path => !available.includes(path)) || new Set(files).size !== files.length) throw new Error('QUICK_SCRIPT_SELECTION_INVALID');
   // 每组预约父测试CLI和一个既有嵌套worker；单槽模式沿用原有嵌套例外。
   const workers = Math.min(2, context.budget.limit);
-  const groups = Array.from({ length: Math.min(files.length, Math.max(1, Math.floor(context.budget.limit / workers))) }, () => []);
-  for (const [index, file] of files.entries()) groups[index % groups.length].push(file);
+  const scheduling = suppliedScheduling === undefined
+    ? JSON.parse(await readFile(new URL('./script-tests.verify.json', import.meta.url), 'utf8')) : suppliedScheduling;
+  const groups = groupScriptTestFiles(files.map(file => basename(file)), scheduling,
+    Math.min(files.length, Math.max(1, Math.floor(context.budget.limit / workers))), available.map(file => basename(file)))
+    .map(group => group.map(file => resolve(directory, file)));
   const failures = []; let cancelling;
   const results = await Promise.allSettled(groups.map((group, index) => context.budget.run({ name: 'test:scripts', workers }, async lease => {
     // 组内继续逐文件隔离，预约持续到整个owned Job及输出关闭。

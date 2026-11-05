@@ -32,7 +32,7 @@ test('cached tarballs bind package identity to bytes and reject escaped paths', 
 });
 
 test('changing the effective worker cap invalidates a cached workspace check', async (context) => {
-  for (const variable of ['VITEST_MAX_WORKERS', 'FORGE_CHECK_TEST_WORKERS', 'FORGE_CHECK_WORKER_CEILING']) {
+  for (const variable of ['VITEST_MAX_WORKERS', 'FORGE_CHECK_TEST_WORKERS', 'FORGE_CHECK_WORKER_CEILING', 'UV_THREADPOOL_SIZE']) {
   const root = await temporaryRoot('check-workers-');
   const original = process.env[variable];
   context.after(async () => {
@@ -52,6 +52,12 @@ test('changing the effective worker cap invalidates a cached workspace check', a
   const after = await collectWorkspaceFingerprint(root);
   assert.deepEqual(before.files, after.files);
   assert.deepEqual(selectCheckMode(before, after, []), { kind: 'full' });
+  if (variable === 'UV_THREADPOOL_SIZE') {
+    Reflect.deleteProperty(process.env, variable);
+    const implicit = await collectWorkspaceFingerprint(root);
+    process.env[variable] = '8';
+    assert.deepEqual(selectCheckMode(implicit, await collectWorkspaceFingerprint(root), []), { kind: 'full' });
+  }
   }
 });
 

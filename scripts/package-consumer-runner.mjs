@@ -382,18 +382,28 @@ export const runCleanPackageConsumer = async ({
 };
 
 export const verifyLocalPackages = async ({ repositoryRoot, verificationRoot, tarballCacheRoot, onBuilt,
-  onConsumerReady, serialConsumerChecks = false, testRun }) => {
+  onConsumerReady, onBeforeCleanup, serialConsumerChecks = false, testRun }) => {
   if (relative(repositoryRoot, verificationRoot).startsWith('..')) {
     throw new Error('package verification directory escaped the repository');
   }
-  await rm(verificationRoot, { force: true, recursive: true });
   let phaseStart = performance.now();
   let own = false;
+  const failures = [];
   const reportPhase = (name) => {
     const now = performance.now();
     process.stdout.write(`pack:check ${name}: ${((now - phaseStart) / 1_000).toFixed(2)}s\n`);
     phaseStart = now;
   };
+  const removeVerificationRoot = async phase => {
+    const startedAt = new Date().toISOString();
+    try { await rm(verificationRoot, { force: true, recursive: true }); }
+    finally {
+      reportPhase(phase);
+      process.stdout.write(`${JSON.stringify({ event: 'package-verification-cleanup', phase,
+        startedAt, finishedAt: new Date().toISOString() })}\n`);
+    }
+  };
+  await removeVerificationRoot('initial cleanup');
   try {
     const model = await discoverWorkspacePackageModel({ repositoryRoot });
     await verifyRepositoryHygiene(repositoryRoot);
@@ -427,8 +437,15 @@ export const verifyLocalPackages = async ({ repositoryRoot, verificationRoot, ta
         `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
     }
     reportPhase('tarball cache');
-  } finally {
-    try { if (own) await testRun.finalize(); }
-    finally { await rm(verificationRoot, { force: true, recursive: true }); }
-  }
+  } catch (error) { failures.push(error); }
+  try { if (own) await testRun.finalize(); }
+  catch (error) { failures.push(error); }
+  // 共享context的后台检查排空后再删大目录；门闩或审计失败也不能跳过清理。
+  try { await onBeforeCleanup?.(failures[0], failures.length !== 0); }
+  catch (error) { failures.push(error); }
+  reportPhase('checks drained');
+  try { await removeVerificationRoot('cleanup'); }
+  catch (error) { failures.push(error); }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) throw new AggregateError(failures, 'package verification and cleanup failed', { cause: failures[0] });
 };

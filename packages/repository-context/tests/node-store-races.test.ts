@@ -5,14 +5,18 @@ import { afterEach, expect, test, vi } from 'vitest';
 import { buildRepositoryCorpus, loadCurrentGeneration, loadRepositoryGeneration } from '../src/node.js';
 import type { StoredRepositoryGeneration } from '../src/node.js';
 import { acquireBuildLock, publishRepositoryGeneration, releaseBuildLock } from '../src/node/store.js';
-import { createTemporaryRepository, type TemporaryRepository } from './node-fixtures.js';
+import { createTemporaryRepository, createTestTaskScope, type TemporaryRepository } from './node-fixtures.js';
 
 vi.mock('node:fs/promises', async (original) => ({ ...await original<typeof import('node:fs/promises')>() }));
 vi.mock('node:fs', async (original) => ({ ...await original<typeof import('node:fs')>() }));
 const repositories: TemporaryRepository[] = [];
+const testTasks = createTestTaskScope();
 afterEach(async () => {
+  const errors = await testTasks.drain();
   vi.restoreAllMocks();
-  await Promise.all(repositories.splice(0).map((repository) => repository.cleanup()));
+  const cleanup = await Promise.allSettled(repositories.splice(0).map((repository) => repository.cleanup()));
+  for (const result of cleanup) if (result.status === 'rejected') errors.push(result.reason);
+  if (errors.length > 0) throw new AggregateError(errors, 'test task or repository cleanup failed');
 });
 
 const generation = (digit: string): StoredRepositoryGeneration => {
@@ -34,7 +38,7 @@ const prepare = async () => {
 };
 const names = (repository: TemporaryRepository) => fs.readdir(join(repository.indexRoot, 'generations'));
 
-test.each(['generation', 'pointer'])('keeps current readable after %s publication fails and removes the uncommitted candidate', async (phase) => {
+test.each(['generation', 'pointer'])('keeps current readable after %s publication fails and removes the uncommitted candidate', async (phase) => testTasks.run(async () => {
   const { repository, lock } = await prepare();
   const rename = fs.rename;
   const renameSync = fsSync.renameSync;
@@ -55,7 +59,7 @@ test.each(['generation', 'pointer'])('keeps current readable after %s publicatio
   expect(await names(repository)).toEqual([`${generation('a').generationId}.json`]);
   expect((await fs.readdir(repository.indexRoot)).sort()).toEqual(['.build-lock', 'current.json', 'generations']);
   await releaseBuildLock(lock);
-});
+}));
 
 test('retries a current read whose selected file was evicted before opening, without mixing generations', async () => {
   const { repository, lock } = await prepare();

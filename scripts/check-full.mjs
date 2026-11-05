@@ -36,6 +36,8 @@ export const runFullCheck = async ({ run = runPnpmScript, verify = verifyLocalPa
   const activeSignal = signal ? globalThis.AbortSignal.any([signal, cancellation.signal]) : cancellation.signal;
   let stopping, pipelined = false, consumerReady = false, scriptCompletion = Promise.resolve();
   const fail = error => {
+    // 内部取消的派生拒绝已由首错记录；undefined首错也不能被默认AbortError替换。
+    if (cancellation.signal.aborted && error === cancellation.signal.reason) return;
     if (!failures.includes(error)) failures.push(error);
     cancellation.abort(error);
     if (!stopping) {
@@ -46,6 +48,13 @@ export const runFullCheck = async ({ run = runPnpmScript, verify = verifyLocalPa
     }
   };
   const start = task => { background.push(Promise.resolve().then(task).catch(fail)); };
+  const onBeforeCleanup = async (error, hasFailure = error !== undefined) => {
+    // 主体首败先触发取消，避免清理门闩等到整套覆盖率自然结束。
+    if (hasFailure) fail(error);
+    else if (activeSignal.aborted && failures.length === 0) fail(activeSignal.reason);
+    await Promise.allSettled(background);
+    await stopping;
+  };
   const timed = (name, task) => {
     const start = performance.now();
     let result;
@@ -105,7 +114,7 @@ export const runFullCheck = async ({ run = runPnpmScript, verify = verifyLocalPa
       repositoryRoot,
       verificationRoot: resolve(repositoryRoot, '.tmp', 'package-verification'),
       tarballCacheRoot: resolve(repositoryRoot, '.tmp', 'check-cache', 'packs'),
-      onBuilt, onConsumerReady, serialConsumerChecks: overlapConsumers, signal: activeSignal,
+      onBuilt, onConsumerReady, onBeforeCleanup, serialConsumerChecks: overlapConsumers, signal: activeSignal,
     }));
     if (!built) throw new Error('package build did not complete');
     if (overlapConsumers && !consumerReady) throw new Error('CONSUMER_READY_REQUIRED');
@@ -119,8 +128,7 @@ export const runFullCheck = async ({ run = runPnpmScript, verify = verifyLocalPa
     fail(error);
   } finally {
     // 后台失败已有接收方；先等待所有已开始阶段和取消收尾，再关闭共享context。
-    await Promise.allSettled(background);
-    await stopping;
+    await onBeforeCleanup();
     try { await testRun?.finalize(); }
     catch (error) { failures.push(error); }
   }
