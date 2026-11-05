@@ -8,12 +8,13 @@ import { assertActive, ReleaseError } from '../../src/node/errors.js';
 import { prebuiltConfiguration } from './prebuilt-configuration.js';
 
 /** 真实文件系统与发布引擎；仅替换不会在普通测试中授权的云端和 CLI 写入边界。 */
-export async function prebuiltFixture() {
+export async function prebuiltFixture({ sha = 'a'.repeat(40), config = prebuiltConfiguration(), root: callerRoot }:
+  { sha?: string; config?: ReturnType<typeof prebuiltConfiguration>; root?: string } = {}) {
   const repository = resolve(import.meta.dirname, '../../../..');
   const base = await ensureTestTemporaryDirectory(repository, resolve(repository, '.tmp/prebuilt-tests'));
-  const root = await mkdtemp(resolve(base, 'r-'));
-  const sha = 'a'.repeat(40), trace: string[] = [], snapshots: PrebuiltReleaseState[] = [];
-  const config = prebuiltConfiguration();
+  const root = callerRoot ? await ensureTestTemporaryDirectory(repository, callerRoot) : await mkdtemp(resolve(base, 'r-'));
+  const dispose = async () => { if (!callerRoot) await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); };
+  const trace: string[] = [], snapshots: PrebuiltReleaseState[] = [];
   const output = resolve(root, '.vercel/output'), uploadRoot = resolve(root, '.tmp/forge-vercel-release/prebuilt');
   const controller = new AbortController();
   const effects: ReleaseReport['effects'] = { developmentPush: 'not-attempted', releasePush: 'not-attempted' };
@@ -24,12 +25,21 @@ export async function prebuiltFixture() {
     marker?: (value: unknown) => unknown;
     promote?: (signal: AbortSignal) => void | Promise<void>;
     save?: () => void | Promise<void>;
+    created?: () => void | Promise<void>;
   } = {};
   let creates = 0, promotions = 0, aliased = false;
   class BoundaryExecution extends Execution {
     override async git(): Promise<string> { throw new Error('prebuilt publication must not execute Git mutations or Git integration probes'); }
+    override async streamGit(): Promise<void> { throw new Error('prebuilt publication must not execute Git streams'); }
     override async run(name: string, check: Parameters<Execution['run']>[1], code: Parameters<Execution['run']>[2],
       values?: Readonly<Record<string, string>>, signal = controller.signal): Promise<string> {
+      if (name !== 'prebuilt-create') {
+        const ordinary = /^(check|acceptance):(\d+)$/u.exec(name), admission = /^admission:(create|version-alias|promote):(\d+)$/u.exec(name);
+        const expected = ordinary ? (ordinary[1] === 'check' ? config.checks : config.acceptance)[Number(ordinary[2])]
+          : admission ? config.delivery.admission[Number(admission[2])] : undefined;
+        const expectedCode = ordinary ? ordinary[1] === 'check' ? 'CHECK_FAILED' : 'ACCEPTANCE_FAILED' : 'ADMISSION_FAILED';
+        if (!expected || JSON.stringify(check) !== JSON.stringify(expected) || code !== expectedCode) throw new Error('unexpected phase command');
+      }
       assertActive(signal); trace.push(`run:${name}`); await hooks.run?.(name, values);
       if (name === 'prebuilt-create') {
         const args = check.args ?? [];
@@ -43,6 +53,7 @@ export async function prebuiltFixture() {
           throw new Error(`unexpected staging invocation: ${JSON.stringify({ cwd: this.cwd, args, code })}`);
         }
         creates++;
+        await hooks.created?.();
         return JSON.stringify({ status: 'ok', deployment: { id: 'dpl_candidate', url: 'https://candidate.vercel.app', target: 'production', readyState: 'QUEUED' } });
       }
       return '';
@@ -84,6 +95,6 @@ export async function prebuiltFixture() {
     await writeFile(resolve(output, 'config.json'), '{"version":3}');
     await writeFile(resolve(output, 'static/index.html'), '<h1>candidate</h1>');
     return { root, output, uploadRoot, config, sha, trace, context, prebuilt, hooks, snapshots, effects, controller,
-      counts: () => ({ creates, promotions }), dispose: () => rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }) };
-  } catch (error) { await rm(root, { recursive: true, force: true }); throw error; }
+      counts: () => ({ creates, promotions }), dispose };
+  } catch (error) { await dispose(); throw error; }
 }

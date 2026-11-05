@@ -64,7 +64,9 @@ export async function prepareEnvironment(session: ManagedSession): Promise<void>
   const values = { COREPACK_ENABLE_PROJECT_SPEC: '0', npm_config_manage_package_manager_versions: 'false' };
   const version = await execution.run('package-manager-version', { command: 'pnpm', args: ['--version'] }, 'COMMAND_FAILED', values);
   if (version !== match[1]) throw new ReleaseError('SOURCE_UNSUPPORTED', { reason: 'PNPM_VERSION', expected: match[1], actual: version });
-  await execution.run('install', { command: 'pnpm', args: ['install', '--frozen-lockfile'] }, 'COMMAND_FAILED', values);
+  // Windows 避免共享 store 硬链接导入与逐项预算观察争用；保留正常安装、生命周期和既有依赖。
+  await execution.run('install', { command: 'pnpm', args: ['install', '--frozen-lockfile',
+    ...(process.platform === 'win32' ? ['--package-import-method=copy'] : [])] }, 'COMMAND_FAILED', values);
   await assertCheckoutFrozen(session);
   if (source.config.source.mode !== 'managed-commit') throw new ReleaseError('SOURCE_UNSUPPORTED');
   session.state.stage = 'prepare'; await session.persist();

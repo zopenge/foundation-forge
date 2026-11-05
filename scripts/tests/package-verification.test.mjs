@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setImmediate } from 'node:timers';
 import test from 'node:test';
@@ -19,7 +18,7 @@ const { preparePackagesForPacking, runBounded, runCaptured, runConsumerChecks } 
 test('coverage worker metadata accepts only explicitly supported worker tiers', async context => {
   const value = await createPackage(context);
   const path = join(value.packageRoot, 'package.verify.json');
-  for (const coverageWorkers of [1, 2, 4, 8]) {
+  for (const coverageWorkers of [1, 2, 4, 6, 8]) {
     await writeFile(path, JSON.stringify({ browserExports: ['.'], coverageWorkers }));
     assert.equal((await loadPackageVerification(value)).coverageWorkers, coverageWorkers);
   }
@@ -218,8 +217,7 @@ test('clean consumer uses isolated links and safe store imports while retaining 
 });
 
 test('removes stale build output before rebuilding packages for packing', async (context) => {
-  const packageRoot = await mkdtemp(join(tmpdir(), 'foundation-forge-clean-build-'));
-  context.after(() => rm(packageRoot, { force: true, recursive: true }));
+  const { packageRoot } = await createPackage(context, { files: {} });
   await mkdir(join(packageRoot, 'dist'), { recursive: true });
   await writeFile(join(packageRoot, 'dist', 'stale.js'), 'stale\n');
 
@@ -331,6 +329,28 @@ test('consumer imports and smokes start together and drain on failure', async ()
     smokeChecks: async () => { smokeStarted = true; },
   }), /synchronous import failure/u);
   assert.equal(smokeStarted, true);
+});
+
+test('serial consumer checks wait for imports before starting any smoke', async () => {
+  const started = []; let finishImports;
+  const importsDone = new Promise(accept => { finishImports = accept; });
+  const work = runConsumerChecks({ serial: true,
+    importCheck: async () => { started.push('imports'); await importsDone; return 'import result'; },
+    smokeChecks: async () => { started.push('smokes'); },
+  });
+  try { await new Promise(accept => setImmediate(accept)); assert.deepEqual(started, ['imports']); }
+  finally { finishImports(); await work; }
+  assert.equal(await work, 'import result'); assert.deepEqual(started, ['imports', 'smokes']);
+});
+
+test('serial consumer import failures preserve their exact cause and never start smokes', async () => {
+  for (const failure of [new Error('failed import'), undefined, 0]) {
+    let smokeStarted = false;
+    await assert.rejects(runConsumerChecks({ serial: true,
+      importCheck: async () => { throw failure; }, smokeChecks: async () => { smokeStarted = true; },
+    }), error => error === failure);
+    assert.equal(smokeStarted, false);
+  }
 });
 
 test('consumer smoke directories leave bounded path space and remain distinct for long package names', async (context) => {

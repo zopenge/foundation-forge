@@ -38,7 +38,12 @@ for (const name of ['alpha', 'beta']) {
       sampleIntervalMs: 1000, install: { packageManager: 'pnpm' }, prepare: [{ command: 'node', args: ['-e',
         'const f=require("node:fs"),p=require("node:path");const link=p.resolve("node_modules/pending"),target=p.resolve("node_modules/.pnpm/pending/node_modules/dependency");f.mkdirSync(p.dirname(link),{recursive:true});try{f.lstatSync(link)}catch(e){if(e.code!=="ENOENT")throw e;f.symlinkSync(target,link,"junction")}'
       ] }] };
-  const config = validateReleaseConfig({ schemaVersion: 2, source: name === 'alpha' ? managedSource : { mode: 'workspace' },
+  const config = validateReleaseConfig({ schemaVersion: 2, source: name === 'alpha'
+    ? { ...managedSource, prepare: [...managedSource.prepare, { command: 'node', args: ['linked-output.mjs'] }] } : { mode: 'workspace' },
+    ...(name === 'alpha' ? { delivery: { mode: 'prebuilt', maxFiles: 100, maxBytes: 1_048_576,
+      versionAlias: { hostnameTemplate: `consumer-${name}-{sha}.vercel.app` },
+      concurrencyControl: { mode: 'external-serialization', scope: `consumer-${name}` },
+      admission: [{ command: 'node', args: ['-e', 'process.exit(0)'] }] } } : {}),
     git: { remote: 'origin', repository: remote, developmentBranch: 'dev', releaseBranch: 'main' },
     vercel: { teamId: 'team_fixture', projectId: 'prj_fixture', productionUrl: 'https://fixture.example.invalid' },
     checks: [{ command: 'node', args: ['-e', 'process.stdout.write(JSON.stringify([process.env.FORGE_RELEASE_COMMAND,process.env.FORGE_RELEASE_SHA,process.cwd()]))'] }],
@@ -46,6 +51,7 @@ for (const name of ['alpha', 'beta']) {
     limits: { commandMs: 30000, deploymentMs: 1000, pollMs: 20, requestMs: 1000, maxOutputBytes: 4096 } });
   await writeFile(resolve(cwd, '.gitignore'), `.tmp/\nnode_modules/\n.vercel/\n${name === 'beta' ? 'user-note\n' : ''}`);
   await writeFile(resolve(cwd, 'release.config.json'), JSON.stringify(config));
+  if (name === 'alpha') await copyFile(resolve(import.meta.dirname, 'linked-output.mjs'), resolve(cwd, 'linked-output.mjs'));
   await writeFile(resolve(cwd, 'package.json'), JSON.stringify({ name: `consumer-${name}`, private: true, packageManager: `pnpm@${pnpmVersion}` }));
   await writeFile(resolve(cwd, 'pnpm-workspace.yaml'), 'packages: []\n');
   await writeFile(resolve(cwd, 'pnpm-lock.yaml'), "lockfileVersion: '9.0'\n\nsettings:\n  autoInstallPeers: true\n  excludeLinksFromLockfile: false\n\nimporters:\n\n  .: {}\n");
@@ -61,8 +67,8 @@ for (const name of ['alpha', 'beta']) {
     if (git('diff', '--cached', '--', '.gitignore') !== '' || git('status', '--porcelain=v1', '--untracked-files=no') !== '') throw new Error('CRLF fixture baseline is not clean');
     if (!(await readFile(resolve(cwd, '.gitignore'), 'utf8')).includes('\r\n') || git('diff', 'HEAD', '--', '.gitignore') !== '') throw new Error('CRLF checkout fixture was not materialized');
   }
-  // SDK验证完整managed检查（同时覆盖CRLF与junction）；CLI验证workspace成功及managed恢复/准入。
-  // 两个独立根不重复同一套managed安装；真实安装失败/同槽重试由managed-resume承担。
+  // alpha的同一次公开managed prebuilt检查覆盖CRLF、junction、构建与可移植制品；beta验证CLI workspace。
+  // completion的公开publish/CLI retry保留另一条真实准备链，安装失败/同槽重试另由managed-resume承担。
   const lock = await readFile(resolve(cwd, 'pnpm-lock.yaml'));
   const first = JSON.parse(execute(cwd, process.execPath, name === 'alpha'
     ? [resolve(import.meta.dirname, 'node-check.mjs'), cwd]
@@ -100,20 +106,11 @@ for (const name of ['alpha', 'beta']) {
       throw new Error(`tarball managed CLI admission failed: ${JSON.stringify(failure.error)}`);
     if (git('status', '--porcelain=v1', '--untracked-files=no') !== '' || await readFile(resolve(cwd, 'user-note'), 'utf8') !== 'preserve') throw new Error('rejected CLI changed source');
     for (const branch of ['dev', 'main']) if (execute(root, 'git', ['--git-dir', remote, 'rev-parse', branch]) !== initial) throw new Error('rejected CLI changed refs');
-    // 此空目录由本 fixture 刚创建；只删除空目录，随后验证正常的首次准入。
+    // 此空目录由本fixture刚创建；仅删除已证明为空的自有目录。
     await rmdir(foreign);
   }
-  await copyFile(resolve(import.meta.dirname, 'linked-output.mjs'), resolve(cwd, 'linked-output.mjs'));
-  const prebuilt = validateReleaseConfig({ ...config,
-    delivery: { mode: 'prebuilt', maxFiles: 100, maxBytes: 1_048_576,
-      versionAlias: { hostnameTemplate: `consumer-${name}-{sha}.vercel.app` },
-      concurrencyControl: { mode: 'external-serialization', scope: `consumer-${name}` }, admission: [{ command: 'node', args: ['-e', 'process.exit(0)'] }] },
-    source: { ...managedSource, prepare: [...managedSource.prepare, { command: 'node', args: ['linked-output.mjs'] }] } });
-  await writeFile(resolve(cwd, 'release.config.json'), JSON.stringify(prebuilt)); git('add', '--', 'release.config.json', 'linked-output.mjs'); git('commit', '-m', 'prebuilt consumer');
-  const prebuiltSha = git('rev-parse', 'HEAD');
-  const checked = JSON.parse(execute(cwd, process.execPath, name === 'alpha'
-    ? [resolve(import.meta.dirname, 'node-check.mjs'), cwd]
-    : [binaries['forge-vercel-release'], 'check', '--cwd', cwd]));
+  if (name === 'alpha') {
+  const prebuilt = config, prebuiltSha = sha, checked = first;
   if (!checked.ok || checked.candidateSha !== prebuiltSha || checked.prebuilt?.sourceSha !== prebuiltSha
     || checked.prebuilt?.fileCount !== 14 || !/^[a-f0-9]{64}$/u.test(checked.prebuilt?.artifactSha256 ?? '')
     || checked.prebuilt?.createEffect !== 'not-attempted' || checked.prebuilt?.promoteEffect !== 'not-attempted'
@@ -131,5 +128,6 @@ for (const name of ['alpha', 'beta']) {
   await rm(executionOutput, { recursive: true });
   const loaded = execute(root, process.execPath, ['-e', 'process.stdout.write(require(process.argv[1]))', resolve(moved, '.vercel/output/functions/alias.func/index.cjs')]);
   if (loaded !== 'public-tarball-layout') throw new Error('public tarball moved link closure failed');
-  if (name === 'alpha') await verifyCompletionConsumer({ cwd, config: prebuilt, git, binary: binaries['forge-vercel-release'] });
+  await verifyCompletionConsumer({ cwd, config: prebuilt, git, binary: binaries['forge-vercel-release'] });
+  }
 }

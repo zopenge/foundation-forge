@@ -32,8 +32,9 @@ export const runFullCheck = async ({ run = runPnpmScript, verify = verifyLocalPa
   let testRun, workspace;
   const failures = [], background = [], cancellation = new globalThis.AbortController();
   const lateLint = testWorkerLimit() >= 4;
+  const overlapConsumers = testWorkerLimit() === 8 && coverage !== false;
   const activeSignal = signal ? globalThis.AbortSignal.any([signal, cancellation.signal]) : cancellation.signal;
-  let stopping, pipelined = false;
+  let stopping, pipelined = false, consumerReady = false, scriptCompletion = Promise.resolve();
   const fail = error => {
     if (!failures.includes(error)) failures.push(error);
     cancellation.abort(error);
@@ -55,15 +56,9 @@ export const runFullCheck = async ({ run = runPnpmScript, verify = verifyLocalPa
     });
   };
   let built = false;
-  const onBuilt = async model => {
-    activeSignal.throwIfAborted();
-    if (built) throw new Error('package build signaled more than once');
-    built = true;
-    workspace = model;
-    testRun = await createContext({ packages: model.packages, signal });
-    activeSignal.throwIfAborted();
-    pipelined = testRun.budget.limit >= 4;
+  const startBuiltChecks = () => {
     const scripts = pipelined ? timed('test:scripts', () => scriptTests(testRun)) : Promise.resolve();
+    scriptCompletion = scripts;
     if (lateLint) start(async () => { await scripts; await timed('lint', () => run('lint', { signal: activeSignal })); });
     if (pipelined) {
       // build之后产物只读；先避开脚本与tsc的争用，再并行静态检查和coverage。
@@ -72,12 +67,37 @@ export const runFullCheck = async ({ run = runPnpmScript, verify = verifyLocalPa
         await timed('typecheck:built', () => run('typecheck:built', { signal: activeSignal }));
         await timed('packages:check-cycles:built', () => run('packages:check-cycles:built', { signal: activeSignal }));
       });
-      if (coverage !== false) start(async () => {
+      if (coverage !== false && !overlapConsumers) start(async () => {
         await scripts;
         await timed('test:coverage', () => coverage({ packages: workspace.packages, context: testRun }));
       });
     }
+  };
+  const onBuilt = async model => {
+    activeSignal.throwIfAborted();
+    if (built) throw new Error('package build signaled more than once');
+    built = true;
+    workspace = model;
+    testRun = await createContext({ packages: model.packages, signal });
+    activeSignal.throwIfAborted();
+    if (overlapConsumers && testRun.budget.limit !== 8) throw new Error('FULL_CHECK_WORKER_LIMIT');
+    pipelined = testRun.budget.limit >= 4;
+    if (!overlapConsumers) startBuiltChecks();
     return testRun;
+  };
+  const onConsumerReady = () => {
+    activeSignal.throwIfAborted();
+    if (!overlapConsumers) return;
+    if (!built || !testRun) throw new Error('CONSUMER_READY_BEFORE_BUILD');
+    if (consumerReady) throw new Error('CONSUMER_READY_DUPLICATE');
+    consumerReady = true;
+    // 原生脚本启动也会读取大量元数据；八槽模式先独占完成消费者安装。
+    startBuiltChecks();
+    // 安装和脚本完成后才让六槽覆盖率与一个消费者重叠，余量仍受同一根审计。
+    start(async () => {
+      await scriptCompletion;
+      await timed('test:coverage', () => coverage({ packages: workspace.packages, context: testRun, workers: 6 }));
+    });
   };
   try {
     if (!lateLint) await timed('lint', () => run('lint', { signal: activeSignal }));
@@ -85,9 +105,10 @@ export const runFullCheck = async ({ run = runPnpmScript, verify = verifyLocalPa
       repositoryRoot,
       verificationRoot: resolve(repositoryRoot, '.tmp', 'package-verification'),
       tarballCacheRoot: resolve(repositoryRoot, '.tmp', 'check-cache', 'packs'),
-      onBuilt, signal: activeSignal,
+      onBuilt, onConsumerReady, serialConsumerChecks: overlapConsumers, signal: activeSignal,
     }));
     if (!built) throw new Error('package build did not complete');
+    if (overlapConsumers && !consumerReady) throw new Error('CONSUMER_READY_REQUIRED');
     if (!pipelined) {
       await timed('typecheck:built', () => run('typecheck:built', { signal: activeSignal }));
       await timed('packages:check-cycles:built', () => run('packages:check-cycles:built', { signal: activeSignal }));

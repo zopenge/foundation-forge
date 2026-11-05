@@ -40,7 +40,7 @@ export const loadPackageVerification = async (packageValue) => {
   const candidate = resolve(packageValue.packageRoot, consumerScriptName);
   const coverageWorkers = configuration.coverageWorkers ?? testWorkerTiers.at(-1);
   if (!testWorkerTiers.includes(coverageWorkers)) {
-    throw new Error(`${packageValue.name} coverageWorkers must be 1, 2, 4 or 8`);
+    throw new Error(`${packageValue.name} coverageWorkers must be ${testWorkerTiers.join(', ')}`);
   }
   const consumerScript = await exists(candidate) ? candidate : undefined;
   const quickTests = configuration.quickTests;

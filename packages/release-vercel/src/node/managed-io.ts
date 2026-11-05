@@ -100,13 +100,30 @@ export interface ManagedUsageProgress {
   entriesVisited: number;
   phase: 'path-guard' | 'scan' | 'root' | 'entry' | 'link' | 'directory-open' | 'directory-read' | 'anchor' | 'volume' | 'complete';
 }
+const entryLimit = 500_000;
+export async function readManagedDirectoryNames(path: string, maxEntries: number, signal?: AbortSignal,
+  progress?: ManagedUsageProgress): Promise<string[]> {
+  if (!Number.isSafeInteger(maxEntries) || maxEntries < 0 || maxEntries > entryLimit) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'ENTRY_LIMIT' });
+  const active = () => { if (signal?.aborted) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'OBSERVATION_DEADLINE' }); };
+  const directory = await opendir(path);
+  if (signal?.aborted) { await directory.close(); active(); }
+  if (progress) progress.phase = 'directory-read';
+  const children: string[] = [];
+  // Windows 搜索句柄会阻止安装器重命名子树；先关闭一层枚举，再逐项读取新鲜元数据。
+  for await (const entry of directory) {
+    active();
+    if (children.length >= maxEntries) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'ENTRY_LIMIT' });
+    children.push(entry.name);
+  }
+  return children;
+}
 export async function measureManagedUsageOnce(paths: ManagedPaths, signal?: AbortSignal, progress?: ManagedUsageProgress): Promise<{ bytes: number; freeBytes: number }> {
-  let bytes = 0, entries = 0;
+  let bytes = 0, entries = 0, pendingEntries = 0;
   const phase = (value: ManagedUsageProgress['phase']) => { if (progress) { progress.phase = value; progress.entriesVisited = entries; } };
   const active = () => { if (signal?.aborted) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'OBSERVATION_DEADLINE' }); };
   const visit = async (path: string): Promise<void> => {
     active();
-    if (++entries > 500_000) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'ENTRY_LIMIT' });
+    if (++entries > entryLimit) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'ENTRY_LIMIT' });
     phase('entry');
     const stat = await lstat(path, { bigint: true });
     if (stat.isSymbolicLink()) {
@@ -116,10 +133,14 @@ export async function measureManagedUsageOnce(paths: ManagedPaths, signal?: Abor
       bytes += Number(stat.size);
     } else if (stat.isDirectory()) {
       phase('directory-open');
-      const directory = await opendir(path);
-      if (signal?.aborted) { await directory.close(); active(); }
-      phase('directory-read');
-      for await (const entry of directory) { await visit(resolve(path, entry.name)); phase('directory-read'); }
+      // 已访问与所有祖先尚待处理的名称共用原条目上限，不能为关闭句柄引入无界快照。
+      const children = await readManagedDirectoryNames(path, entryLimit - entries - pendingEntries, signal, progress);
+      pendingEntries += children.length;
+      for (const child of children) { pendingEntries--; await visit(resolve(path, child)); phase('directory-read'); }
+      // 释放搜索句柄后安装器可正常 rename；目录消失须整扫重试，身份或链接替换则拒绝本次观察。
+      active(); const after = await lstat(path, { bigint: true });
+      if (!after.isDirectory() || after.isSymbolicLink() || !sameIdentity(stat, after) || await realpath(path) !== path)
+        throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'DIRECTORY_REPLACED' });
     } else if (stat.isFile()) bytes += Number(stat.size);
     else throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'FILE_TYPE' });
     if (!Number.isSafeInteger(bytes)) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'SIZE_OVERFLOW' });

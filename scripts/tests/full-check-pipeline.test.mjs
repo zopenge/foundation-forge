@@ -6,13 +6,18 @@ import { runFullCheck } from '../check-full.mjs';
 const gate = () => { let resolve; const promise = new Promise(accept => { resolve = accept; }); return { promise, resolve }; };
 const fixture = (limit, calls, cancel = async () => {}) => ({ budget: { limit, stop: () => calls.push('stop') },
   cancel: async reason => { calls.push('cancel'); await cancel(reason); }, finalize: async () => { calls.push('finalize'); } });
+const serialEnvironment = t => {
+  const previous = process.env.FORGE_CHECK_TEST_WORKERS;
+  process.env.FORGE_CHECK_TEST_WORKERS = '1';
+  t.after(() => { if (previous === undefined) Reflect.deleteProperty(process.env, 'FORGE_CHECK_TEST_WORKERS'); else process.env.FORGE_CHECK_TEST_WORKERS = previous; });
+};
 
 test('an explicit wide budget runs lint after build and scripts, and completion still waits for lint', async () => {
   const original = process.env.FORGE_CHECK_TEST_WORKERS; process.env.FORGE_CHECK_TEST_WORKERS = '8';
   const calls = [], build = gate(), scripts = gate(), lint = gate(), context = fixture(8, calls);
   const work = runFullCheck({ run: async name => { calls.push(name); if (name === 'lint') await lint.promise; },
     createContext: async () => context,
-    verify: async ({ onBuilt }) => { calls.push('build'); await build.promise; await onBuilt({ packages: [] }); },
+    verify: async ({ onBuilt, onConsumerReady }) => { calls.push('build'); await build.promise; await onBuilt({ packages: [] }); await onConsumerReady(); },
     scriptTests: async () => { calls.push('scripts'); await scripts.promise; }, coverage: async () => { calls.push('coverage'); } });
   try {
     await setImmediate(); assert.deepEqual(calls, ['build']);
@@ -31,7 +36,7 @@ test('a late lint failure cancels active tests and joins them before finalizatio
   const calls = [], lint = gate(), coverage = gate(), failure = new Error('lint failed');
   const context = fixture(8, calls);
   const work = runFullCheck({ run: async name => { if (name === 'lint') { await lint.promise; throw failure; } },
-    createContext: async () => context, verify: async ({ onBuilt }) => { await onBuilt({ packages: [] }); },
+    createContext: async () => context, verify: async ({ onBuilt, onConsumerReady }) => { await onBuilt({ packages: [] }); await onConsumerReady(); },
     scriptTests: async () => {}, coverage: async () => { calls.push('coverage'); await coverage.promise; } });
   const rejected = assert.rejects(work, error => error === failure);
   try {
@@ -44,9 +49,10 @@ test('a late lint failure cancels active tests and joins them before finalizatio
   assert.equal(calls.at(-1), 'finalize');
 });
 
-test('post-build scripts overlap packing and static checks wait for scripts before overlapping coverage', async () => {
+test('post-build scripts overlap packing and static checks wait for scripts before overlapping coverage', async t => {
+  serialEnvironment(t);
   const calls = [], lint = gate(), build = gate(), packing = gate(), scripts = gate(), coverage = gate(), types = gate();
-  const context = fixture(8, calls);
+  const context = fixture(4, calls);
   const work = runFullCheck({
     run: async name => { calls.push(name); if (name === 'lint') await lint.promise; if (name === 'typecheck:built') await types.promise; },
     verify: async ({ onBuilt }) => { calls.push('build'); await build.promise; assert.equal(await onBuilt({ packages: [] }), context); calls.push('packing'); await packing.promise; },
@@ -66,7 +72,8 @@ test('post-build scripts overlap packing and static checks wait for scripts befo
   assert.equal(calls.at(-1), 'finalize'); assert.equal(calls.filter(value => value === 'finalize').length, 1);
 });
 
-test('one and two slot runs retain the serial phase order', async () => {
+test('one and two slot runs retain the serial phase order', async t => {
+  serialEnvironment(t);
   for (const limit of [1, 2]) {
     const calls = [], packing = gate(), context = fixture(limit, calls);
     const work = runFullCheck({ run: async name => { calls.push(name); }, createContext: async () => context,
@@ -78,9 +85,10 @@ test('one and two slot runs retain the serial phase order', async () => {
   }
 });
 
-test('a background failure cancels workers immediately and still joins packing and cancellation before finalize', async () => {
+test('a background failure cancels workers immediately and still joins packing and cancellation before finalize', async t => {
+  serialEnvironment(t);
   const calls = [], packing = gate(), cleanup = gate(), failure = new Error('scripts failed');
-  const context = fixture(8, calls, async () => { await cleanup.promise; });
+  const context = fixture(4, calls, async () => { await cleanup.promise; });
   const work = runFullCheck({ run: async () => {}, createContext: async () => context,
     verify: async ({ onBuilt }) => { await onBuilt({ packages: [] }); await packing.promise; calls.push('packing-closed'); },
     scriptTests: async () => { throw failure; }, coverage: async () => { calls.push('coverage'); } });
@@ -92,10 +100,11 @@ test('a background failure cancels workers immediately and still joins packing a
   assert.equal(calls.includes('coverage'), false); assert.equal(calls.at(-1), 'finalize');
 });
 
-test('packing failure drains already running coverage and preserves both errors', async () => {
+test('packing failure drains already running coverage and preserves both errors', async t => {
+  serialEnvironment(t);
   const calls = [], packing = gate(), coverage = gate(), cancelled = gate();
   const first = new Error('packing failed'), second = new Error('coverage closed after failure');
-  const context = fixture(8, calls, async () => { cancelled.resolve(); });
+  const context = fixture(4, calls, async () => { cancelled.resolve(); });
   const work = runFullCheck({ run: async () => {}, createContext: async () => context,
     verify: async ({ onBuilt }) => { await onBuilt({ packages: [] }); await packing.promise; throw first; },
     scriptTests: async () => {}, coverage: async () => { calls.push('coverage'); await coverage.promise; throw second; } });
