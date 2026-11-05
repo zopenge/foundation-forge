@@ -4,6 +4,7 @@ import { expect, it, vi } from 'vitest';
 import type { ProcessDescriptor, ReadProcessIdentityResult } from '@openge/forge-process-control';
 import { identityReader, processControl } from '../src/node/process-identities.js';
 import { captureFixtureAncestry, closeFixtureIdentity } from './helpers/close-fixture-process.js';
+import { createWindowsProcessControl } from '@openge/forge-process-control-node';
 
 it('confirms absence when a real fixture exits between observation and termination', async () => {
   const child = spawn(process.execPath, ['--input-type=commonjs', '-e',
@@ -38,6 +39,41 @@ it('confirms absence when a real fixture exits between observation and terminati
   }
 });
 
+it.runIf(process.platform === 'win32')('confirms a real exit between the final identity check and taskkill', async () => {
+  const child = spawn(process.execPath, ['--input-type=commonjs', '-e',
+    'process.on("message",()=>process.exit(0));process.send("ready");'],
+  { stdio: ['ignore', 'ignore', 'ignore', 'ipc'], windowsHide: true });
+  const closed = new Promise<void>(accept => child.once('close', () => accept()));
+  try {
+    await once(child, 'message', { signal: AbortSignal.timeout(10_000) });
+    if (child.pid === undefined) throw new Error('fixture did not start');
+    const reader = identityReader(), observed = await reader.readIdentity({ pid: child.pid });
+    if (observed.status !== 'FOUND') throw new Error('fixture identity was not captured');
+    let raced = false;
+    const control = createWindowsProcessControl({ listenerBackend: 'netstat', identityReader: { readIdentity: async request => {
+      const current = await reader.readIdentity(request);
+      if (current.status === 'FOUND' && current.identity.startToken === observed.identity.startToken) {
+        child.send('exit'); await closed;
+      }
+      return current;
+    } } });
+    await expect(closeFixtureIdentity(observed.identity, { reader, signal: AbortSignal.timeout(10_000),
+      control: { terminateProcessTree: async request => {
+        try { return await control.terminateProcessTree(request); }
+        catch (error) {
+          expect(error).toMatchObject({ code: 'COMMAND_FAILED', details: { command: 'taskkill.exe', exitCode: 128 } });
+          raced = true; throw error;
+        }
+      } },
+    })).resolves.toBeUndefined();
+    expect(raced).toBe(true);
+    expect(await reader.readIdentity({ pid: observed.identity.pid })).toEqual({ status: 'ABSENT' });
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill();
+    await closed;
+  }
+});
+
 const identity = { pid: 123, startToken: 'fixture-start' };
 const unavailable = () => Object.assign(new Error('fixture identity disappeared'), { code: 'PROCESS_IDENTITY_UNAVAILABLE' });
 
@@ -47,6 +83,15 @@ it('requires a fresh absence observation after the specific identity race', asyn
   await expect(closeFixtureIdentity(identity, { reader: { readIdentity }, control: { terminateProcessTree } })).resolves.toBeUndefined();
   expect(readIdentity).toHaveBeenCalledExactlyOnceWith({ pid: identity.pid });
   expect(terminateProcessTree).toHaveBeenCalledTimes(1);
+});
+
+it.each(['fixture-start', 'replacement'])('rejects taskkill 128 while a fresh identity is still found: %s', async startToken => {
+  const error = Object.assign(new Error('fixture target disappeared'), { code: 'COMMAND_FAILED',
+    details: { command: 'taskkill.exe', exitCode: 128 } });
+  const readIdentity = vi.fn(async (): Promise<ReadProcessIdentityResult> => ({ status: 'FOUND', identity: { pid: identity.pid, startToken } }));
+  await expect(closeFixtureIdentity(identity, { reader: { readIdentity },
+    control: { terminateProcessTree: async () => { throw error; } } })).rejects.toBe(error);
+  expect(readIdentity).toHaveBeenCalledExactlyOnceWith({ pid: identity.pid });
 });
 
 it.each(['fixture-start', 'replacement'])('does not accept a found identity after termination fails: %s', async startToken => {

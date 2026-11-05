@@ -52,7 +52,9 @@ for (const name of ['alpha', 'beta']) {
   await writeFile(resolve(cwd, '.gitignore'), `.tmp/\nnode_modules/\n.vercel/\n${name === 'beta' ? 'user-note\n' : ''}`);
   await writeFile(resolve(cwd, 'release.config.json'), JSON.stringify(config));
   if (name === 'alpha') await copyFile(resolve(import.meta.dirname, 'linked-output.mjs'), resolve(cwd, 'linked-output.mjs'));
-  await writeFile(resolve(cwd, 'package.json'), JSON.stringify({ name: `consumer-${name}`, private: true, packageManager: `pnpm@${pnpmVersion}` }));
+  await writeFile(resolve(cwd, 'package.json'), JSON.stringify({ name: `consumer-${name}`, private: true, packageManager: `pnpm@${pnpmVersion}`,
+    ...(name === 'alpha' ? { scripts: { postinstall: 'node install-journal.mjs' } } : {}) }));
+  if (name === 'alpha') await copyFile(resolve(import.meta.dirname, 'install-journal.mjs'), resolve(cwd, 'install-journal.mjs'));
   await writeFile(resolve(cwd, 'pnpm-workspace.yaml'), 'packages: []\n');
   await writeFile(resolve(cwd, 'pnpm-lock.yaml'), "lockfileVersion: '9.0'\n\nsettings:\n  autoInstallPeers: true\n  excludeLinksFromLockfile: false\n\nimporters:\n\n  .: {}\n");
   await writeFile(resolve(cwd, 'source.txt'), 'initial\n'); git('add', '.'); git('commit', '-m', 'initial'); git('push', 'origin', 'HEAD:dev', 'HEAD:main');
@@ -80,6 +82,22 @@ for (const name of ['alpha', 'beta']) {
   if (!(await readFile(resolve(executionRoot, 'pnpm-lock.yaml'))).equals(lock)) throw new Error('frozen lock changed');
   if (name === 'alpha') {
     const before = await readFile(resolve(cwd, '.tmp/release-slot/state.json'));
+    const installs = JSON.parse(before.toString('utf8')).processes.filter(command => command.name === 'install');
+    const install = installs[0], steps = first.steps.filter(step => step.name === 'install');
+    const closure = install?.closure?.ownedScope;
+    // pnpm 会给真实生命周期输出加固定前缀；命令回显不满足这两种完整行。
+    const marker = steps[0]?.stdout.split(/\r?\n/u).some(line => line === 'INSTALL_JOURNAL_VERIFIED'
+      || line === '. postinstall: INSTALL_JOURNAL_VERIFIED');
+    if (installs.length !== 1 || steps.length !== 1 || !marker
+      || install?.status !== 'closed' || install.kind !== undefined || install.observationComplete !== true
+      || !/^[a-f0-9]{64}$/u.test(install.terminalSha256 ?? '')
+      || !install.identity?.pid || !install.identity.startToken || !install.scope?.scopeId || !install.scope.binding
+      || install.closure?.exitCode !== 0 || install.closure.termination !== 'exit'
+      || closure?.status !== 'closed' || closure.reason !== 'normal' || closure.empty !== true
+      || closure.scopeId !== install.scope.scopeId || closure.binding !== install.scope.binding
+      || closure.rootIdentity?.pid !== install.identity.pid || closure.rootIdentity.startToken !== install.identity.startToken)
+      throw new Error(`tarball pnpm install identity journal was not verified before execution and after closure: ${JSON.stringify({
+        installCount: installs.length, stepCount: steps.length, stdout: steps[0]?.stdout, install })}`);
     const recovered = JSON.parse(execute(cwd, process.execPath, [binaries['forge-vercel-release'], 'recover', '--cwd', cwd]));
     if (!recovered.ok || recovered.command !== 'recover' || recovered.candidateSha !== sha
       || recovered.processes?.status !== 'closed' || recovered.steps.some(step => step.name === 'install' || step.name.startsWith('check:')))

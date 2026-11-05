@@ -8,6 +8,7 @@ import { Execution } from '../src/node/execution.js';
 import { managedRuns } from './helpers/managed-runs.js';
 import type { ReleaseReport, ReleaseTransport } from '../src/contracts.js';
 import { identityReader, processControl } from '../src/node/process-identities.js';
+import { managedOwnedScopeProvider } from '../src/node/owned-command-runner.js';
 import { commandComponentSession, protocolComponentSlot, publicationComponentSession } from './helpers/component-session.js';
 
 // 聚焦真实推送丢响应与恢复决策；只读元数据查询不重复完整受管日志链路。
@@ -27,7 +28,14 @@ vi.mock('../src/node/managed-checkout.js', async importOriginal => {
 
 const fixtures: Awaited<ReturnType<typeof managedFixture>>[] = [];
 const runs = managedRuns();
-const runner = createNodeCommandRunner({ platform: process.platform === 'win32' ? 'win32' : 'posix', processControl: processControl(),
+const control = processControl(), reader = identityReader();
+const runner = createNodeCommandRunner({ platform: process.platform === 'win32' ? 'win32' : 'posix', ownedScopeProvider: managedOwnedScopeProvider(),
+  processControl: { ...control, listProcesses: async request => {
+    const pid = request?.pids?.length === 1 ? request.pids[0] : undefined;
+    if (pid === undefined) return control.listProcesses(request);
+    const observed = await reader.readIdentity({ pid, ...(request?.signal ? { signal: request.signal } : {}) });
+    return observed.status === 'FOUND' ? [observed.identity] : [];
+  } },
   terminationPolicy: { mode: 'force' }, terminationTimeoutMs: 10_000, identityAcquisition: { timeoutMs: 10_000, pollIntervalMs: 20 } });
 const workers: ReturnType<typeof runner.start>[] = [];
 afterEach(async () => {
@@ -51,10 +59,12 @@ it('observes an accepted push with a lost response and never pushes that old int
   }, buildInfo: async () => ({ revision: sha }) };
   const worker = runner.start({ command: process.execPath,
     args: [resolve(import.meta.dirname, 'helpers/managed-push-phase-worker.mjs'), f.cwd, 'development-response-lost', sha],
-    cwd: f.cwd, environment: { mode: 'inherit' }, output: { mode: 'capture', maxBytesPerStream: 1_048_576, overflow: 'fail' }, timeoutMs: 600_000 });
+    cwd: f.cwd, environment: { mode: 'inherit' }, ownedScope: { start: 'automatic', binding: 'fixture-push-resume' },
+    output: { mode: 'capture', maxBytesPerStream: 1_048_576, overflow: 'fail' }, timeoutMs: 600_000 });
   workers.push(worker);
   const result = await worker.result;
   expect(result.exitCode, new TextDecoder().decode(result.stderr)).toBe(1);
+  expect(result.ownedScope).toMatchObject({ status: 'closed', reason: 'normal', empty: true });
   const first = JSON.parse(new TextDecoder().decode(result.stdout)) as ReleaseReport & { fixturePushes: string[] };
   expect(first).toMatchObject({ fixtureBoundary: 'push-phase', fixturePushes: [`${sha}:refs/heads/dev`],
     ok: false, error: { code: 'GIT_FAILED', details: { reason: 'FIXTURE_RESPONSE_LOST' } },
