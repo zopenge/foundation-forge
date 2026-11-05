@@ -1,5 +1,11 @@
 {
   "browserExports": [
     "."
-  ]
+  ],
+  "coverageShardWeights": {
+    "tests/node-cli-budget.test.ts": 6,
+    "tests/node-frozen.test.ts": 7,
+    "tests/node-semantic-stale.test.ts": 17,
+    "tests/response-pagination.test.ts": 17
+  }
 }

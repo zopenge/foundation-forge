@@ -146,3 +146,93 @@ test('six-slot coverage failure cancels and joins the active consumer before fin
   finally { closed.resolve(); await rejected; }
   assert.equal(finalized, true);
 });
+
+test('consumer cleanup waits for every started check before deleting its directory', async t => {
+  eight(t);
+  const coverage = gate(), lint = gate(), entered = gate();
+  let cleaned = false, finalized = false, coverageStarted = false;
+  const work = runFullCheck({
+    run: async name => { if (name === 'lint') await lint.promise; },
+    createContext: async () => ({ budget: createTestWorkerBudget({ limit: 8 }),
+      finalize: async () => { assert.equal(cleaned, true); finalized = true; } }),
+    verify: async ({ onBuilt, onConsumerReady, onBeforeCleanup }) => {
+      await onBuilt({ packages: [] }); await onConsumerReady(); await entered.promise;
+      await onBeforeCleanup?.(); cleaned = true;
+    },
+    scriptTests: async () => {},
+    coverage: async () => { coverageStarted = true; entered.resolve(); await coverage.promise; },
+  });
+  const settled = Promise.allSettled([work]);
+  try {
+    await setImmediate(); assert.equal(coverageStarted, true); assert.equal(cleaned, false);
+    coverage.resolve(); await setImmediate(); assert.equal(cleaned, false); assert.equal(finalized, false);
+    lint.resolve(); await work; assert.equal(cleaned, true); assert.equal(finalized, true);
+  } finally { entered.resolve(); coverage.resolve(); lint.resolve(); await settled; }
+});
+
+for (const external of [false, true]) test(`consumer failure notifies cancellation before waiting for cleanup${external ? ' after external abort' : ''}`, async t => {
+  eight(t);
+  const entered = gate(), coverage = gate(), closed = gate(), controller = new globalThis.AbortController();
+  const failure = new Error('consumer failed before cleanup');
+  let cleaned = false, finalized = false, coverageStarted = false, cancelReason;
+  const work = runFullCheck({ signal: controller.signal, run: async () => {},
+    createContext: async () => ({ budget: createTestWorkerBudget({ limit: 8 }),
+      cancel: async reason => { cancelReason = reason; await closed.promise; },
+      finalize: async () => { assert.equal(cleaned, true); finalized = true; } }),
+    verify: async ({ onBuilt, onConsumerReady, onBeforeCleanup }) => {
+      await onBuilt({ packages: [] }); await onConsumerReady(); await entered.promise;
+      if (external) controller.abort(failure);
+      await onBeforeCleanup?.(failure); cleaned = true; throw failure;
+    },
+    scriptTests: async () => {},
+    coverage: async () => { coverageStarted = true; entered.resolve(); await coverage.promise; },
+  });
+  const rejected = assert.rejects(work, error => error === failure);
+  try {
+    await setImmediate(); assert.equal(coverageStarted, true);
+    assert.equal(cancelReason, failure); assert.equal(cleaned, false); assert.equal(finalized, false);
+    coverage.resolve(); await setImmediate(); assert.equal(cleaned, false);
+    closed.resolve(); await rejected; assert.equal(cleaned, true); assert.equal(finalized, true);
+  } finally { entered.resolve(); coverage.resolve(); closed.resolve(); await rejected; }
+});
+
+test('coverage failure drains cancellation before consumer cleanup', async t => {
+  eight(t);
+  const cancelled = gate(), closed = gate(), failure = new Error('coverage failed before cleanup');
+  let cleaned = false, cancelStarted = false;
+  const work = runFullCheck({ run: async () => {},
+    createContext: async () => ({ budget: createTestWorkerBudget({ limit: 8 }),
+      cancel: async () => { cancelStarted = true; cancelled.resolve(); await closed.promise; }, finalize: async () => {} }),
+    verify: async ({ onBuilt, onConsumerReady, onBeforeCleanup }) => {
+      await onBuilt({ packages: [] }); await onConsumerReady(); await cancelled.promise;
+      await onBeforeCleanup?.(); cleaned = true;
+    },
+    scriptTests: async () => {}, coverage: async () => { throw failure; },
+  });
+  const rejected = assert.rejects(work, error => error === failure);
+  try {
+    await setImmediate(); assert.equal(cancelStarted, true); assert.equal(cleaned, false);
+    closed.resolve(); await rejected; assert.equal(cleaned, true);
+  } finally { cancelled.resolve(); closed.resolve(); await rejected; }
+});
+
+for (const failure of [0, undefined]) test(`consumer cleanup preserves a ${String(failure)} failure and notifies cancellation before draining`, async t => {
+  eight(t);
+  const entered = gate(), coverage = gate();
+  let cancelled = false, cleaned = false, cancelReason;
+  const work = runFullCheck({ run: async () => {},
+    createContext: async () => ({ budget: createTestWorkerBudget({ limit: 8 }),
+      cancel: async reason => { cancelled = true; cancelReason = reason; }, finalize: async () => {} }),
+    verify: async ({ onBuilt, onConsumerReady, onBeforeCleanup }) => {
+      await onBuilt({ packages: [] }); await onConsumerReady(); await entered.promise;
+      await onBeforeCleanup?.(failure, true); cleaned = true; throw failure;
+    },
+    scriptTests: async () => {},
+    coverage: async () => { entered.resolve(); await coverage.promise; throw failure; },
+  });
+  const rejected = assert.rejects(work, error => error === failure);
+  try {
+    await setImmediate(); assert.equal(cancelled, true); assert.equal(cancelReason, failure); assert.equal(cleaned, false);
+    coverage.resolve(); await rejected; assert.equal(cleaned, true);
+  } finally { entered.resolve(); coverage.resolve(); await rejected; }
+});

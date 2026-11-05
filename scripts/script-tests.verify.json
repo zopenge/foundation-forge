@@ -1,0 +1,18 @@
+{
+  "defaultWeight": 0.25,
+  "weights": {
+    "ab-eval-tool-contract.test.mjs": 20,
+    "check-runner.test.mjs": 11,
+    "ci-coverage-integration.test.mjs": 6,
+    "ci-finish.test.mjs": 7,
+    "hidden-pool-failure.test.mjs": 4,
+    "hidden-runner-lifecycle.test.mjs": 7,
+    "package-verification.test.mjs": 3,
+    "release-registry-integration.test.mjs": 9,
+    "test-process-runner.test.mjs": 6,
+    "vitest-budget-config.test.mjs": 3,
+    "window-job-sampler.test.mjs": 3,
+    "workspace-coverage-batch.test.mjs": 3,
+    "workspace-unified-config.test.mjs": 3
+  }
+}

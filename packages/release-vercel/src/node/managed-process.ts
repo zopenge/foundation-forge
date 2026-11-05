@@ -151,9 +151,11 @@ class ManagedProcess implements ExecutionLifecycle {
           if (event.type === 'termination-requested' && (event.reason === 'abort' || event.reason === 'timeout')) requestedTermination = event.reason;
           if (event.type === 'spawned') enqueue(async () => { command.pid = event.pid; command.status = 'spawned'; if (!batch) await this.persist(); });
           if (event.type === 'scope-ready') enqueue(async () => {
-            if (event.binding !== binding || !running?.authorizeStart || combined.aborted) throw new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'SCOPE_BINDING' });
+            if (event.binding !== binding || !running?.authorizeStart) throw new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'SCOPE_BINDING' });
             command.identity = { pid: event.identity.pid, startToken: event.identity.startToken };
             command.scope = { scopeId: event.scopeId, binding }; command.status = 'identified';
+            // 取消只禁止放行 argv；已收到的绑定事实仍供真实关闭结果核验，不据此放行执行。
+            if (combined.aborted) return;
             await this.guard(); await this.budget.sample();
             if (batch) await terminal?.assertOwned(); else await this.persist();
             // 写入、预算和所有权任一步失败都不放行真实 argv。

@@ -12,9 +12,14 @@ import { restoreManagedTerminal } from '../src/node/managed-terminal.js';
 import { randomUUID } from 'node:crypto';
 import { hasVerifiedManagedStop } from '../src/node/managed-closure.js';
 import { completionDeadline } from './helpers/completion-deadline.js';
+import type { CommandEvent } from '@openge/forge-command-runner';
+import { ReleaseError } from '../src/node/errors.js';
+import { managedPhaseSession } from './helpers/managed-phase-session.js';
 
 vi.mock('node:fs/promises', async importOriginal => ({ ...await importOriginal<typeof filesystem>() }));
 const commandClock = vi.hoisted(() => ({ armed: false, value: undefined as ReturnType<typeof completionDeadline> | undefined }));
+const startupObservation = vi.hoisted(() => ({ event: undefined as ((event: CommandEvent) => void) | undefined,
+  authorized: 0 }));
 vi.mock('@openge/forge-command-runner/node', async original => {
   const actual = await original<typeof import('@openge/forge-command-runner/node')>();
   return { ...actual, createNodeCommandRunner: (options: Parameters<typeof actual.createNodeCommandRunner>[0]) => {
@@ -31,7 +36,9 @@ vi.mock('@openge/forge-command-runner/node', async original => {
         const interval = args[0].timeoutMs; if (interval === undefined) throw new Error('bounded timeout request required');
         commandClock.armed = false; commandClock.value = completionDeadline(interval, { once: true });
       }
-      return runner.start(...args);
+      const running = runner.start(args[0], event => { args[1]?.(event); startupObservation.event?.(event); });
+      const authorize = running.authorizeStart;
+      return authorize ? { ...running, authorizeStart: () => { startupObservation.authorized++; return authorize(); } } : running;
     } };
   } };
 });
@@ -47,7 +54,8 @@ afterEach(async () => {
     if (found.status === 'FOUND' && found.identity.startToken === command.identity.startToken) await closeFixtureIdentity(command.identity);
   }
   for (const fixture of fixtures.splice(0)) await fixture.dispose();
-  } finally { commandClock.value?.dispose(); commandClock.value = undefined; commandClock.armed = false; }
+  } finally { commandClock.value?.dispose(); commandClock.value = undefined; commandClock.armed = false;
+    startupObservation.event = undefined; startupObservation.authorized = 0; }
 });
 async function fixture() {
   const f = await managedFixture({ sampleIntervalMs: 5000 }); fixtures.push(f);
@@ -104,6 +112,76 @@ it('reports controlled cancellation as cancelled and retains the exact stopped s
   });
   const bytes = (await readFile(marker)).length; await new Promise(accept => setTimeout(accept, 150));
   expect((await readFile(marker)).length).toBe(bytes);
+});
+
+async function assertQueuedScopeCancellation(mode: 'external' | 'budget') {
+  const f = await fixture(), marker = resolve(f.slot.paths.checkoutRoot, 'must-not-start'), controller = new AbortController();
+  let releaseWrite: () => void = () => {}, enteredWrite: () => void = () => {}, receivedScope: () => void = () => {};
+  let enteredSample: () => void = () => {}, failSample: () => void = () => {}, requestedStop: () => void = () => {};
+  const writeHeld = new Promise<void>(accept => { releaseWrite = accept; });
+  const writeEntered = new Promise<void>(accept => { enteredWrite = accept; });
+  const scopeReceived = new Promise<void>(accept => { receivedScope = accept; });
+  const sampleEntered = new Promise<void>(accept => { enteredSample = accept; });
+  const stopRequested = new Promise<void>(accept => { requestedStop = accept; });
+  const budgetFailure = new ReleaseError('BUDGET_UNKNOWN', { reason: 'OBSERVATION_DEADLINE', budgetMs: 35_000 });
+  let cleaning = false;
+  if (mode === 'budget') {
+    const sample = f.session.budget.sample.bind(f.session.budget); let samples = 0;
+    vi.spyOn(f.session.budget, 'sample').mockImplementation(async () => {
+      if (cleaning || ++samples !== 2) return sample();
+      // 只注入周期观察错误；取消与原生停止继续走真实 BudgetMonitor/runner 链。
+      await new Promise<never>((_accept, reject) => { failSample = () => reject(budgetFailure); enteredSample(); });
+    });
+  }
+  let scope: Extract<CommandEvent, { type: 'scope-ready' }> | undefined, timer: ReturnType<typeof setTimeout> | undefined;
+  const write = f.slot.store.writeState.bind(f.slot.store);
+  vi.spyOn(f.slot.store, 'writeState').mockImplementation(async (...args) => {
+    if (args[0].processes.at(-1)?.status === 'spawned') { enteredWrite(); await writeHeld; }
+    await write(...args);
+  });
+  startupObservation.event = event => {
+    if (event.type === 'scope-ready') { scope = event; receivedScope(); }
+    if (event.type === 'termination-requested' && event.reason === 'abort') requestedStop();
+  };
+  startupObservation.authorized = 0;
+  const pending = f.session.execution.run('cancel-before-argv', { command: 'node', args: ['-e',
+    'require("node:fs").writeFileSync(process.argv[1],"ran")', marker] }, 'CHECK_FAILED', undefined, controller.signal);
+  const observed = pending.then(value => ({ value }), (error: unknown) => ({ error }));
+  const deadline = new Promise<never>((_accept, reject) => {
+    timer = setTimeout(() => reject(new Error('native startup witnesses not received')), f.config.limits.commandMs);
+  });
+  try {
+    // 只延迟真实 spawned 状态提交；身份、scope 与关闭事实均来自原生 Provider。
+    await Promise.race([Promise.all([writeEntered, scopeReceived, ...(mode === 'budget' ? [sampleEntered] : [])]), deadline,
+      observed.then(result => { throw new Error('command ended before startup witnesses', { cause: result }); })]);
+    if (mode === 'budget') failSample(); else controller.abort();
+    await Promise.race([stopRequested, deadline]);
+    clearTimeout(timer); releaseWrite();
+    const result = await observed;
+    if (!scope) throw new Error('real native scope witness missing');
+    expect(f.session.state.processes.at(-1)).toMatchObject({ identity: scope.identity,
+      scope: { scopeId: scope.scopeId, binding: scope.binding }, status: 'stopped', observationComplete: true,
+      closure: { requestedTermination: 'abort', ownedScope: { status: 'unknown', reason: 'terminated', empty: true } } });
+    expect(startupObservation.authorized).toBe(0);
+    await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(result).toMatchObject({ error: mode === 'budget'
+      ? { code: 'BUDGET_UNKNOWN', details: { reason: 'OBSERVATION_DEADLINE', budgetMs: 35_000, step: 'cancel-before-argv' } }
+      : { code: 'CANCELLED' } });
+    await expect(f.session.assertClosed()).rejects.toMatchObject({ code: 'PROCESS_STATE_UNKNOWN' });
+    await expect(f.session.assertStopped()).resolves.toBeUndefined();
+    const terminal = JSON.parse(await readFile(f.terminalPath, 'utf8'));
+    expect(terminal.command).toMatchObject({ identity: scope.identity, status: 'stopped',
+      scope: { scopeId: scope.scopeId, binding: scope.binding } });
+  } finally { clearTimeout(timer); cleaning = true; failSample(); controller.abort(); releaseWrite();
+    await observed; startupObservation.event = undefined; }
+}
+
+it('retains a real scope received behind a pending spawned journal when cancellation forbids argv', async () => {
+  await assertQueuedScopeCancellation('external');
+});
+
+it('preserves the budget failure while sealing a queued real scope without authorizing argv', async () => {
+  await assertQueuedScopeCancellation('budget');
 });
 
 it('rejects a command whose bounded recovery record cannot fit before its real argv runs', async () => {
@@ -178,6 +256,35 @@ it('does not apply the previous command terminal to a newer incomplete intent', 
   expect(restored.state.processes.at(-1)).toMatchObject({ name: 'incomplete-intent', status: 'intent', observationComplete: false });
   expect(restored.state.processes.every(hasVerifiedManagedStop)).toBe(false);
   expect(restored.terminal).toBeUndefined();
+});
+
+it('keeps a new incomplete run unknown when the exact predecessor terminal is already archived', async () => {
+  const f = await managedPhaseSession();
+  try {
+    await mkdir(f.slot.paths.checkoutRoot);
+    await f.session.execution.run('previous-run-command', { command: 'node', args: ['-e', 'process.exit(0)'] }, 'CHECK_FAILED');
+    await f.archive(true);
+    const terminalPath = resolve(f.slot.paths.slotRoot, 'terminal.json'), terminal = await readFile(terminalPath);
+    const session = await f.next('publish', 'f'.repeat(40));
+    session.state.processes.push({ id: randomUUID(), name: 'new-incomplete-intent', status: 'intent', observationComplete: false, descendants: [] });
+    session.state.status = 'unknown'; await session.persist();
+    const stateBytes = await readFile(f.slot.paths.statePath), state = await session.slot.store.read();
+    if (!state) throw new Error('current state missing');
+    const restored = await restoreManagedTerminal(f.slot.paths, state);
+    expect(restored.state).toEqual(state); expect(restored.terminal).toBeUndefined();
+    expect(restored.state.processes.every(hasVerifiedManagedStop)).toBe(false);
+    expect(await readFile(f.slot.paths.statePath)).toEqual(stateBytes);
+    expect(await readFile(terminalPath)).toEqual(terminal);
+    const unbound = { ...state, history: [] };
+    await session.slot.store.writeState(unbound);
+    await expect(restoreManagedTerminal(f.slot.paths, unbound)).rejects.toMatchObject({ code: 'SLOT_STATE', details: { reason: 'TERMINAL_BINDING' } });
+    const expectsCurrent = { ...state, processes: state.processes.map(command => ({ ...command, terminalSha256: 'e'.repeat(64) })) };
+    await session.slot.store.writeState(expectsCurrent);
+    await expect(restoreManagedTerminal(f.slot.paths, expectsCurrent)).rejects.toMatchObject({ code: 'SLOT_STATE', details: { reason: 'TERMINAL_BINDING' } });
+    await session.slot.store.writeState(state);
+    await filesystem.rename(terminalPath, `${terminalPath}.original`); await writeFile(terminalPath, terminal);
+    await expect(restoreManagedTerminal(f.slot.paths, state)).rejects.toMatchObject({ code: 'SLOT_STATE', details: { reason: 'TERMINAL_BINDING' } });
+  } finally { await f.dispose(); }
 });
 
 it('keeps a running command timeout failed while proving its exact scope is stopped', async () => {

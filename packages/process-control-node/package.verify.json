@@ -1,3 +1,8 @@
 {
-  "browserExports": []
+  "browserExports": [],
+  "coverageShardWeights": {
+    "tests/owned-job-exit-accounting.test.mjs": 10,
+    "tests/owned-nested-git.test.mjs": 16,
+    "tests/owned-scope-windows.test.ts": 16
+  }
 }

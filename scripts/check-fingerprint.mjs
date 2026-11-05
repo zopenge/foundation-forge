@@ -40,6 +40,7 @@ export const collectWorkspaceFingerprint = async (repositoryRoot) => {
     vitestMaxWorkers: process.env.VITEST_MAX_WORKERS,
     testWorkers: process.env.FORGE_CHECK_TEST_WORKERS,
     workerCeiling: process.env.FORGE_CHECK_WORKER_CEILING,
+    uvThreadpoolSize: process.env.UV_THREADPOOL_SIZE,
     temp: process.env.TEMP,
     tmp: process.env.TMP,
     installedModules: await fileDigest(modulesPath),
