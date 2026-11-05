@@ -57,6 +57,8 @@ Vitest调度编号可能在旧worker退出前复用，因此真实fork槽持有�
 
 ## Windows 短时窗口取证
 
+无控制台的 Windows 宿主应显式通过 `node scripts/hidden-pnpm/pnpm.cjs run check` 启动检查；完整验收将末尾命令替换为 `check:full:fast`。计时或诊断外壳也应从该入口派生，例如 `node scripts/hidden-pnpm/pnpm.cjs exec node <外壳路径> <参数>`，使原有 pnpm 自调用继续选择同一入口。只给最外层 Node 设置 `windowsHide`，不能隐藏普通 pnpm CLI 内部随后创建的 lifecycle cmd。适配仅修改当前专属子进程的启动参数和环境，校验固定 pnpm 的版本与实现指纹，不修改系统或用户的 PATH、注册表、Shell 配置或全局 pnpm。
+
 `owned-nested-git.test.mjs` 的 `windowsHide:false` 负例在本次自有隐藏控制台下运行12次真实Git及显式Provider。宿主在原生创建边界通过 `STARTF_USESHOWWINDOW/SW_HIDE` 隐藏，暂停加入测试自有、关闭即终止的Job后才恢复；异常和超时必须强制收尾并验证Job为空，不依赖诊断入口的外层Job。实际Node只连接显式宿主PID，拒绝父进程保留值；保存并恢复AttachConsole可能改变的三个借用标准句柄，不关闭借用句柄。逐次核验同一隐藏控制台、stdout/stderr管道、SHA输出和原关闭断言，仍完整接受WinEvent观察。该夹具调整经维护者明确批准，保留false参数及真实Git，但不再覆盖原“无控制台的Git(false)新建console/conhost”路径；true分支及其他正常启动点不采用此隔离，也不据此宣称任意外部false启动都不会闪窗。
 
 `packages/process-control-node/test-window-probe.mjs <run-name>` 是包内显式诊断入口，不属于普通测试或公开包 API。入口宿主须通过 Windows 隐藏启动方式创建；复用标准构建、现有 context 与 Job，以一个 worker 预约执行隐藏 pnpm、一次嵌套 lifecycle 和本地 Git 查询。夹具自行生成最小 Git 对象，不下载依赖、不访问凭据或发布服务。工作预算为 5 秒，沿用 10 秒受管收尾期限；首次可见窗口、采集错误或期限耗尽即取消，不自动循环或扩大到全量。
