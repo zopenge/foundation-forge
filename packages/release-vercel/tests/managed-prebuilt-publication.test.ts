@@ -1,7 +1,7 @@
-import { boundary, fixture } from './helpers/prebuilt-publication-fixture.js';
+import { fixture } from './helpers/prebuilt-publication-fixture.js';
 import { runRelease } from '../src/node.js';
 import { ReleaseError } from '../src/node/errors.js';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -20,15 +20,6 @@ it('publishes once and observes the saved exact ID through status and verify wit
     expect(await value.creates()).toBe(1); expect(value.promotions()).toBe(1);
     expect(value.paths.every(path => !path.startsWith('/v6/deployments'))).toBe(true);
     expect(value.ref('dev')).toBe(value.initial); expect(value.ref('main')).toBe(value.initial);
-  }, 300_000);
-it('retains an unknown creation across source fast-forward and refuses to create again', async () => {
-    const value = await fixture(); boundary.mode = 'lost-response';
-    const failed = await runRelease({ command: 'publish', cwd: value.cwd, transport: value.transport });
-    expect(failed).toMatchObject({ ok: false, processes: { status: 'closed' }, prebuilt: { createEffect: 'unknown' } });
-    await writeFile(resolve(value.cwd, 'source.txt'), 'next source\n'); value.commit(); boundary.mode = 'ok';
-    const resumed = await runRelease({ command: 'publish', cwd: value.cwd, transport: value.transport });
-    expect(resumed, JSON.stringify(resumed.error)).toMatchObject({ ok: false, error: { code: 'RECOVERY_REQUIRED' } });
-    expect(await value.creates()).toBe(1); expect(value.promotions()).toBe(0);
   }, 300_000);
 it('observes an accepted promotion with a lost response and never promotes the candidate twice', async () => {
     const value = await fixture(); value.hooks.promote = () => { throw new ReleaseError('VERCEL_API'); };

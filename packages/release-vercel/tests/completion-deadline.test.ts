@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { completionDeadline } from './helpers/completion-deadline.js';
 
 it('fires the original completion deadline only when its full interval advances', () => {
@@ -26,4 +26,16 @@ it('rejects invalid clock movement and disposes pending deadlines', () => {
   for (const value of [-1, Infinity, NaN]) expect(() => deadline.advance(value)).toThrow('INVALID_COMPLETION_CLOCK');
   deadline.timers.setTimeout(() => observed.push('disposed'), 1000);
   deadline.dispose(); deadline.advance(1000); expect(observed).toEqual([]);
+});
+
+it('leaves equal shutdown deadlines on the ordinary timer while controlling one command deadline', async () => {
+  vi.useFakeTimers();
+  const deadline = completionDeadline(5000, { once: true }), observed: string[] = [];
+  try {
+    deadline.timers.setTimeout(() => observed.push('command'), 5000);
+    deadline.timers.setTimeout(() => observed.push('shutdown'), 5000);
+    await vi.advanceTimersByTimeAsync(5000); expect(observed).toEqual(['shutdown']);
+    deadline.advance(4999); expect(observed).toEqual(['shutdown']);
+    deadline.advance(1); expect(observed).toEqual(['shutdown', 'command']);
+  } finally { deadline.dispose(); vi.clearAllTimers(); vi.useRealTimers(); }
 });

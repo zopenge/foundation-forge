@@ -11,12 +11,35 @@ import * as retirementHost from '../src/node/retirement-host.js';
 import { restoreManagedTerminal } from '../src/node/managed-terminal.js';
 import { randomUUID } from 'node:crypto';
 import { hasVerifiedManagedStop } from '../src/node/managed-closure.js';
+import { completionDeadline } from './helpers/completion-deadline.js';
 
 vi.mock('node:fs/promises', async importOriginal => ({ ...await importOriginal<typeof filesystem>() }));
+const commandClock = vi.hoisted(() => ({ armed: false, value: undefined as ReturnType<typeof completionDeadline> | undefined }));
+vi.mock('@openge/forge-command-runner/node', async original => {
+  const actual = await original<typeof import('@openge/forge-command-runner/node')>();
+  return { ...actual, createNodeCommandRunner: (options: Parameters<typeof actual.createNodeCommandRunner>[0]) => {
+    const runner = actual.createNodeCommandRunner({ ...options,
+      setTimeout: new Proxy(options?.setTimeout ?? globalThis.setTimeout, { apply(target, receiver, args) {
+        return Reflect.apply(commandClock.value?.timers.setTimeout ?? target, receiver, args);
+      } }),
+      clearTimeout: new Proxy(options?.clearTimeout ?? globalThis.clearTimeout, { apply(target, receiver, args) {
+        return Reflect.apply(commandClock.value?.timers.clearTimeout ?? target, receiver, args);
+      } }),
+    });
+    return { ...runner, start: (...args: Parameters<typeof runner.start>) => {
+      if (commandClock.armed) {
+        const interval = args[0].timeoutMs; if (interval === undefined) throw new Error('bounded timeout request required');
+        commandClock.armed = false; commandClock.value = completionDeadline(interval, { once: true });
+      }
+      return runner.start(...args);
+    } };
+  } };
+});
 
 const fixtures: Awaited<ReturnType<typeof managedFixture>>[] = [];
 const sessions: ManagedSession[] = [];
 afterEach(async () => {
+  try {
   vi.restoreAllMocks();
   for (const session of sessions.splice(0)) for (const command of session.state.processes) {
     if (!command.identity) continue;
@@ -24,6 +47,7 @@ afterEach(async () => {
     if (found.status === 'FOUND' && found.identity.startToken === command.identity.startToken) await closeFixtureIdentity(command.identity);
   }
   for (const fixture of fixtures.splice(0)) await fixture.dispose();
+  } finally { commandClock.value?.dispose(); commandClock.value = undefined; commandClock.armed = false; }
 });
 async function fixture() {
   const f = await managedFixture({ sampleIntervalMs: 5000 }); fixtures.push(f);
@@ -156,10 +180,29 @@ it('does not apply the previous command terminal to a newer incomplete intent', 
   expect(restored.terminal).toBeUndefined();
 });
 
-it('keeps a real timeout failed while proving its exact scope is stopped', async () => {
+it('keeps a running command timeout failed while proving its exact scope is stopped', async () => {
   const f = await fixture();
-  await expect(f.session.execution.run('timeout', { command: 'node', args: ['-e', 'setInterval(()=>{},100)'], timeoutMs: 5000 }, 'CHECK_FAILED'))
-    .rejects.toMatchObject({ code: 'COMMAND_TIMEOUT' });
+  commandClock.armed = true;
+  const controller = new AbortController(); let started: () => void = () => {}, output = '', settled = false;
+  const ready = new Promise<void>(accept => { started = accept; });
+  const running = f.session.execution.run('timeout', { command: 'node', args: ['-e',
+    'process.stdout.write("terminal-timeout-ready\\n");setInterval(()=>{},100)'], timeoutMs: 5000 }, 'CHECK_FAILED',
+  undefined, controller.signal, true, text => { output += text; if (output.includes('terminal-timeout-ready')) started(); });
+  const observed = running.then(value => { settled = true; return { value }; }, (error: unknown) => { settled = true; return { error }; });
+  try {
+  await Promise.race([ready, observed.then(result => {
+    if ('error' in result) throw result.error;
+    throw new Error('timeout command exited before its payload marker');
+  })]);
+  const deadline = commandClock.value; if (!deadline) throw new Error('actual command deadline was not captured');
+  expect(settled).toBe(false);
+  expect(deadline.pendingCount()).toBe(1);
+  expect(deadline.interval).toBeGreaterThan(0); expect(deadline.interval).toBeLessThanOrEqual(5000);
+  const active = f.session.state.processes.at(-1); if (!active) throw new Error('identified active command required');
+  expect(active).toMatchObject({ name: 'timeout', status: 'identified', identity: { pid: expect.any(Number) } });
+  expect(hasVerifiedManagedStop(active)).toBe(false);
+  deadline.advance(deadline.interval);
+  expect(await observed).toMatchObject({ error: { code: 'COMMAND_TIMEOUT' } });
   await expect(f.session.assertClosed()).rejects.toMatchObject({ code: 'PROCESS_STATE_UNKNOWN' });
   await expect(f.session.assertStopped()).resolves.toBeUndefined();
   const command = f.session.state.processes.at(-1); if (!command?.closure?.ownedScope) throw new Error('missing timeout evidence');
@@ -168,6 +211,7 @@ it('keeps a real timeout failed while proving its exact scope is stopped', async
     expect(hasVerifiedManagedStop({ ...command, closure: { ...command.closure, ownedScope: { ...command.closure.ownedScope, status: 'unknown', reason } } })).toBe(false);
   }
   expect(hasVerifiedManagedStop({ ...command, scope: { scopeId: randomUUID(), binding: command.scope?.binding ?? '' } })).toBe(false);
+  } finally { controller.abort(); await observed; commandClock.value?.dispose(); commandClock.value = undefined; commandClock.armed = false; }
 });
 
 it('records the stopped scope independently of invalid checkout Git metadata', async () => {
