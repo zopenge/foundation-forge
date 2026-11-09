@@ -74,6 +74,24 @@ test('CI worker selections reach the real repository budget and serialize Window
   }
 });
 
+test('Release reserves four slots through the real budget and drains every reservation', async t => {
+  const workflow = await readWorkflow(releaseWorkflowUrl);
+  const { completion } = startWorkflowProbe(['--input-type=module', '-e', `
+    import {setImmediate} from 'node:timers/promises';
+    import {createTestWorkerBudget} from ${JSON.stringify(new URL('../test-worker-budget.mjs', import.meta.url).href)};
+    const budget=createTestWorkerBudget(), gate=Promise.withResolvers(); let running=0, peak=0;
+    const tasks=Array.from({length:5},(_,index)=>budget.run({name:String(index),workers:1},async()=>{
+      running++;peak=Math.max(peak,running);await gate.promise;running--;
+    }));
+    await setImmediate(); const observed=peak; gate.resolve(); await Promise.all(tasks);
+    console.log(JSON.stringify({limit:budget.limit,peak:observed,...budget.summary()}));
+  `], { signal: t.signal, env: { ...process.env, VITEST_MAX_WORKERS: undefined,
+    FORGE_CHECK_TEST_WORKERS: undefined, ...workflow.env, ...workflow.jobs.release.env } });
+  assert.deepEqual(JSON.parse((await completion).stdout), {
+    limit: 4, peak: 4, activeWorkers: 0, peakWorkers: 4, started: 5, finished: 5, failed: false,
+  });
+});
+
 function releaseSteps(workflow) {
   return workflow.jobs.release.steps;
 }
@@ -215,10 +233,36 @@ test('preserves push and manual release routes without approval or retry workaro
   ]);
 
   assert.deepEqual(workflow.on.push.branches, ['main']);
-  assert.deepEqual(workflow.on.workflow_dispatch, null);
+  assert.deepEqual(workflow.on.workflow_dispatch?.inputs?.['validation-only'], {
+    description: 'Run full validation without publishing or changing tags', type: 'boolean', default: false,
+  });
   assert.equal(workflow.jobs.release.environment, 'npm');
-  assert.ok(releaseSteps(workflow).some((step) => step.if === "github.event_name == 'workflow_dispatch'" && step.run === 'pnpm release:next'));
+  assert.equal(workflow.jobs.release.if,
+    "github.event_name == 'push' || github.ref == 'refs/heads/main' || inputs.validation-only");
+  const manual = releaseSteps(workflow).filter(step => [
+    'node ./scripts/verify-prerelease-versions.mjs', 'pnpm release:next', 'git push origin --tags',
+  ].includes(step.run));
+  assert.equal(manual.length, 3);
+  for (const step of manual) assert.equal(step.if, "github.event_name == 'workflow_dispatch' && !inputs.validation-only");
+  const validation = releaseSteps(workflow).find(step => step.name === 'Validate release without publishing');
+  assert.equal(validation.if, "github.event_name == 'workflow_dispatch' && inputs.validation-only");
+  assert.match(validation.run, /^pnpm check:full\npnpm check\n/u);
+  // 三个入口必须共用pnpm lifecycle；exec的PATH不同，不能复用run产生的严格环境收据。
+  assert.equal(validation.run.trim(), 'pnpm check:full\npnpm check\npnpm run check:receipt');
+  const manifest = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
+  assert.equal(manifest.scripts['check:receipt'],
+    'node --input-type=module -e "import { assertFullCheckReceipt } from \'./scripts/check-release-gate.mjs\'; await assertFullCheckReceipt(process.cwd());"');
   assert.doesNotMatch(source, /reopen|close.*pull request|skip ci|skip-ci|sleep|auto-approve/iu);
+});
+
+test('Release keeps the measured Node patch and records runner resources before validation', async () => {
+  const workflow = await readWorkflow(releaseWorkflowUrl);
+  const steps = releaseSteps(workflow);
+  assert.equal(workflow.jobs.release['runs-on'], 'ubuntu-latest');
+  assert.equal(steps.find(step => step.uses === 'actions/setup-node@v7').with['node-version'], '24.22.2');
+  const resources = steps.find(step => step.name === 'Record runner resources');
+  assert.ok(resources);
+  assert.ok(steps.indexOf(resources) < steps.findIndex(step => step.run === 'pnpm install --frozen-lockfile'));
 });
 
 test('pushes package tags for manual and action-driven releases', async () => {

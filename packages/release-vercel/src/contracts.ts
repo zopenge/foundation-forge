@@ -160,7 +160,7 @@ export interface ReleaseReport {
     readonly historicalVerification: 'unknown';
     readonly origin?: 'operator-confirmed-origin' | 'recorded-run-host';
     readonly originConfirmation?: string;
-    readonly cessation?: 'observed-subsequent-boot';
+    readonly cessation?: 'observed-subsequent-boot' | 'recorded-empty-unstarted-scope';
     readonly archivePath?: string;
   };
   readonly runId?: string;
@@ -187,6 +187,7 @@ export interface RunReleaseOptions {
   readonly retryCompletion?: boolean;
   readonly runId?: string;
   readonly confirmOrigin?: string;
+  readonly abandonUnstarted?: boolean;
   readonly signal?: AbortSignal;
   readonly transport?: ReleaseTransport;
   readonly onLoginOutput?: (text: string) => void;

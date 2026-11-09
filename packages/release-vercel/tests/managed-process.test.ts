@@ -7,6 +7,7 @@ import { currentCoordinator, identityReader } from '../src/node/process-identiti
 import { closeFixtureIdentity } from './helpers/close-fixture-process.js';
 import type { ManagedSession } from '../src/node/release-context.js';
 import { inspectManagedRecovery } from '../src/node/managed-recovery.js';
+import { ReleaseError } from '../src/node/errors.js';
 
 const fixtures: Awaited<ReturnType<typeof managedFixture>>[] = [];
 const sessions: ManagedSession[] = [];
@@ -41,7 +42,13 @@ const fixture = async () => {
 };
 it('journals identity before a short real command runs and proves foreground closure', async () => {
   const f = await fixture();
-  const output = await f.session.execution.run('short-command', { command: 'node', args: ['-e', 'const c=JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")).processes[0];if(c.status!=="identified"||!c.scope||!c.identity)process.exit(55);process.stdout.write("done")', f.slot.paths.statePath] }, 'CHECK_FAILED');
+  const output = await f.session.execution.run('short-command', { command: 'node', args: ['-e', 'const c=JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")).processes[0];if(c.status!=="identified"||!c.scope||!c.identity)process.exit(55);process.stdout.write("done")', f.slot.paths.statePath] }, 'CHECK_FAILED').catch((error: unknown) => {
+    // 仅在原用例失败时保留结构化分类；普通报告只有堆栈，无法区分启动与日志失败。
+    try {
+      if (error instanceof ReleaseError) process.stderr.write(`MANAGED_SHORT_COMMAND_FAILURE ${JSON.stringify({ code: error.code, details: error.details })}\n`);
+    } catch { /* 诊断输出失败也不能覆盖原首错。 */ }
+    throw error;
+  });
   expect(output).toBe('done'); await f.session.assertClosed();
   const state = await f.slot.store.read();
   expect(state?.processes).toHaveLength(1); expect(state?.processes[0]).toMatchObject({ status: 'closed', observationComplete: true });

@@ -1,12 +1,28 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, expect, test } from 'vitest';
 import { buildRepositoryCorpus } from '../src/node.js';
 import { runRepositoryContextCli } from '../src/node/cli.js';
-import { createTemporaryRepository, type TemporaryRepository } from './node-fixtures.js';
+import { createTemporaryRepository, createTestTaskScope, type TemporaryRepository } from './node-fixtures.js';
 
 const repositories: TemporaryRepository[] = [];
-afterEach(async () => Promise.all(repositories.splice(0).map((repository) => repository.cleanup())));
+const testTasks = createTestTaskScope();
+afterEach(async () => {
+  const errors = await testTasks.drain();
+  const cleanup = await Promise.allSettled(repositories.splice(0).map((repository) => repository.cleanup()));
+  for (const result of cleanup) if (result.status === 'rejected') errors.push(result.reason);
+  if (errors.length > 0) throw new AggregateError(errors, 'test task or repository cleanup failed');
+});
+
+const createBudgetRepository = async () => {
+  const repository = await createTemporaryRepository();
+  repositories.push(repository);
+  const config = JSON.parse(await readFile(repository.tsconfigPath, 'utf8')) as { compilerOptions: Record<string, unknown> };
+  // 字节预算夹具只有ES源码，显式语言库避免把DOM等宿主声明引入测量。
+  config.compilerOptions = { ...config.compilerOptions, types: [], lib: ['ES2023'] };
+  await writeFile(repository.tsconfigPath, JSON.stringify(config), 'utf8');
+  return repository;
+};
 
 const run = async (args: readonly string[]) => {
   const outputs: string[] = [];
@@ -14,9 +30,8 @@ const run = async (args: readonly string[]) => {
   return { exitCode, outputs, parsed: JSON.parse(outputs[0] ?? '{}') as Record<string, unknown> };
 };
 
-test('build CLI emits a compact summary while SDK retains the full corpus', async () => {
-  const repository = await createTemporaryRepository();
-  repositories.push(repository);
+test('build CLI emits a compact summary while SDK retains the full corpus', async () => testTasks.run(async () => {
+  const repository = await createBudgetRepository();
   await mkdir(join(repository.rootDir, 'src', 'many'), { recursive: true });
   await Promise.all(Array.from({ length: 80 }, (_, index) => writeFile(
     join(repository.rootDir, 'src', 'many', `item-${index}.ts`),
@@ -36,7 +51,7 @@ test('build CLI emits a compact summary while SDK retains the full corpus', asyn
     scopes: ['src'], languages: ['typescript'], tsconfigPath: repository.tsconfigPath,
   });
   expect(sdkResult.corpus?.entities.length).toBeGreaterThan(80);
-});
+}));
 
 test.each([
   [['unknown', '--root', 'x', '--index', 'missing'], 'INVALID_ARGUMENT'],
@@ -55,9 +70,8 @@ test('bounds invalid-argument output without echoing an oversized flag', async (
   expect(Buffer.byteLength(result.outputs[0] ?? '', 'utf8')).toBeLessThanOrEqual(2048);
   expect(result.outputs[0]).not.toContain('x'.repeat(512));
 });
-test('check CLI keeps stale diagnostics within the 2 KiB wire budget', async () => {
-  const repository = await createTemporaryRepository();
-  repositories.push(repository);
+test('check CLI keeps stale diagnostics within the 2 KiB wire budget', async () => testTasks.run(async () => {
+  const repository = await createBudgetRepository();
   await mkdir(join(repository.rootDir, 'src', 'changed'), { recursive: true });
   await Promise.all(Array.from({ length: 80 }, (_, index) => writeFile(
     join(repository.rootDir, 'src', 'changed', `file-${index}.ts`),
@@ -76,11 +90,10 @@ test('check CLI keeps stale diagnostics within the 2 KiB wire budget', async () 
   expect(checked.exitCode).toBe(1);
   expect(Buffer.byteLength(`${checked.outputs[0] ?? ''}\n`, 'utf8')).toBeLessThanOrEqual(2048);
   expect(checked.parsed).toMatchObject({ status: 'stale', corpusState: 'stale' });
-});
+}));
 
-test('首查按实际字节预算选择短文件升级，并保留小预算主要证据', async () => {
-  const repository = await createTemporaryRepository();
-  repositories.push(repository);
+test('首查按实际字节预算选择短文件升级，并保留小预算主要证据', async () => testTasks.run(async () => {
+  const repository = await createBudgetRepository();
   const primary = (name: string) => [
     `export function ${name}(input: string): string {`,
     ...Array.from({ length: 20 }, (_, index) => `  // ${name} step ${index}`),
@@ -116,4 +129,4 @@ test('首查按实际字节预算选择短文件升级，并保留小预算主�
   expect(smallEvidence.find((item) => item.path === 'src/alpha.ts')?.text).toContain('return input.trim();');
   expect(smallEvidence.find((item) => item.path === 'src/beta.ts')?.text).toContain('return input.trim();');
   expect(smallEvidence.filter((item) => item.path === 'src/context.ts' && item.complete).length).toBeLessThanOrEqual(1);
-});
+}));

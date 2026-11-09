@@ -27,6 +27,25 @@ Release workflow 在 Changesets 之前会对 canonical npm registry 执行一次
 **它确实是首次创建的新 package** 时，才进入 bootstrap。自动 workflow 成功但只是更新了
 `Version Packages` PR，也不能误判为 package 已经发布；应同时检查 registry 和 PR 状态。
 
+## Release 调度与仅验收入口
+
+Release 使用标准 `ubuntu-latest` runner、固定 Node.js `24.22.2` 和 pnpm `10.33.2`。
+根测试预算为四槽，沿用完整检查已有的流水线与共享预算；全部测试、覆盖率、真实
+tarball、浏览器边界、独立消费者、取消和资源收尾断言继续执行。运行日志记录实际
+CPU、可用并行度、内存和磁盘，性能比较还须核对 runner 镜像及依赖缓存命中状态。
+四槽与六槽覆盖率同时等待脚本完成和真实消费者安装完成，避免安装写入与短时限
+文件系统回归重叠；脚本仍可与打包重叠，安装就绪后才允许覆盖率预约测试预算。
+
+显式手动运行 Release 时，可选择 `validation-only=true`，并指定待验收的开发分支。
+此入口在相同环境执行 `pnpm check:full`、`pnpm check` 及独立 full 收据核验，
+不会进入 prerelease、Changesets、tag 或 npm publish 步骤。默认值为 `false`，
+原有 main push 稳定发布及 main 手动 next 发布路径保持原门禁。
+
+仅验收运行只证明完整检查和收据，不证明真实发布成功，也不包含 publish、tag、
+provenance 或 GitHub Release 的耗时。整条发行的十分钟目标必须以实际新版本
+发行的 workflow 创建时间至最后必需 job 完成时间核验，同时单列队列、环境准备
+和 full 墙钟；不能用阶段累计时间或仅验收结果替代。
+
 ## 仓库配置
 
 - GitHub App 只安装在 Foundation Forge 仓库，权限限定为 **Contents: Read and

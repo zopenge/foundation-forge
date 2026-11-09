@@ -1,6 +1,6 @@
 import { mkdir, unlink } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import type { ReleaseDiagnostic, ReleaseReport, RunReleaseOptions } from '../contracts.js';
+import type { ReleaseDiagnostic, ReleaseRecoveryObservation, ReleaseReport, RunReleaseOptions } from '../contracts.js';
 import type { ManagedState } from './release-context.js';
 import { hasSubsequentBoot, readRetirementHost, validRetirementHost, type RetirementHost } from './retirement-host.js';
 import { assertHistoricalSource, frozenSource, inspectManagedRecovery, observeRefsForDisposition, readManagedLocation, type ManagedLocation } from './managed-recovery.js';
@@ -16,6 +16,8 @@ import { createManagedExecution } from './managed-execution.js';
 import { recoveryCommand } from './release-commands.js';
 import { identityReader } from './process-identities.js';
 import { managedCommandIdentities } from './managed-observation.js';
+import { isUnstartedRetirementSnapshot } from './unstarted-retirement.js';
+import { assertManagedHistory } from './managed-history.js';
 
 /** 宿主 reader 是内部 OS 观测边界；公开 API 不接受调用方注入关闭/开机证明。 */
 export async function runManagedRetirement(options: RunReleaseOptions, hostReader: (signal?: AbortSignal) => Promise<RetirementHost> = readRetirementHost): Promise<ReleaseReport> {
@@ -25,7 +27,9 @@ export async function runManagedRetirement(options: RunReleaseOptions, hostReade
   let failure: ReleaseDiagnostic | undefined, retirement: ReleaseReport['retirement'], archivePath: string | undefined;
   try {
     assertActive(options.signal);
-    if (options.config !== undefined || options.command !== 'retire' || !options.runId || !/^[a-f0-9-]{36}$/u.test(options.runId)) throw new ReleaseError('ARGUMENT_INVALID');
+    if (options.config !== undefined || options.command !== 'retire' || !options.runId || !/^[a-f0-9-]{36}$/u.test(options.runId)
+      || (options.abandonUnstarted !== undefined && typeof options.abandonUnstarted !== 'boolean')
+      || (options.abandonUnstarted && options.confirmOrigin !== undefined)) throw new ReleaseError('ARGUMENT_INVALID');
     location = await readManagedLocation(options.cwd, options.configPath ?? 'release.config.json');
     const value = await readBoundedJson(location.paths.statePath), source = frozenSource(record(value).source, location);
     state = parseManagedState(value, source, location.anchor.slotId);
@@ -54,6 +58,7 @@ export async function runManagedRetirement(options: RunReleaseOptions, hostReade
       }
       if (!evidence) {
         const snapshot = await captureRetirementSnapshot(paths), snapshotSha256 = retirementDigest(snapshot);
+        if (options.abandonUnstarted && !isUnstartedRetirementSnapshot(snapshot)) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'UNSTARTED_ABANDONMENT_INELIGIBLE' });
         const originConfirmation = retirementDigest({ runId: state.runId, slotId: state.slotId, snapshotSha256, hostId: host.hostId });
         if (!state.host) {
           retirement = { status: 'confirmation-required', historicalVerification: 'unknown', originConfirmation };
@@ -67,15 +72,22 @@ export async function runManagedRetirement(options: RunReleaseOptions, hostReade
     if (selected.runId !== state.runId || selected.slotId !== state.slotId) throw new ReleaseError('SLOT_STATE', { reason: 'RETIREMENT_BINDING' });
     if (selected.host.hostId !== host.hostId || selected.host.platform !== host.platform) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'RETIREMENT_HOST_CHANGED' });
     await assertRetirementSnapshot(paths, selected, hasOldLock);
+    const unstarted = options.abandonUnstarted === true || selected.final?.cessation === 'recorded-empty-unstarted-scope';
+    if (unstarted && (selected.origin !== 'recorded-run-host' || retirementDigest(selected.host) !== retirementDigest(current.host)
+      || !isUnstartedRetirementSnapshot(selected.snapshot))) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'UNSTARTED_ABANDONMENT_INELIGIBLE' });
     const lockValue = record(JSON.parse(selected.snapshot.lock)), lockIdentity = record(lockValue.identity);
     if (lockValue.runId !== state.runId || lockValue.pid !== state.coordinator.pid || lockIdentity.pid !== state.coordinator.pid || lockIdentity.startToken !== state.coordinator.startToken
       || typeof lockValue.token !== 'string' || !/^[a-f0-9-]{36}$/u.test(lockValue.token)) throw new ReleaseError('LOCK_OWNERSHIP', { reason: 'RUN_LOCK_BINDING' });
-    const guard = async () => { assertActive(options.signal); await assertManagedPaths(paths); await assertManagementUntracked(source, execution); await assertRetirementSnapshot(paths, selected, hasOldLock); };
+    const guard = async () => {
+      assertActive(options.signal); await assertManagedPaths(paths); await assertManagementUntracked(source, execution);
+      await assertRetirementSnapshot(paths, selected, hasOldLock);
+      if (unstarted) await assertManagedHistory(paths, current);
+    };
     await guard();
     claim = await claimRetirement(paths, current, selected.snapshotSha256, lease, guard, options.signal);
     const ownedClaim = claim, writeGuard = async () => { await guard(); await ownedClaim.assertOwned(); };
     let observation = await inspectManagedRecovery(current, paths, options.signal);
-    if (selected.final || hasSubsequentBoot(selected.host, host)) {
+    if (!unstarted && (selected.final || hasSubsequentBoot(selected.host, host))) {
       // 后续开机证明原实例已结束；当前复用 PID 的新进程不属于旧运行，历史 closure 仍保持 unknown。
       observation = { ...observation, owner: 'inactive' };
     } else if (observation.owner === 'unknown') {
@@ -91,17 +103,21 @@ export async function runManagedRetirement(options: RunReleaseOptions, hostReade
       const checkpointPath = resolve(paths.slotRoot, 'retirement.json');
       if (retirementDigest(await readRetirementRecord(checkpointPath, paths)) !== retirementDigest(selected)) await writeRetirementJson(checkpointPath, selected, paths, current, writeGuard);
       retirement = { status: 'prepared', historicalVerification: 'unknown', origin: selected.origin };
-      if (!hasSubsequentBoot(selected.host, host)) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'SUBSEQUENT_BOOT_REQUIRED', baselineUptimeSeconds: selected.host.uptimeSeconds, observedUptimeSeconds: host.uptimeSeconds });
-      const refs = await observeRefsForDisposition(execution, source, observation);
+      if (!unstarted && !hasSubsequentBoot(selected.host, host)) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'SUBSEQUENT_BOOT_REQUIRED', baselineUptimeSeconds: selected.host.uptimeSeconds, observedUptimeSeconds: host.uptimeSeconds });
+      const refs: ReleaseRecoveryObservation = unstarted
+        ? { ...observation, observedAt: new Date().toISOString(), developmentRef: { sha: '', relation: 'unknown' }, releaseRef: { sha: '', relation: 'unknown' } }
+        : await observeRefsForDisposition(execution, source, observation);
       await assertHistoricalSource(source, options.signal); await writeGuard();
       await assertPathChain(paths.slotRoot, dirname(archivePath)); await mkdir(dirname(archivePath), { recursive: true });
-      evidence = sealRetirementRecord({ ...selected, final: { host, retiredAt: new Date().toISOString(), observation: refs } });
+      evidence = sealRetirementRecord({ ...selected, final: { host, retiredAt: new Date().toISOString(), observation: refs,
+        ...(unstarted ? { cessation: 'recorded-empty-unstarted-scope' } : {}) } });
       await writeRetirementJson(archivePath, evidence, paths, current, writeGuard);
       await hasFinalizedRetirement(paths, current);
     }
     await writeGuard();
     if (hasOldLock) { await unlink(paths.lockPath); hasOldLock = false; }
-    retirement = { status: 'retired', historicalVerification: 'unknown', origin: selected.origin, cessation: 'observed-subsequent-boot', archivePath };
+    retirement = { status: 'retired', historicalVerification: 'unknown', origin: selected.origin,
+      cessation: evidence.final?.cessation ?? 'observed-subsequent-boot', archivePath };
   } catch (error) { failure = diagnostic(error); }
   finally {
     try { await claim?.release(); } catch (error) { failure = diagnostic(error); }
@@ -116,6 +132,6 @@ export async function runManagedRetirement(options: RunReleaseOptions, hostReade
     ...(state ? { runId: state.runId, slotId: state.slotId, processes: { status: 'unknown' as const, knownCount: new Set(state.processes.flatMap(managedCommandIdentities).map(identity => `${identity.pid}:${identity.startToken}`)).size } } : {}),
     ...(source && location && state ? { candidateSha: source.sha, configSha256: source.configSha256, configPath: source.configPath, sourceRoot: source.root, executionRoot: location.paths.checkoutRoot,
       recovery: { candidateSha: source.sha, reportPath: reportPath ?? resolve(location.paths.slotRoot, 'retirement.json'), ...(reportExists === undefined ? {} : { reportExists }),
-        nextCommand: recoveryCommand(retirement?.status === 'retired' ? 'publish' : `retire --run-id ${state.runId}`, source) } } : {}),
+        nextCommand: recoveryCommand(retirement?.status === 'retired' ? 'publish' : `retire --run-id ${state.runId}${options.abandonUnstarted ? ' --abandon-unstarted' : ''}`, source) } } : {}),
     ...(retirement ? { retirement } : {}), ...(failure ? { error: failure } : {}) };
 }

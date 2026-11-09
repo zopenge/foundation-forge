@@ -10,9 +10,11 @@ if (mode === 'output') {
   process.exitCode = Number(args[0] ?? 0);
 } else if (mode === 'inspect') {
   process.stdout.write(JSON.stringify({ args, cwd: process.cwd(), env: process.env }));
-} else if (mode === 'bytes') {
+} else if (mode === 'bytes' || mode === 'bytes-wait') {
   process.stdout.write('你好吗');
   process.stderr.write('abcdef');
+  // 溢出终止用例保持子进程存活，避免自然退出与Provider终止争用同一个PID。
+  if (mode === 'bytes-wait') setInterval(() => {}, 1000);
 } else if (mode === 'wait') {
   setInterval(() => {}, 1000);
 } else if (mode === 'delay') {

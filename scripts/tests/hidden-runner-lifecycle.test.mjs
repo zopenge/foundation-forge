@@ -12,10 +12,7 @@ const probe = new URL('./fixtures/test-process/console-visibility.mjs', import.m
 test('hidden runners preserve file isolation and observe real exits for skipped and failed collection workers', { timeout: 45_000 }, async t => {
   const base = resolve(repositoryRoot, '.tmp/tests'); await mkdir(base, { recursive: true });
   const root = await mkdtemp(resolve(base, 'hidden-runners-'));
-  t.after(async () => {
-    const child = relative(base, root); assert.ok(child && !child.startsWith('..') && !isAbsolute(child));
-    await rm(root, { recursive: true, force: true });
-  });
+  const run = async () => {
   const model = await discoverWorkspacePackageModel({ repositoryRoot });
   const adapter = model.packages.find(value => value.manifest.dependencies?.koffi); assert.ok(adapter);
   const context = await createTestRunContext({ packages: model.packages, workers: 1 });
@@ -104,4 +101,13 @@ test('hidden runners preserve file isolation and observe real exits for skipped 
     await writeFile(resolve(context.root, 'hidden-runner-proof.json'), JSON.stringify({ observations, summary, vitestPeak: peak, vitestStarts: starts.length, heldPipeDescendant: { pid: descendant.pid, status: 'ABSENT' } }, null, 2));
     process.stdout.write(`HIDDEN_RUNNER_PROOF ${context.root}\n${JSON.stringify({ observations, summary, vitestPeak: peak, vitestStarts: starts.length, heldPipeDescendant: { pid: descendant.pid, status: 'ABSENT' } })}\n`);
   } finally { await context.finalize(); }
+  };
+  const work = run();
+  t.after(async () => {
+    // Node测试超时不会终止异步body；先等原signal取消和Job排空，再回收夹具。
+    await Promise.allSettled([work]);
+    const child = relative(base, root); assert.ok(child && !child.startsWith('..') && !isAbsolute(child));
+    await rm(root, { recursive: true, force: true });
+  });
+  await work;
 });
