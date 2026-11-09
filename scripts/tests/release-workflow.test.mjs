@@ -247,7 +247,11 @@ test('preserves push and manual release routes without approval or retry workaro
   const validation = releaseSteps(workflow).find(step => step.name === 'Validate release without publishing');
   assert.equal(validation.if, "github.event_name == 'workflow_dispatch' && inputs.validation-only");
   assert.match(validation.run, /^pnpm check:full\npnpm check\n/u);
-  assert.match(validation.run, /assertFullCheckReceipt/u);
+  // 三个入口必须共用pnpm lifecycle；exec的PATH不同，不能复用run产生的严格环境收据。
+  assert.equal(validation.run.trim(), 'pnpm check:full\npnpm check\npnpm run check:receipt');
+  const manifest = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
+  assert.equal(manifest.scripts['check:receipt'],
+    'node --input-type=module -e "import { assertFullCheckReceipt } from \'./scripts/check-release-gate.mjs\'; await assertFullCheckReceipt(process.cwd());"');
   assert.doesNotMatch(source, /reopen|close.*pull request|skip ci|skip-ci|sleep|auto-approve/iu);
 });
 

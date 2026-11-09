@@ -54,7 +54,7 @@ jobs:
         run: |
           pnpm check:full
           pnpm check
-          pnpm exec node --input-type=module -e 'import { assertFullCheckReceipt } from "./scripts/check-release-gate.mjs"; await assertFullCheckReceipt(process.cwd());'
+          pnpm run check:receipt
       - if: github.event_name == 'workflow_dispatch' && !inputs.validation-only
         run: node ./scripts/verify-prerelease-versions.mjs
       - if: github.event_name == 'workflow_dispatch' && !inputs.validation-only
