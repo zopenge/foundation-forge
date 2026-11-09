@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, expect, test } from 'vitest';
+import { afterEach, expect, onTestFailed, test } from 'vitest';
 import { runSourceSnapshotCli } from '../src/node.js';
 import { addCommittedFile, addFixtureSubmodule, createRepository, runGit } from './node-fixtures.js';
 
@@ -20,17 +20,27 @@ const makeConfig = async () => {
 };
 const runtime = (cwd: string) => { const stdout:string[]=[]; const stderr:string[]=[]; return { stdout, stderr, context:{ cwd, now:()=>now, stdout:(value:string)=>stdout.push(value), stderr:(value:string)=>stderr.push(value) } }; };
 test('CLI plan/export/verify/status/prune-preview workflow emits metadata only', async () => {
+  const started = performance.now(), phases: { phase: string; elapsedMs: number }[] = [];
+  const mark = (phase: string) => { phases.push({ phase, elapsedMs: Math.round(performance.now() - started) }); };
+  // 阶段记录不包含来源、配置或输出正文，成功路径不执行额外 I/O。
+  onTestFailed(() => { process.stderr.write(`${JSON.stringify({ kind: 'SOURCE_SNAPSHOT_CLI_WORKFLOW', elapsedMs: Math.round(performance.now() - started), phases })}\n`); });
+  mark('fixture:start');
   const fixture = await makeConfig();
+  mark('fixture:finished');
   for (const command of ['plan','export','verify','status']) {
     const rt = runtime(fixture.base);
+    mark(`${command}:start`);
     const outcome = await runSourceSnapshotCli([command,'--config',fixture.configPath,'--json'], rt.context);
+    mark(`${command}:finished`);
     expect(outcome.exitCode).toBe(0);
     const output = rt.stdout.join('');
     expect(output).not.toContain('TOP_SECRET_SOURCE_MARKER');
     expect(rt.stderr).toEqual([]);
   }
   const preview = runtime(fixture.base);
+  mark('prune:start');
   expect((await runSourceSnapshotCli(['prune','--config',fixture.configPath,'--dry-run','--json'], preview.context)).exitCode).toBe(0);
+  mark('prune:finished');
   expect(JSON.parse(preview.stdout.join('')).status).toBe('PRUNE_PREVIEW');
 });
 
