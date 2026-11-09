@@ -34,12 +34,16 @@ export const runFullCheck = async ({ run = runPnpmScript, verify = verifyLocalPa
   const lateLint = testWorkerLimit() >= 4;
   const overlapConsumers = testWorkerLimit() === 8 && coverage !== false;
   const activeSignal = signal ? globalThis.AbortSignal.any([signal, cancellation.signal]) : cancellation.signal;
+  const consumerReadiness = Promise.withResolvers();
+  // 安装失败或取消也会拒绝门闩；未启用coverage时仍接收该拒绝。
+  void consumerReadiness.promise.catch(() => {});
   let stopping, pipelined = false, consumerReady = false, scriptCompletion = Promise.resolve();
   const fail = error => {
     // 内部取消的派生拒绝已由首错记录；undefined首错也不能被默认AbortError替换。
     if (cancellation.signal.aborted && error === cancellation.signal.reason) return;
     if (!failures.includes(error)) failures.push(error);
     cancellation.abort(error);
+    consumerReadiness.reject(error);
     if (!stopping) {
       try { testRun?.budget.stop(error); } catch (cleanup) { if (!failures.includes(cleanup)) failures.push(cleanup); }
       stopping = Promise.resolve().then(() => testRun?.cancel?.(error)).catch(cleanup => {
@@ -52,6 +56,8 @@ export const runFullCheck = async ({ run = runPnpmScript, verify = verifyLocalPa
     // 主体首败先触发取消，避免清理门闩等到整套覆盖率自然结束。
     if (hasFailure) fail(error);
     else if (activeSignal.aborted && failures.length === 0) fail(activeSignal.reason);
+    // verify在返回前等待本回调，必须先拒绝缺失ready，才能排空等待安装的coverage。
+    else if (pipelined && coverage !== false && !consumerReady && failures.length === 0) fail(new Error('CONSUMER_READY_REQUIRED'));
     await Promise.allSettled(background);
     await stopping;
   };
@@ -78,6 +84,8 @@ export const runFullCheck = async ({ run = runPnpmScript, verify = verifyLocalPa
       });
       if (coverage !== false && !overlapConsumers) start(async () => {
         await scripts;
+        // pnpm安装会大量写文件；避免与仍受原短时限约束的真实文件系统回归重叠。
+        await consumerReadiness.promise;
         await timed('test:coverage', () => coverage({ packages: workspace.packages, context: testRun }));
       });
     }
@@ -96,10 +104,11 @@ export const runFullCheck = async ({ run = runPnpmScript, verify = verifyLocalPa
   };
   const onConsumerReady = () => {
     activeSignal.throwIfAborted();
-    if (!overlapConsumers) return;
     if (!built || !testRun) throw new Error('CONSUMER_READY_BEFORE_BUILD');
     if (consumerReady) throw new Error('CONSUMER_READY_DUPLICATE');
     consumerReady = true;
+    consumerReadiness.resolve();
+    if (!overlapConsumers) return;
     // 原生脚本启动也会读取大量元数据；八槽模式先独占完成消费者安装。
     startBuiltChecks();
     // 安装和脚本完成后才让六槽覆盖率与一个消费者重叠，余量仍受同一根审计。
@@ -117,7 +126,7 @@ export const runFullCheck = async ({ run = runPnpmScript, verify = verifyLocalPa
       onBuilt, onConsumerReady, onBeforeCleanup, serialConsumerChecks: overlapConsumers, signal: activeSignal,
     }));
     if (!built) throw new Error('package build did not complete');
-    if (overlapConsumers && !consumerReady) throw new Error('CONSUMER_READY_REQUIRED');
+    if (pipelined && coverage !== false && !consumerReady) throw new Error('CONSUMER_READY_REQUIRED');
     if (!pipelined) {
       await timed('typecheck:built', () => run('typecheck:built', { signal: activeSignal }));
       await timed('packages:check-cycles:built', () => run('packages:check-cycles:built', { signal: activeSignal }));

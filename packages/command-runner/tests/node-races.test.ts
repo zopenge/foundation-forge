@@ -41,6 +41,34 @@ it('reports capture overflow from buffered output delivered after process exit',
   expect(terminateProcessTree).not.toHaveBeenCalled();
 });
 
+it('preserves provider failure when termination is in progress and natural exit follows overflow', async () => {
+  const { child, runner, terminateProcessTree } = controlled();
+  let enter!: () => void, rejectProvider!: (reason: unknown) => void;
+  const entered = new Promise<void>(resolve => { enter = resolve; });
+  const provider = new Promise<never>((_resolve, reject) => { rejectProvider = reject; });
+  void provider.catch(() => {});
+  const cause = Object.assign(new Error('controlled process already exited'), { code: 'ESRCH' });
+  terminateProcessTree.mockImplementation(() => { enter(); return provider; });
+  const running = runner.start({ command: 'controlled', output: { mode: 'capture', maxBytesPerStream: 2, overflow: 'fail' } });
+  try {
+    child.emit('spawn'); await running.identity;
+    child.stdout?.emit('data', new Uint8Array([1, 2, 3]));
+    expect(await Promise.race([entered.then(() => true), running.result.then(() => false)])).toBe(true);
+    child.emit('exit', 0, null); child.emit('close', 0, null);
+    rejectProvider(cause);
+    const result = await running.result;
+    expect(result.terminationReason).toBe('termination-failure');
+    expect(result.stdout).toEqual(new Uint8Array([1, 2]));
+    expect(result.stdoutTruncated).toBe(true);
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: 'COMMAND_OUTPUT_OVERFLOW' }));
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: 'COMMAND_TERMINATION_FAILED', details: { stage: 'provider' }, cause }));
+    expect(terminateProcessTree).toHaveBeenCalledOnce();
+  } finally {
+    rejectProvider(cause); child.emit('exit', 0, null); child.emit('close', 0, null);
+    await running.result;
+  }
+});
+
 it('settles before a late identity response and removes timers and process listeners', async () => {
   vi.useFakeTimers();
   let resolveLookup!: (value: readonly ProcessDescriptor[]) => void;

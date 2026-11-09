@@ -14,13 +14,17 @@ import * as gitBoundary from '../src/node/git.js';
 import { Execution } from '../src/node/execution.js';
 import { createManagedSession } from '../src/node/managed-process.js';
 import { openManagedSlot } from '../src/node/managed-paths.js';
-import type { ReleaseTransport } from '../src/contracts.js';
+import type { ReleaseReport, ReleaseTransport } from '../src/contracts.js';
+import * as recoveryBoundary from '../src/node/managed-recovery.js';
 import { currentCoordinator } from '../src/node/process-identities.js';
+import * as processBoundary from '../src/node/process-identities.js';
 import { ReleaseError } from '../src/node/errors.js';
 
 vi.mock('node:fs/promises', async importOriginal => ({ ...await importOriginal<typeof filesystem>() }));
 vi.mock('../src/node/source.js', async importOriginal => ({ ...await importOriginal<typeof sourceBoundary>() }));
 vi.mock('../src/node/git.js', async importOriginal => ({ ...await importOriginal<typeof gitBoundary>() }));
+vi.mock('../src/node/managed-recovery.js', async importOriginal => ({ ...await importOriginal<typeof recoveryBoundary>() }));
+vi.mock('../src/node/process-identities.js', async importOriginal => ({ ...await importOriginal<typeof processBoundary>() }));
 
 const fixtures: Awaited<ReturnType<typeof managedSessionFixture>>[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const f of fixtures.splice(0)) await f.dispose(); });
@@ -85,6 +89,117 @@ const fixture = async ({ maxBytes = 2 ** 31 } = {}) => {
     advanceRemote: () => { refs.dev = successor; }, execution: new Execution(f.cwd, f.config, undefined, []),
     setHost: (value: RetirementHost) => { host = value; }, getHost: () => host };
 };
+const unstartedFixture = async () => {
+  const f = await fixture(), commandId = f.state.processes[0]?.id;
+  if (!commandId) throw Error('fixture command missing');
+  const observedAt = new Date().toISOString();
+  Object.assign(f.state, { stage: 'checkout', status: 'unknown' });
+  // 合成原历史协议输入；真实文件/lease/当前PID观察继续执行，但不声称这份empty是OS探针所得。
+  f.state.processes[0] = { id: commandId, name: 'git', status: 'unknown', observationComplete: false, descendants: [],
+    closure: { observedAt, exitCode: null, termination: 'termination-failure', requestedTermination: 'abort',
+      ownedScope: { scopeId: randomUUID(), binding: `${f.state.runId}:${commandId}:${randomUUID()}`, observedAt,
+        status: 'unknown', reason: 'provider-failed', empty: true } } };
+  const original = JSON.stringify(f.state);
+  await writeFile(f.statePath, original);
+  const anchorPath = resolve(f.cwd, '.tmp/forge-vercel-release/managed.json');
+  const anchor = JSON.parse(await readFile(anchorPath, 'utf8'));
+  anchor.latestPublish = { sha: f.sha, runId: f.state.runId, configSha256: f.source.configSha256 };
+  await writeFile(anchorPath, JSON.stringify(anchor));
+  const report: ReleaseReport = { schemaVersion: 2, command: 'publish', ok: false, startedAt: observedAt, finishedAt: observedAt,
+    runId: f.state.runId, slotId: f.state.slotId, sourceRoot: f.cwd, executionRoot: resolve(f.slot, 'checkout'),
+    candidateSha: f.sha, configSha256: f.source.configSha256, configPath: f.source.configPath, stage: 'checkout',
+    effects: { ...f.state.effects }, steps: [], processes: { status: 'unknown', knownCount: 0 },
+    error: { code: 'PROCESS_STATE_UNKNOWN', details: { reason: 'CLOSURE_UNPROVEN', commandId, step: 'git',
+      identified: false, termination: 'termination-failure', exitCode: null, scopeReason: 'provider-failed', empty: true,
+      diagnostics: [{ code: 'COMMAND_SCOPE_FAILED', stage: 'provider' }, { code: 'COMMAND_SCOPE_UNKNOWN' }] } } };
+  const receiptPath = resolve(f.slot, 'latest-publish.json');
+  const receipt = JSON.stringify({ schemaVersion: 2, slotId: f.state.slotId, source: f.source, report });
+  await writeFile(receiptPath, receipt);
+  const abandon = () => runManagedRetirement({ ...f.options, abandonUnstarted: true }, () => Promise.resolve(f.getHost()));
+  return { ...f, original, receiptPath, receipt, abandon };
+};
+
+it.runIf(process.platform === 'win32')('explicitly abandons an unbound first-Git failure through the public SDK without rewriting UNKNOWN or claiming a reboot', async () => {
+  const f = await unstartedFixture();
+  const result = await runRelease({ ...f.options, abandonUnstarted: true });
+  expect(result, JSON.stringify(result.error)).toMatchObject({ ok: true, command: 'retire', processes: { status: 'unknown', knownCount: 0 },
+    retirement: { status: 'retired', historicalVerification: 'unknown', origin: 'recorded-run-host', cessation: 'recorded-empty-unstarted-scope' } });
+  expect(await readFile(f.statePath, 'utf8')).toBe(f.original);
+  expect(await readFile(f.receiptPath, 'utf8')).toBe(f.receipt);
+  await expect(readFile(resolve(f.slot, 'run.lock'))).rejects.toMatchObject({ code: 'ENOENT' });
+  const archive = JSON.parse(await readFile(result.retirement?.archivePath ?? '', 'utf8'));
+  expect(archive.snapshot.state).toBe(f.original); expect(archive.snapshot.publish).toBe(f.receipt);
+  expect(archive.final.cessation).toBe('recorded-empty-unstarted-scope');
+  expect(f.refs).toEqual({ dev: f.initial, main: f.initial });
+  const next = await openManagedSlot(f.source, f.execution);
+  expect(next.slotId).toBe(f.state.slotId); expect(next.runId).not.toBe(f.state.runId); await next.lock.release();
+});
+it.runIf(process.platform === 'win32')('keeps ordinary retirement gated and can reuse its exact prepared snapshot only after explicit abandonment', async () => {
+  const f = await unstartedFixture();
+  expect(await f.run()).toMatchObject({ ok: false, error: { details: { reason: 'SUBSEQUENT_BOOT_REQUIRED' } } });
+  const checkpoint = await readFile(resolve(f.slot, 'retirement.json'), 'utf8');
+  expect(await f.abandon()).toMatchObject({ ok: true, retirement: { cessation: 'recorded-empty-unstarted-scope' } });
+  expect(await readFile(resolve(f.slot, 'retirement.json'), 'utf8')).toBe(checkpoint);
+  expect(await readFile(f.statePath, 'utf8')).toBe(f.original); expect(await readFile(f.receiptPath, 'utf8')).toBe(f.receipt);
+});
+it.runIf(process.platform === 'win32')('rechecks owner after abandonment archive persistence and retries exact lock release without changing the archive', async () => {
+  const f = await unstartedFixture(), realUnlink = filesystem.unlink;
+  let fail = true;
+  vi.spyOn(filesystem, 'unlink').mockImplementation(async path => {
+    if (fail && path === resolve(f.slot, 'run.lock')) throw Object.assign(Error('fixture lock release failed'), { code: 'EACCES' });
+    return realUnlink(path);
+  });
+  expect(await f.abandon()).toMatchObject({ ok: false });
+  const archivePath = resolve(f.slot, 'retired', `${f.state.runId}.json`), archive = await readFile(archivePath, 'utf8');
+  const observation = vi.spyOn(recoveryBoundary, 'inspectManagedRecovery').mockResolvedValue({ owner: 'active', processes: 'unknown', knownCount: 0 });
+  fail = false;
+  expect(await f.abandon()).toMatchObject({ ok: false, error: { details: { reason: 'OWNER_NOT_INACTIVE' } } });
+  expect(await readFile(resolve(f.slot, 'run.lock'), 'utf8')).toBe(f.lock);
+  observation.mockRestore();
+  expect(await f.abandon()).toMatchObject({ ok: true, retirement: { cessation: 'recorded-empty-unstarted-scope' } });
+  expect(await f.run()).toMatchObject({ ok: true, retirement: { cessation: 'recorded-empty-unstarted-scope' } });
+  expect(await readFile(archivePath, 'utf8')).toBe(archive);
+  expect(await readFile(f.statePath, 'utf8')).toBe(f.original); expect(await readFile(f.receiptPath, 'utf8')).toBe(f.receipt);
+});
+it.runIf(process.platform === 'win32')('rejects abandonment when the original snapshot changed after preparation', async () => {
+  const f = await unstartedFixture(); await f.run();
+  await writeFile(f.statePath, f.original + ' ');
+  expect(await f.abandon()).toMatchObject({ ok: false, error: { details: { reason: 'RETIREMENT_INPUT_CHANGED' } } });
+  expect(await readFile(resolve(f.slot, 'run.lock'), 'utf8')).toBe(f.lock);
+});
+it('does not turn a missing startup proof into retirement merely because the operator explicitly requests abandonment', async () => {
+  const f = await fixture();
+  expect(await runRelease({ ...f.options, abandonUnstarted: true }))
+    .toMatchObject({ ok: false, error: { details: { reason: 'UNSTARTED_ABANDONMENT_INELIGIBLE' } } });
+  expect(await readFile(f.statePath, 'utf8')).toBe(f.original); expect(await readFile(resolve(f.slot, 'run.lock'), 'utf8')).toBe(f.lock);
+  await expect(readFile(resolve(f.slot, 'retirement.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+});
+it.runIf(process.platform === 'win32')('refuses abandonment when the original coordinator identity cannot be observed', async () => {
+  const f = await unstartedFixture();
+  vi.spyOn(recoveryBoundary, 'inspectManagedRecovery').mockResolvedValue({ owner: 'unknown', processes: 'unknown', knownCount: 0 });
+  vi.spyOn(processBoundary, 'identityReader').mockReturnValue({ readIdentity: async () => { throw Error('fixture reader unavailable'); } });
+  expect(await f.abandon()).toMatchObject({ ok: false, error: { details: { reason: 'OWNER_NOT_INACTIVE', owner: 'unknown' } } });
+  expect(await readFile(resolve(f.slot, 'run.lock'), 'utf8')).toBe(f.lock);
+  await expect(readFile(resolve(f.slot, 'retirement.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+});
+it.runIf(process.platform === 'win32').each(['archive-write', 'cancel-after-archive'] as const)('preserves original evidence and lock across an interrupted explicit retirement: %s', async fault => {
+  const f = await unstartedFixture(), controller = new AbortController(), realRename = filesystem.rename;
+  const archivePath = resolve(f.slot, 'retired', `${f.state.runId}.json`);
+  const injected = vi.spyOn(filesystem, 'rename').mockImplementation(async (from, to) => {
+    if (to === archivePath && fault === 'archive-write') throw Object.assign(Error('fixture archive failure'), { code: 'EACCES' });
+    await realRename(from, to);
+    if (to === archivePath && fault === 'cancel-after-archive') controller.abort();
+  });
+  const result = await runManagedRetirement({ ...f.options, abandonUnstarted: true, signal: controller.signal }, () => Promise.resolve(f.getHost()));
+  expect(result.ok).toBe(false);
+  if (fault === 'cancel-after-archive') expect(result.error?.code).toBe('CANCELLED');
+  else await expect(readFile(archivePath)).rejects.toMatchObject({ code: 'ENOENT' });
+  expect(result.recovery?.nextCommand).toContain('--abandon-unstarted');
+  expect(await readFile(resolve(f.slot, 'run.lock'), 'utf8')).toBe(f.lock);
+  expect(await readFile(f.statePath, 'utf8')).toBe(f.original); expect(await readFile(f.receiptPath, 'utf8')).toBe(f.receipt);
+  injected.mockRestore();
+  expect(await f.abandon()).toMatchObject({ ok: true, retirement: { cessation: 'recorded-empty-unstarted-scope' } });
+});
 it('requires a subsequent boot for the current protocol and preserves unknown history after retirement', async () => {
   const f = await fixture();
   const first = await f.run();

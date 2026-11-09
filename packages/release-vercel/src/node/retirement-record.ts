@@ -6,6 +6,7 @@ import type { FileIdentity, ManagedPaths, ManagedState } from './release-context
 import { assertPathChain, fileIdentity, measureManagedUsage, readBoundedJson, readBoundedText, sameIdentity } from './managed-io.js';
 import { record, ReleaseError } from './errors.js';
 import { hasSubsequentBoot, validRetirementHost, type RetirementHost } from './retirement-host.js';
+import { isUnstartedRetirementSnapshot } from './unstarted-retirement.js';
 
 export interface RetirementSnapshot {
   readonly state: string; readonly lock: string; readonly anchor: string; readonly owner: string;
@@ -19,7 +20,8 @@ export interface RetirementRecord {
   readonly origin: 'operator-confirmed-origin' | 'recorded-run-host';
   readonly host: RetirementHost; readonly preparedAt: string;
   readonly checksum: string;
-  readonly final?: { readonly host: RetirementHost; readonly retiredAt: string; readonly observation: ReleaseRecoveryObservation };
+  readonly final?: { readonly host: RetirementHost; readonly retiredAt: string; readonly observation: ReleaseRecoveryObservation;
+    readonly cessation?: 'recorded-empty-unstarted-scope' };
 }
 export const retirementDigest = (value: unknown) => createHash('sha256').update(JSON.stringify(value) ?? 'undefined').digest('hex');
 export const sealRetirementRecord = (value: Omit<RetirementRecord, 'checksum'>): RetirementRecord => ({ ...value, checksum: retirementDigest({ ...value, checksum: undefined }) });
@@ -47,13 +49,25 @@ export function parseRetirementRecord(value: unknown): RetirementRecord {
     || !['state', 'lock', 'anchor', 'owner'].every(key => typeof snapshot[key] === 'string' && sameIdentity(record(identities[key]), record(identities[key])))
     || !['check', 'publish'].every(key => snapshot[key] === null || typeof snapshot[key] === 'string')
     || item.snapshotSha256 !== retirementDigest(snapshot)) throw new ReleaseError('SLOT_STATE', { reason: 'RETIREMENT_RECORD' });
-  if (final && (!validRetirementHost(final.host) || !hasSubsequentBoot(item.host, final.host)
+  const evidence = value as RetirementRecord;
+  const unstarted = final?.cessation === 'recorded-empty-unstarted-scope';
+  let cessation = false;
+  if (final && validRetirementHost(final.host)) {
+    if (final.cessation === undefined) cessation = hasSubsequentBoot(evidence.host, final.host);
+    else if (unstarted && evidence.origin === 'recorded-run-host' && isUnstartedRetirementSnapshot(evidence.snapshot)) {
+      const original = record(JSON.parse(evidence.snapshot.state));
+      cessation = original.runId === evidence.runId && original.slotId === evidence.slotId
+        && retirementDigest(original.host) === retirementDigest(evidence.host)
+        && final.host.hostId === evidence.host.hostId && final.host.platform === evidence.host.platform;
+    }
+  }
+  if (final && (!cessation
     || typeof final.retiredAt !== 'string' || !Number.isFinite(Date.parse(final.retiredAt))
     || record(final.observation).owner !== 'inactive' || !['closed', 'unknown'].includes(String(record(final.observation).processes))
     || !['developmentRef', 'releaseRef'].every(key => ['candidate', 'before', 'superseded', 'diverged', 'unknown'].includes(String(record(record(final.observation)[key]).relation))))) {
     throw new ReleaseError('SLOT_STATE', { reason: 'RETIREMENT_CESSATION' });
   }
-  return value as RetirementRecord;
+  return evidence;
 }
 export async function readRetirementRecord(path: string, paths: ManagedPaths): Promise<RetirementRecord | undefined> {
   await assertPathChain(paths.slotRoot, path);

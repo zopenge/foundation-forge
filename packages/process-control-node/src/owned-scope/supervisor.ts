@@ -25,6 +25,11 @@ export function startSupervisor(input: OwnedProcessLaunchRequest, platform: 'win
   const request = Object.freeze({ ...input, args: Object.freeze([...(input.args ?? [])]), environment: Object.freeze({ ...input.environment }) });
   const key: ScopeKey = { scopeId: randomUUID(), binding: request.binding, nonce: randomUUID() };
   const root = deferred<number>(), completion = deferred<OwnedProcessCompletion>(), boot = deferred<undefined>(), closed = deferred<undefined>();
+  let startupFailure: { error: unknown } | undefined;
+  const rejectBoot = (error: unknown) => {
+    startupFailure ??= { error };
+    boot.reject(error);
+  };
   const pending = new Map<number, { resolve: (value: Record<string, unknown>) => void; reject: (error: unknown) => void; timer: ReturnType<typeof setTimeout> }>();
   let child: ChildProcess | undefined, backend: ScopeBackend | undefined, identity: ProcessIdentity | undefined;
   let outgoing = 0, incoming = 0, requestId = 0, bound = false, authorized = false, rootExited = false, done = false;
@@ -58,7 +63,7 @@ export function startSupervisor(input: OwnedProcessLaunchRequest, platform: 'win
     assertRootInstance: pid => {
       if (!child || child.pid !== pid || child.exitCode !== null || child.signalCode !== null || rootExited || !child.connected) throw scopeError('ROOT_INSTANCE');
     } };
-  const startup = setTimeout(() => { startupController.abort(); boot.reject(scopeError('BOOT_DEADLINE')); void finish('provider-failed'); }, request.startupTimeoutMs);
+  const startup = setTimeout(() => { startupController.abort(); rejectBoot(scopeError('BOOT_DEADLINE')); void finish('provider-failed'); }, request.startupTimeoutMs);
   const waitClose = async () => {
     if (!child || rootExited) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -84,7 +89,7 @@ export function startSupervisor(input: OwnedProcessLaunchRequest, platform: 'win
     finishing = (async () => {
       let empty: boolean | undefined;
       clearTimeout(startup);
-      if (reason !== 'normal') { startupController.abort(); boot.reject(scopeError('STOPPED')); }
+      if (reason !== 'normal') { startupController.abort(); rejectBoot(scopeError('STOPPED')); }
       try {
         await initialization;
         if (reason === 'normal') {
@@ -145,17 +150,20 @@ export function startSupervisor(input: OwnedProcessLaunchRequest, platform: 'win
           directExit = { exitCode: typeof value.exitCode === 'number' ? value.exitCode : null, signal: typeof value.signal === 'string' ? value.signal : null };
           void finish('normal');
         } else throw scopeError('UNEXPECTED_MESSAGE');
-      } catch { boot.reject(scopeError('PROTOCOL')); void finish('provider-failed'); }
+      } catch { rejectBoot(scopeError('PROTOCOL')); void finish('provider-failed'); }
     });
-    child.once('error', () => { boot.reject(scopeError('HELPER_START')); root.reject(scopeError('HELPER_START')); void finish('provider-failed'); });
-    child.once('close', (code, signal) => { helperExit = { code, signal }; rootExited = true; closed.resolve(undefined); if (!finishing) { boot.reject(scopeError('OWNER_LOST')); void finish('owner-lost'); } });
+    child.once('error', () => { rejectBoot(scopeError('HELPER_START')); root.reject(startupFailure?.error); void finish('provider-failed'); });
+    child.once('close', (code, signal) => { helperExit = { code, signal }; rootExited = true; closed.resolve(undefined); if (!finishing) { rejectBoot(scopeError('OWNER_LOST')); void finish('owner-lost'); } });
     await new Promise<void>((resolve, reject) => { child?.once('spawn', resolve); child?.once('error', reject); });
     if (child.pid === undefined) throw scopeError('MISSING_ROOT_PID');
     await backend.attach(child.pid); await boot.promise;
     if (finishing) throw scopeError('STOPPED');
     clearTimeout(startup);
     root.resolve(child.pid);
-  })().catch(error => { boot.reject(error); root.reject(error); void finish('provider-failed'); });
+  })().catch(error => {
+    // 保持原结算时机；晚到初始化的STOPPED不能覆盖最先发生的启动失败。
+    rejectBoot(error); root.reject(startupFailure?.error); void finish('provider-failed');
+  });
   return {
     scopeId: key.scopeId, rootPid: root.promise, completion: completion.promise,
     bind: async (value, signal) => {

@@ -5,6 +5,11 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      validation-only:
+        description: Run full validation without publishing or changing tags
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -13,9 +18,11 @@ permissions:
 
 jobs:
   release:
-    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' || github.ref == 'refs/heads/main' || inputs.validation-only
     runs-on: ubuntu-latest
     environment: npm
+    env:
+      FORGE_CHECK_TEST_WORKERS: '4'
     steps:
       - uses: actions/checkout@v6
         with:
@@ -25,18 +32,34 @@ jobs:
           version: 10.33.2
       - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: '24.22.2'
           cache: pnpm
+      - name: Record runner resources
+        run: |
+          node --input-type=module -e '
+            import { availableParallelism, cpus, freemem, totalmem } from "node:os";
+            import { statfsSync } from "node:fs";
+            const disk = statfsSync(".", { bigint: true });
+            console.log(JSON.stringify({ node: process.version, cpus: cpus().length,
+              availableParallelism: availableParallelism(), totalMemory: totalmem(), freeMemory: freemem(),
+              freeDisk: String(disk.bavail * disk.bsize), workers: process.env.FORGE_CHECK_TEST_WORKERS }));
+          '
       - run: npm install --global npm@12.0.2
       - run: pnpm install --frozen-lockfile
       - if: github.event_name == 'push'
         continue-on-error: true
         run: node ./scripts/report-first-publish.mjs
-      - if: github.event_name == 'workflow_dispatch'
+      - name: Validate release without publishing
+        if: github.event_name == 'workflow_dispatch' && inputs.validation-only
+        run: |
+          pnpm check:full
+          pnpm check
+          pnpm exec node --input-type=module -e 'import { assertFullCheckReceipt } from "./scripts/check-release-gate.mjs"; await assertFullCheckReceipt(process.cwd());'
+      - if: github.event_name == 'workflow_dispatch' && !inputs.validation-only
         run: node ./scripts/verify-prerelease-versions.mjs
-      - if: github.event_name == 'workflow_dispatch'
+      - if: github.event_name == 'workflow_dispatch' && !inputs.validation-only
         run: pnpm release:next
-      - if: github.event_name == 'workflow_dispatch'
+      - if: github.event_name == 'workflow_dispatch' && !inputs.validation-only
         run: git push origin --tags
       - name: Validate release App configuration
         id: validate-release-app

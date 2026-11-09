@@ -1,8 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { basename, resolve } from 'node:path';
-import { getSystemErrorMap } from 'node:util';
-import { commandErrorCodes, type CommandObserver, type CommandResult, type CommandRunner, type CommandSpec, type RunningCommand } from '@openge/forge-command-runner';
-import { processControlErrorCodes } from '@openge/forge-process-control';
+import type { CommandObserver, CommandResult, CommandRunner, CommandSpec, RunningCommand } from '@openge/forge-command-runner';
 import type { ExecutionLifecycle, ManagedCommand, ManagedSession, ManagedSlot, ManagedState } from './release-context.js';
 import type { ReleaseStep } from '../contracts.js';
 import { record, ReleaseError } from './errors.js';
@@ -21,17 +19,17 @@ import { assertManagedHistory, captureManagedHistory } from './managed-history.j
 import { versionAliasBuildEnvironment, versionAliasCandidateEnvironment } from './version-alias.js';
 import { protectedCompletionEnvironment } from './completion-state.js';
 import { assertCompletionInput } from './completion-input.js';
+import { isKnownProcessFailureCode, summarizeProcessFailure } from './managed-process-diagnostics.js';
 
-const knownCauseCodes = new Set<string>([...getSystemErrorMap().values()].map(([code]) => code)
-  .concat(Object.values(commandErrorCodes), Object.values(processControlErrorCodes)));
 function lifecycleError(error: unknown, reason: string, step: string, phase?: string): ReleaseError {
   if (error instanceof ReleaseError) return error;
   const value = record(error), code = value.code;
-  const known = typeof code === 'string' && knownCauseCodes.has(code);
+  const known = isKnownProcessFailureCode(code), failure = summarizeProcessFailure(error);
   // 只保留固定操作名和元数据文件名，帮助定位失败边界，不暴露消息、完整路径或参数。
   const syscall = typeof value.syscall === 'string' && ['open', 'read', 'write', 'rename', 'unlink', 'lstat', 'stat', 'statfs', 'mkdir', 'scandir'].includes(value.syscall) ? value.syscall : undefined;
   const file = typeof value.path === 'string' ? basename(value.path) : undefined;
   return new ReleaseError('PROCESS_STATE_UNKNOWN', { reason, step,
+    ...(Object.keys(failure).length ? { failure } : {}),
     ...(known ? { causeCode: code, ...(phase ? { causePhase: phase } : {}), ...(syscall ? { causeSyscall: syscall } : {}),
       ...(file && ['state.json', '.state.json.next', 'terminal.json', '.terminal.json.next'].includes(file) ? { causeFile: file } : {}) } : {}) });
 }
@@ -180,7 +178,7 @@ class ManagedProcess implements ExecutionLifecycle {
         if (!hasVerifiedManagedStop(command)) throw new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'CLOSURE_UNPROVEN', commandId: command.id, step: name,
           termination: result.terminationReason, exitCode: result.exitCode, identified: !!command.identity,
           ...(result.ownedScope ? { scopeReason: result.ownedScope.reason, empty: result.ownedScope.empty } : {}),
-          diagnostics: result.diagnostics.map(item => ({ code: item.code, stage: item.details.stage })) });
+          diagnostics: result.diagnostics.map(item => summarizeProcessFailure(item)) });
         // runner 的原始分类保存在回执；已验证受控停止时，执行结果仍保留取消/超时的原意。
         return command.status === 'stopped' && requestedTermination ? { ...result, terminationReason: requestedTermination } : result;
       } catch (error) {
