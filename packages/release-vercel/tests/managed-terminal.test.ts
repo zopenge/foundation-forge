@@ -114,7 +114,8 @@ it('reports controlled cancellation as cancelled and retains the exact stopped s
   expect((await readFile(marker)).length).toBe(bytes);
 });
 
-async function assertQueuedScopeCancellation(mode: 'external' | 'budget') {
+async function assertQueuedScopeCancellation(mode: 'external' | 'budget' | 'timeout' | 'timeout-during-journal') {
+  const timeout = mode === 'timeout' || mode === 'timeout-during-journal';
   const f = await fixture(), marker = resolve(f.slot.paths.checkoutRoot, 'must-not-start'), controller = new AbortController();
   let releaseWrite: () => void = () => {}, enteredWrite: () => void = () => {}, receivedScope: () => void = () => {};
   let enteredSample: () => void = () => {}, failSample: () => void = () => {}, requestedStop: () => void = () => {};
@@ -136,14 +137,15 @@ async function assertQueuedScopeCancellation(mode: 'external' | 'budget') {
   let scope: Extract<CommandEvent, { type: 'scope-ready' }> | undefined, timer: ReturnType<typeof setTimeout> | undefined;
   const write = f.slot.store.writeState.bind(f.slot.store);
   vi.spyOn(f.slot.store, 'writeState').mockImplementation(async (...args) => {
-    if (args[0].processes.at(-1)?.status === 'spawned') { enteredWrite(); await writeHeld; }
+    if (args[0].processes.at(-1)?.status === (mode === 'timeout-during-journal' ? 'identified' : 'spawned')) { enteredWrite(); await writeHeld; }
     await write(...args);
   });
   startupObservation.event = event => {
     if (event.type === 'scope-ready') { scope = event; receivedScope(); }
-    if (event.type === 'termination-requested' && event.reason === 'abort') requestedStop();
+    if (event.type === 'termination-requested' && event.reason === (timeout ? 'timeout' : 'abort')) requestedStop();
   };
   startupObservation.authorized = 0;
+  if (timeout) commandClock.armed = true;
   const pending = f.session.execution.run('cancel-before-argv', { command: 'node', args: ['-e',
     'require("node:fs").writeFileSync(process.argv[1],"ran")', marker] }, 'CHECK_FAILED', undefined, controller.signal);
   const observed = pending.then(value => ({ value }), (error: unknown) => ({ error }));
@@ -154,19 +156,51 @@ async function assertQueuedScopeCancellation(mode: 'external' | 'budget') {
     // 只延迟真实 spawned 状态提交；身份、scope 与关闭事实均来自原生 Provider。
     await Promise.race([Promise.all([writeEntered, scopeReceived, ...(mode === 'budget' ? [sampleEntered] : [])]), deadline,
       observed.then(result => { throw new Error('command ended before startup witnesses', { cause: result }); })]);
-    if (mode === 'budget') failSample(); else controller.abort();
+    if (timeout) {
+      const clock = commandClock.value;
+      if (!clock || clock.pendingCount() !== 1) throw new Error('command deadline was not captured');
+      clock.advance(clock.interval);
+    } else if (mode === 'budget') failSample(); else controller.abort();
     await Promise.race([stopRequested, deadline]);
     clearTimeout(timer); releaseWrite();
     const result = await observed;
     if (!scope) throw new Error('real native scope witness missing');
     expect(f.session.state.processes.at(-1)).toMatchObject({ identity: scope.identity,
       scope: { scopeId: scope.scopeId, binding: scope.binding }, status: 'stopped', observationComplete: true,
-      closure: { requestedTermination: 'abort', ownedScope: { status: 'unknown', reason: 'terminated', empty: true } } });
-    expect(startupObservation.authorized).toBe(0);
+      closure: { requestedTermination: timeout ? 'timeout' : 'abort', ownedScope: { status: 'unknown', reason: 'terminated', empty: true } } });
+    expect(startupObservation.authorized, JSON.stringify(result)).toBe(0);
     await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' });
     expect(result).toMatchObject({ error: mode === 'budget'
       ? { code: 'BUDGET_UNKNOWN', details: { reason: 'OBSERVATION_DEADLINE', budgetMs: 35_000, step: 'cancel-before-argv' } }
-      : { code: 'CANCELLED' } });
+      : { code: timeout ? 'COMMAND_TIMEOUT' : 'CANCELLED' } });
+    if (timeout) {
+      expect(result).toMatchObject({ error: { details: { preparation: {
+        authorization: 'not-requested',
+        phaseAtTermination: mode === 'timeout-during-journal' ? 'identified-journal' : 'spawned-journal',
+        scopeReadyQueueMs: expect.any(Number), guardMs: expect.any(Number), journalMs: expect.any(Number),
+        budgetQueueMs: expect.any(Number), budgetScanMs: expect.any(Number),
+        elapsedMs: expect.any(Number), terminationAfterMs: expect.any(Number),
+      } } } });
+      if (!('error' in result) || !(result.error instanceof ReleaseError)) throw new Error('timeout error missing');
+      const preparation = result.error.details.preparation;
+      if (!preparation || typeof preparation !== 'object') throw new Error('preparation diagnostic missing');
+      const milliseconds = (key: string) => {
+        const value: unknown = Reflect.get(preparation, key);
+        if (typeof value !== 'number') throw new Error(`timing field missing: ${key}`);
+        expect(Number.isFinite(value)).toBe(true); expect(value).toBeGreaterThanOrEqual(0); return value;
+      };
+      expect(milliseconds('journalMs')).toBeGreaterThan(0);
+      expect(milliseconds('elapsedMs')).toBeGreaterThanOrEqual(milliseconds('journalMs'));
+      expect(milliseconds('elapsedMs')).toBeGreaterThanOrEqual(milliseconds('scopeReadyQueueMs'));
+      if (mode === 'timeout-during-journal') {
+        expect(milliseconds('guardMs')).toBeGreaterThan(0); expect(milliseconds('budgetScanMs')).toBeGreaterThan(0);
+        expect(milliseconds('budgetMs')).toBeGreaterThanOrEqual(milliseconds('budgetQueueMs') + milliseconds('budgetScanMs'));
+      }
+      expect(JSON.stringify(preparation)).not.toContain(f.root);
+      expect(f.session.steps.at(-1)).toMatchObject({ name: 'cancel-before-argv', ok: false, exitCode: null });
+      // 命令与排队工作均已结算；此时输出固定字段不会改变被测授权竞态。
+      console.info(JSON.stringify({ event: 'managed-startup-timeout-diagnostic', scenario: mode, preparation }));
+    }
     await expect(f.session.assertClosed()).rejects.toMatchObject({ code: 'PROCESS_STATE_UNKNOWN' });
     await expect(f.session.assertStopped()).resolves.toBeUndefined();
     const terminal = JSON.parse(await readFile(f.terminalPath, 'utf8'));
@@ -182,6 +216,14 @@ it('retains a real scope received behind a pending spawned journal when cancella
 
 it('preserves the budget failure while sealing a queued real scope without authorizing argv', async () => {
   await assertQueuedScopeCancellation('budget');
+});
+
+it('preserves timeout behind a pending spawned journal without late authorization', async () => {
+  await assertQueuedScopeCancellation('timeout');
+});
+
+it('preserves timeout during identified journal persistence without late authorization', async () => {
+  await assertQueuedScopeCancellation('timeout-during-journal');
 });
 
 it('rejects a command whose bounded recovery record cannot fit before its real argv runs', async () => {

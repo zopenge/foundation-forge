@@ -1,12 +1,13 @@
 import { spawn } from 'node:child_process';
 import { link, lstat, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
+import { performance } from 'node:perf_hooks';
 import { BudgetMonitor, observeBudget } from '../src/node/managed-budget.js';
 import { managedBudgetFixture } from './helpers/managed-budget-fixture.js';
 import type { ManagedSourceConfig } from '../src/contracts.js';
 import { ReleaseError } from '../src/node/errors.js';
-import { measureManagedUsage } from '../src/node/managed-io.js';
+import { measureManagedUsage, measureManagedUsageOnce } from '../src/node/managed-io.js';
 
 const fixtures: Awaited<ReturnType<typeof managedBudgetFixture>>[] = [];
 afterEach(async () => { for (const f of fixtures.splice(0)) await f.dispose(); });
@@ -100,4 +101,28 @@ it('restarts the whole observation after a transient directory entry disappears'
     return measureManagedUsage(paths, signal);
   });
   expect(attempts).toBe(2); expect(observed.bytes).toBeGreaterThan(0); await f.lock.release();
+});
+
+it('separates a queued budget observation from its own directory scan time', async () => {
+  const f = await fixture(); let now = 0, calls = 0;
+  let release: () => void = () => {}, entered: () => void = () => {};
+  const held = new Promise<void>(accept => { release = accept; });
+  const firstEntered = new Promise<void>(accept => { entered = accept; });
+  const clock = vi.spyOn(performance, 'now').mockImplementation(() => now);
+  const monitor = new BudgetMonitor(f.paths, f.limits, async (paths, config, scan = measureManagedUsageOnce) => {
+    if (++calls === 1) { entered(); await held; }
+    return observeBudget(paths, config, (paths, signal, progress) => {
+      const observation = scan(paths, signal, progress); now += 7; return observation;
+    });
+  });
+  const first = monitor.sample(); let second: Promise<void> | undefined;
+  try {
+    await firstEntered; now = 5;
+    const timing = { queueMs: 0, scanMs: 0 };
+    second = monitor.sample(timing); now = 10; release();
+    await Promise.all([first, second]);
+    expect(timing).toEqual({ queueMs: 12, scanMs: 7 });
+    expect(monitor.summary()).toMatchObject({ sampleCount: 2, observationsComplete: true });
+  } finally { release(); await Promise.allSettled([first, ...(second ? [second] : [])]); clock.mockRestore(); }
+  await f.lock.release();
 });
