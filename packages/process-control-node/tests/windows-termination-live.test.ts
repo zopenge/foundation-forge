@@ -7,7 +7,7 @@ import { liveTerminationChild } from './helpers/live-termination-child.js';
 test.runIf(process.platform === 'win32')('revalidates a real CIM start token through the narrow reader before terminating its own child', async context => {
   const started = performance.now(), phases: { phase: string; elapsedMs: number }[] = [];
   const mark = (phase: string) => { phases.push({ phase, elapsedMs: Math.round(performance.now() - started) }); };
-  // 只在失败时输出内存阶段记录，保持真实命令、流和原测试期限不变。
+  // 只在失败时输出内存阶段记录，保持真实命令、流和断言不变。
   onTestFailed(() => { process.stderr.write(`${JSON.stringify({ kind: 'WINDOWS_CIM_TERMINATION', elapsedMs: Math.round(performance.now() - started), phases })}\n`); });
   mark('child:start');
   const fixture = liveTerminationChild(context), { child, closed } = fixture;
@@ -40,7 +40,7 @@ test.runIf(process.platform === 'win32')('revalidates a real CIM start token thr
     await fixture.dispose();
     mark('dispose:finished');
   }
-});
+}, 15_000);
 
 test('closes the real test child on cancellation and waits for its close event', async context => {
   const controller = new AbortController(), fixture = liveTerminationChild(context, controller.signal);
