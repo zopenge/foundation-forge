@@ -5,7 +5,7 @@ import { rm, mkdir, writeFile, realpath } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
 
 import { runCleanPackageConsumer } from './package-consumer-runner.mjs';
-import { loadPackageVerification } from './package-verification.mjs';
+import { prepareConsumerPackages } from './consumer-package-selection.mjs';
 import { createPropagationBudget, fetchRegistryResponse, releaseError } from './release-propagation.mjs';
 import { createPublicConsumerEnvironment } from './release-environment.mjs';
 import { installRegistryConsumer } from './release-install.mjs';
@@ -215,7 +215,7 @@ export const verifyRegistryPackages = async ({
   resolveCommit = readReleaseTagCommit,
   budget = createPropagationBudget({ timeoutMilliseconds: policy.pollTimeoutMilliseconds }),
 }) => {
-  const { targets, packages } = selectReleasePackages(model.packages, mode, packageNames);
+  const { targets } = selectReleasePackages(model.packages, mode, packageNames);
   if (targets.length === 0) throw new Error(`no ${mode} package versions were selected for verification`);
   const inside = relative(resolve(model.repositoryRoot, '.tmp'), verificationRoot);
   if (!inside || inside.startsWith('..') || isAbsolute(inside)) throw new Error('unsafe registry verification directory');
@@ -226,9 +226,7 @@ export const verifyRegistryPackages = async ({
   await mkdir(verificationRoot, { recursive: true });
   try {
     await onEvent({ stage: 'registry', state: 'started' });
-    for (const packageValue of packages) {
-      packageValue.verification = await loadPackageVerification(packageValue);
-    }
+    const { packages } = await prepareConsumerPackages(model, targets.map(({ name }) => name));
     for (const packageValue of packages) {
       const isTarget = targets.some(({ name }) => name === packageValue.name);
       const result = await waitForPackageVersion({

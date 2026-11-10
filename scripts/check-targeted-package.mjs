@@ -1,27 +1,13 @@
 import { relative, resolve } from 'node:path';
 
 import { packPackages, runCleanPackageConsumer, verifyManifest } from './package-consumer-runner.mjs';
-import { loadPackageVerification, verifyBrowserBoundaries } from './package-verification.mjs';
+import { verifyBrowserBoundaries } from './package-verification.mjs';
+import { prepareConsumerPackages } from './consumer-package-selection.mjs';
 
-export const planTargetPackages = (model, packageNames) => {
-  const byName = new Map(model.packages.map((value) => [value.name, value]));
-  const selected = new Set();
-  const visit = (name) => {
-    if (selected.has(name)) return;
-    const packageValue = byName.get(name);
-    if (!packageValue) throw new Error(`unknown workspace package: ${name}`);
-    selected.add(name);
-    for (const dependency of packageValue.workspaceDependencies) visit(dependency);
-    for (const dependency of packageValue.verification?.consumerDependencies ?? []) visit(dependency);
-  };
-  for (const packageName of packageNames) visit(packageName);
-  const packages = model.packages.filter(({ name }) => selected.has(name));
-  return { packages, smokePackageNames: new Set(packageNames) };
-};
+export { planConsumerPackages as planTargetPackages } from './consumer-package-selection.mjs';
 
 export const verifyTargetedPackages = async ({ model, packageNames, verificationRoot, reusedTarballs, testRun }) => {
-  for (const value of model.packages) value.verification ??= await loadPackageVerification(value);
-  const { packages, smokePackageNames } = planTargetPackages(model, packageNames);
+  const { packages, smokePackageNames } = await prepareConsumerPackages(model, packageNames);
   const subset = { ...model, packages };
   for (const packageValue of packages) await verifyManifest(packageValue, model.rootManifest);
   const { extractedPackages, tarballs } = await packPackages(subset, verificationRoot, { reusedTarballs });
