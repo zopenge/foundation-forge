@@ -13,7 +13,7 @@ export class OperationBudget {
   #reason: ArtifactPublicationError | undefined;
   #unconfirmedResources = 0;
 
-  constructor(options: ArtifactPublicationOptions) {
+  constructor(options: Pick<ArtifactPublicationOptions, 'timeoutMilliseconds' | 'signal'>) {
     this.#deadline = performance.now() + options.timeoutMilliseconds;
     this.#aborted = new Promise<never>((_resolve, reject) => { this.#rejectAbort = reject; });
     // 调用前就取消时也先接住拒绝，随后由操作入口返回结构化错误。

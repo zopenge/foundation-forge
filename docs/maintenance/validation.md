@@ -2,6 +2,8 @@
 
 ## 日常 quick 与完整 full
 
+包自有 `package.verify.json` 可以声明最多 32 个去重的 `consumerDependencies`，指定真实 tarball 消费验证所需的额外工作区包。定向验证会按这些元数据及各包 manifests 收集完整验证依赖，不增加运行时依赖或额外 smoke。验证器传入现有 TypeScript 编译器入口 `PACKAGE_CONSUMER_TYPESCRIPT`；类型 fixture 在隔离消费目录解析打包声明，不引用工作区源码。
+
 - `pnpm check` / `pnpm check:quick`：日常快速反馈。基于最近验证收据、当前文件指纹及工作区依赖图选择影响包；源代码变化传递到消费者。先零警告 lint，再清理/构建影响包、类型检查、脚本快速回归和包快速测试。quick 固定一个测试 worker；lint、build、typecheck 与测试均通过同一 context 的原生 Job 执行和取消。
 - `pnpm check:full`：原完整套件，所有原用例、断言、coverage 和平台跳过保留。默认共享最多两个真实 worker。只有该完整入口成功、输入未漂移且产物/真实 tarball 摘要有效，才写入 `validation.kind=full` 的收据。
 - `pnpm check:serial`：同一完整套件的单 worker 诊断入口，也写完整收据；收据仍绑定该次完整环境。`check:full:run` 是内部执行阶段，不独立生成发布收据。

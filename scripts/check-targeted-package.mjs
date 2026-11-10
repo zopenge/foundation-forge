@@ -1,7 +1,7 @@
 import { relative, resolve } from 'node:path';
 
 import { packPackages, runCleanPackageConsumer, verifyManifest } from './package-consumer-runner.mjs';
-import { verifyBrowserBoundaries } from './package-verification.mjs';
+import { loadPackageVerification, verifyBrowserBoundaries } from './package-verification.mjs';
 
 export const planTargetPackages = (model, packageNames) => {
   const byName = new Map(model.packages.map((value) => [value.name, value]));
@@ -12,6 +12,7 @@ export const planTargetPackages = (model, packageNames) => {
     if (!packageValue) throw new Error(`unknown workspace package: ${name}`);
     selected.add(name);
     for (const dependency of packageValue.workspaceDependencies) visit(dependency);
+    for (const dependency of packageValue.verification?.consumerDependencies ?? []) visit(dependency);
   };
   for (const packageName of packageNames) visit(packageName);
   const packages = model.packages.filter(({ name }) => selected.has(name));
@@ -19,6 +20,7 @@ export const planTargetPackages = (model, packageNames) => {
 };
 
 export const verifyTargetedPackages = async ({ model, packageNames, verificationRoot, reusedTarballs, testRun }) => {
+  for (const value of model.packages) value.verification ??= await loadPackageVerification(value);
   const { packages, smokePackageNames } = planTargetPackages(model, packageNames);
   const subset = { ...model, packages };
   for (const packageValue of packages) await verifyManifest(packageValue, model.rootManifest);

@@ -63,6 +63,9 @@ importers:
       '@openge/forge-artifact-integrity':
         specifier: workspace:0.1.0
         version: link:../artifact-integrity
+      '@openge/forge-command-runner':
+        specifier: workspace:0.2.0
+        version: link:../command-runner
       '@openge/forge-path-safety':
         specifier: workspace:0.1.1
         version: link:../path-safety

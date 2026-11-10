@@ -9,6 +9,7 @@ import { activateArtifactRelease } from '@openge/forge-artifact-publish';
 import { publishArtifactFiles } from '@openge/forge-artifact-publish/node';
 import { createCosArtifactTransport } from '@openge/forge-artifact-publish-cos';
 import { startCosFixture } from './cos-fixture.mjs';
+import { verifyDurableActivation } from './durable-activation.mjs';
 
 const artifact = (key, text, cacheControl = 'public, max-age=31536000, immutable') => {
   const bytes = Buffer.from(text);
@@ -44,6 +45,8 @@ try {
   const rollback = await activateArtifactRelease(transport(), plan, options);
   assert.equal(rollback.outcome, 'succeeded');
   assert.deepEqual(fixture.requests.filter(value => value.method === 'PUT').map(value => value.key), ['current.json']);
+
+  await verifyDurableActivation({ fixture, transport, plan, options });
 
   fixture.requests.length = 0;
   const stalled = fixture.stall(object.key);

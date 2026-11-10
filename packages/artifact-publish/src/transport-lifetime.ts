@@ -1,20 +1,20 @@
 import type { ArtifactPublicationTransport, ArtifactTransportClosure } from './contracts.js';
 import { ArtifactPublicationError } from './errors.js';
 
-const ownership = new WeakMap<ArtifactPublicationTransport, 'active' | 'consumed'>();
+const ownership = new WeakMap<object, 'active' | 'consumed'>();
 
-export function claimTransport(transport: ArtifactPublicationTransport): void {
+export function claimTransport(transport: object): void {
   if (!transport || typeof transport !== 'object') throw new ArtifactPublicationError('INVALID_TARGET');
   const state = ownership.get(transport);
   if (state) throw new ArtifactPublicationError(state === 'active' ? 'TRANSPORT_IN_USE' : 'TRANSPORT_CLOSED');
   ownership.set(transport, 'active');
 }
 
-export function finishTransportUse(transport: ArtifactPublicationTransport): void {
+export function finishTransportUse(transport: object): void {
   ownership.set(transport, 'consumed');
 }
 
-export async function closeTransport(transport: ArtifactPublicationTransport, timeoutMilliseconds: number,
+export async function closeTransport(transport: Pick<ArtifactPublicationTransport, 'close'>, timeoutMilliseconds: number,
   pendingRequests: () => number, settleRequests: () => Promise<void>): Promise<ArtifactTransportClosure> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let value: unknown;

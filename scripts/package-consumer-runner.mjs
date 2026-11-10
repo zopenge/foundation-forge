@@ -372,6 +372,7 @@ export const runCleanPackageConsumer = async ({
             ...env,
             PACKAGE_CONSUMER_BINARIES: JSON.stringify(binaries),
             PACKAGE_CONSUMER_ROOT: consumerRoot,
+            PACKAGE_CONSUMER_TYPESCRIPT: fileURLToPath(import.meta.resolve('typescript/bin/tsc')),
           },
         });
       });

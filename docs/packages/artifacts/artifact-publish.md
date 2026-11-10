@@ -6,8 +6,10 @@
 
 | 入口 | 公开能力 |
 | --- | --- |
-| `@openge/forge-artifact-publish` | `publishArtifactRelease`、`activateArtifactRelease`、公开契约和 `ArtifactPublicationError`；不导入 Node 模块 |
-| `@openge/forge-artifact-publish/node` | `publishArtifactFiles`、文件计划类型；browser 条件拒绝导入 |
+| `@openge/forge-artifact-publish` | `publishArtifactRelease`、`activateArtifactRelease`、制品操作绑定/执行/观察、公开契约及结构化错误；不导入 Node 模块 |
+| `@openge/forge-artifact-publish/node` | `publishArtifactFiles`、`createCommandArtifactOperation`、文件及命令适配类型；browser 条件拒绝导入 |
+
+非对象存储的部署创建与状态观察使用独立的[制品操作契约](artifact-operations.md)，不伪装成对象 PUT。
 
 `ArtifactObjectDescriptor` 包含 `key`、`byteLength`、`sha256`、`contentType`、`cacheControl`。SHA-256 是不带前缀的 64 位十六进制；收据规范化为小写。发布计划为每个对象追加 `Uint8Array bytes`；文件计划追加便携相对 `path`。所有计划还需完整小写 Git SHA（40 或 64 位）`sourceCommit`、以 `/` 结尾的 `immutablePrefix`、带字节的小型 `pointer`。
 
@@ -81,4 +83,4 @@ const fromFiles = await publishArtifactFiles(fileTransport, absoluteRoot, filePl
 
 ## 验证与依赖
 
-Core 只依赖 [`artifact-integrity`](artifact-integrity.md) 与 [`path-safety`](path-safety.md)，[`artifact-publish-cos`](artifact-publish-cos.md) 单向依赖 Core。包内测试覆盖编排、预算、并发、真实普通文件及关闭；`package-consumer/verify.mjs` 从真实 tarball 导入公开入口、自建并清理 fixture，既有 `.tmp` 内容不是通过前提。完整仓库门禁为 `pnpm check`。
+Core 使用 [`artifact-integrity`](artifact-integrity.md) 与 [`path-safety`](path-safety.md)，Node 命令适配复用中立 [`command-runner`](../process-execution/command-runner.md)；[`artifact-publish-cos`](artifact-publish-cos.md) 单向依赖 Core。运行时 Core 不依赖 Provider。包内测试覆盖编排、预算、并发、真实普通文件及关闭；`package-consumer/verify.mjs` 从真实 tarball 导入公开入口、自建并清理 fixture，既有 `.tmp` 内容不是通过前提。完整仓库门禁为 `pnpm check`。

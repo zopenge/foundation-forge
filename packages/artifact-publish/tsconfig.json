@@ -1,5 +1,5 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": { "types": ["node", "vitest/globals"] },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "vitest.config.ts"]
+  "include": ["src/**/*.ts", "tests/**/*.ts", "package-consumer/**/*.ts", "vitest.config.ts"]
 }
