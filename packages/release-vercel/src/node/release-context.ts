@@ -5,6 +5,7 @@ import type { ProcessScopeClosure } from '@openge/forge-process-control';
 import type { Execution } from './execution.js';
 import type { RetirementHost } from './retirement-host.js';
 import type { BudgetMonitor } from './managed-budget.js';
+import type { CommandPreparationReport } from './managed-startup-timing.js';
 
 export interface FrozenSource {
   readonly root: string;
@@ -90,8 +91,9 @@ export interface ManagedSlot {
   readonly runId: string; readonly coordinator: RecordedIdentity;
   readonly completionResume?: { readonly prebuilt: PrebuiltReleaseState; readonly completion: ReleaseCompletionState; readonly input: CompletionInputBinding };
 }
+export interface ExecutionResult extends CommandResult { readonly preparation?: CommandPreparationReport }
 export interface ExecutionLifecycle {
-  execute(runner: CommandRunner, name: string, spec: CommandSpec, observer?: CommandObserver): Promise<CommandResult>;
+  execute(runner: CommandRunner, name: string, spec: CommandSpec, observer?: CommandObserver): Promise<ExecutionResult>;
   observeCheckout?<T>(operation: () => Promise<T>): Promise<T>;
 }
 export interface ManagedSession {

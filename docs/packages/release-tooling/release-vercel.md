@@ -8,6 +8,10 @@
 
 受管命令与只读管理检查统一使用最多十秒、且不超过 `commandMs` 的身份观测预算。原有单命令时限同时覆盖观测与执行，不因身份读取而重新计时；身份截止、取消及真实观测失败仍终止命令，不自动重试 Git 或发布。
 
+受管 runner 启动后，同一单命令期限覆盖 scope 启动、身份绑定及之后的放行前排队、守卫、预算观察、日志持久化和执行。runner 启动前的槽准入、意图持久化和首次预算采样保持原有独立门禁，不计入该命令期限；本次不新增全流程计时边界。期限到达后，即使排队步骤随后完成，也不再尝试放行 argv；有精确停止证明时仍报告原始 `COMMAND_TIMEOUT`，不把迟到授权包装为 `JOURNAL_FAILED`。真实日志错误和未证明的关闭仍失败，已有超时配置与所有门禁不变。
+
+受管超时报告的 `error.details.preparation` 提供固定大小的阶段诊断：`authorization` 区分尚未请求、已请求和已收到放行确认；已请求不证明目标脚本已执行。`phaseAtTermination`、`terminationAfterMs` 记录终止请求发生的阶段与墙钟，`elapsedMs` 截止授权确认，或未确认时截止 runner 关闭结果与排队准备工作均已结算，因此可能包含 OS 关闭等待。`scopeReadyQueueMs`、`guardMs`、`journalMs`、`budgetMs`、`authorizationMs` 分别记录相应区间；`budgetQueueMs` 与 `budgetScanMs` 只细分显式放行前预算观察的排队和扫描。队列与日志区间可能重叠，日志还包含自身安全检查和扫描，不能把这些数值直接相加为总耗时。诊断不采集 argv、环境、路径或逐事件日志，也不复用任何安全观察。
+
 Windows 执行要求 Windows x64 和已安装的 Koffi 预编译能力。启动身份观测与终止前复核显式共用 Win32 原生 reader，不回退到 PowerShell 身份查询。workspace 首条命令在原预算内完成有界原生能力预检，预检耗时扣除后才将剩余额度交给命令；能力缺失或失败时不启动该命令。后续命令仍各自新鲜读取目标身份。POSIX 路径和受管 Job/subreaper 的关闭证明门禁不变；未知关闭仍失败，不因强制清空而转为正常完成。
 
 ## 配置与调用

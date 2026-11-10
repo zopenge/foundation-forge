@@ -11,6 +11,8 @@ export const createHiddenVitestPool = ({ workers = testWorkerLimit(), forkComman
   name: 'forge-hidden-forks',
   createPoolWorker(options) {
     let child, closed, starting, stopping, exited = false, stopRequested = false;
+    let waitingForCapacity = false;
+    const pendingMessages = [];
     const output = options.project.vitest.logger.outputStream;
     const errors = options.project.vitest.logger.errorStream;
     const current = () => {
@@ -21,12 +23,18 @@ export const createHiddenVitestPool = ({ workers = testWorkerLimit(), forkComman
       name: 'forge-hidden-forks', cacheFs: true,
       on: (event, listener) => { current().on(event, listener); },
       off: (event, listener) => { current().off(event, listener); },
-      send: message => { current().send(message); },
+      send: message => {
+        // Vitest 的取消广播也包含仍在等待 OS 槽位的 worker；按原顺序交付，不能掩盖首错。
+        if (waitingForCapacity) { pendingMessages.push(message); return; }
+        current().send(message);
+      },
       deserialize: value => value,
       async start() {
         starting ??= new Promise((acceptStart, rejectStart) => {
+          waitingForCapacity = true;
           // Vitest 会先复用调度编号再等待旧 worker 停机；实际 OS 槽位必须等父侧 exit 才归还。
           void capacity.run({ name: 'vitest fork', workers: 1 }, async () => {
+            waitingForCapacity = false;
             exited = false; stopping = undefined; stopRequested = false;
             child = forkCommand(resolve(options.distPath, 'workers/forks.js'), [], {
               env: options.env, execArgv: options.execArgv, stdio: 'pipe', serialization: 'advanced', windowsHide: true,
@@ -50,9 +58,10 @@ export const createHiddenVitestPool = ({ workers = testWorkerLimit(), forkComman
             for (const [source, target] of [[worker.stdout, output], [worker.stderr, errors]]) {
               if (source) { target.setMaxListeners(target.getMaxListeners() + 1); source.pipe(target); }
             }
+            for (const message of pendingMessages.splice(0)) worker.send(message);
             acceptStart();
             await ended;
-          }).catch(rejectStart);
+          }).catch(error => { waitingForCapacity = false; pendingMessages.length = 0; rejectStart(error); });
         });
         await starting;
       },

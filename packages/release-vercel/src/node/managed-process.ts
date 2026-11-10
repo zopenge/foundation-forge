@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { basename, resolve } from 'node:path';
-import type { CommandObserver, CommandResult, CommandRunner, CommandSpec, RunningCommand } from '@openge/forge-command-runner';
-import type { ExecutionLifecycle, ManagedCommand, ManagedSession, ManagedSlot, ManagedState } from './release-context.js';
+import type { CommandObserver, CommandRunner, CommandSpec, RunningCommand } from '@openge/forge-command-runner';
+import type { ExecutionLifecycle, ExecutionResult, ManagedCommand, ManagedSession, ManagedSlot, ManagedState } from './release-context.js';
 import type { ReleaseStep } from '../contracts.js';
 import { record, ReleaseError } from './errors.js';
 import { within } from './managed-io.js';
@@ -20,8 +20,9 @@ import { versionAliasBuildEnvironment, versionAliasCandidateEnvironment } from '
 import { protectedCompletionEnvironment } from './completion-state.js';
 import { assertCompletionInput } from './completion-input.js';
 import { isKnownProcessFailureCode, summarizeProcessFailure } from './managed-process-diagnostics.js';
+import { ManagedStartupTiming, type CommandPreparationReport } from './managed-startup-timing.js';
 
-function lifecycleError(error: unknown, reason: string, step: string, phase?: string): ReleaseError {
+function lifecycleError(error: unknown, reason: string, step: string, phase?: string, preparation?: CommandPreparationReport): ReleaseError {
   if (error instanceof ReleaseError) return error;
   const value = record(error), code = value.code;
   const known = isKnownProcessFailureCode(code), failure = summarizeProcessFailure(error);
@@ -29,6 +30,7 @@ function lifecycleError(error: unknown, reason: string, step: string, phase?: st
   const syscall = typeof value.syscall === 'string' && ['open', 'read', 'write', 'rename', 'unlink', 'lstat', 'stat', 'statfs', 'mkdir', 'scandir'].includes(value.syscall) ? value.syscall : undefined;
   const file = typeof value.path === 'string' ? basename(value.path) : undefined;
   return new ReleaseError('PROCESS_STATE_UNKNOWN', { reason, step,
+    ...(preparation ? { preparation } : {}),
     ...(Object.keys(failure).length ? { failure } : {}),
     ...(known ? { causeCode: code, ...(phase ? { causePhase: phase } : {}), ...(syscall ? { causeSyscall: syscall } : {}),
       ...(file && ['state.json', '.state.json.next', 'terminal.json', '.terminal.json.next'].includes(file) ? { causeFile: file } : {}) } : {}) });
@@ -99,7 +101,7 @@ class ManagedProcess implements ExecutionLifecycle {
     return value as T;
     } finally { this.observation = undefined; }
   }
-  async execute(runner: CommandRunner, name: string, spec: CommandSpec, observer?: CommandObserver): Promise<CommandResult> {
+  async execute(runner: CommandRunner, name: string, spec: CommandSpec, observer?: CommandObserver): Promise<ExecutionResult> {
     const batch = this.observation;
     if (this.startingObservation) throw new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'OBSERVATION_NESTED' });
     await this.guard();
@@ -124,6 +126,7 @@ class ManagedProcess implements ExecutionLifecycle {
       let failure: unknown, running: RunningCommand | undefined;
       let phase: 'command' | 'terminal' | 'closed-state' = 'command';
       let requestedTermination: 'abort' | 'timeout' | undefined;
+      const timing = new ManagedStartupTiming();
       const enqueue = (operation: () => Promise<void>) => {
         this.tail = this.tail.then(operation).catch((error: unknown) => { failure ??= error; command.observationComplete = false; failed.abort(); });
       };
@@ -146,22 +149,34 @@ class ManagedProcess implements ExecutionLifecycle {
             ...protectedCompletionEnvironment(this.slot.source, this.state.prebuilt, this.state.completion, name),
             FORGE_RELEASE_COMMAND: this.state.command, FORGE_RELEASE_SHA: this.slot.source.sha } } }, event => {
           observer?.(event);
-          if (event.type === 'termination-requested' && (event.reason === 'abort' || event.reason === 'timeout')) requestedTermination = event.reason;
-          if (event.type === 'spawned') enqueue(async () => { command.pid = event.pid; command.status = 'spawned'; if (!batch) await this.persist(); });
-          if (event.type === 'scope-ready') enqueue(async () => {
-            if (event.binding !== binding || !running?.authorizeStart) throw new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'SCOPE_BINDING' });
+          if (event.type === 'termination-requested' && (event.reason === 'abort' || event.reason === 'timeout')) { requestedTermination = event.reason; timing.stopped(); }
+          if (event.type === 'spawned') enqueue(async () => {
+            command.pid = event.pid; command.status = 'spawned';
+            if (!batch) await timing.measure('spawned-journal', () => this.persist());
+          });
+          if (event.type === 'scope-ready') { timing.queued(); enqueue(async () => {
+            timing.dequeued();
+            const authorize = running?.authorizeStart?.bind(running);
+            if (event.binding !== binding || !authorize) throw new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'SCOPE_BINDING' });
             command.identity = { pid: event.identity.pid, startToken: event.identity.startToken };
             command.scope = { scopeId: event.scopeId, binding }; command.status = 'identified';
             // 取消只禁止放行 argv；已收到的绑定事实仍供真实关闭结果核验，不据此放行执行。
-            if (combined.aborted) return;
-            await this.guard(); await this.budget.sample();
-            if (batch) await terminal?.assertOwned(); else await this.persist();
+            if (combined.aborted || requestedTermination) return;
+            await timing.measure('guard', () => this.guard());
+            await timing.measure('budget', () => this.budget.sample(timing.budget));
+            await timing.measure('identified-journal', async () => { if (batch) await terminal?.assertOwned(); else await this.persist(); });
             // 写入、预算和所有权任一步失败都不放行真实 argv。
-            await this.guard(); if (combined.aborted) throw new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'START_CANCELLED' });
-            await running.authorizeStart();
-          });
+            await timing.measure('guard', () => this.guard());
+            // 命令自身的期限不会撤销 combined；超时后的队列仍需收尾，但不能再放行 argv。
+            if (combined.aborted) throw new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'START_CANCELLED' });
+            if (requestedTermination) return;
+            timing.requested();
+            await timing.measure('authorization', authorize);
+            timing.acknowledged();
+          }); }
         });
         const result = await running.result; await this.tail;
+        timing.settled();
         command.observationComplete = !!result.ownedScope;
         command.closure = { observedAt: new Date().toISOString(), exitCode: result.exitCode, termination: result.terminationReason,
           ...(requestedTermination ? { requestedTermination } : {}),
@@ -172,7 +187,7 @@ class ManagedProcess implements ExecutionLifecycle {
         if (!hasVerifiedManagedStop(command)) { command.status = 'unknown'; command.observationComplete = false; }
         phase = 'terminal';
         if (!batch && hasVerifiedManagedStop(command)) command.terminalSha256 = await terminal.write(command);
-        if (failure !== undefined) throw lifecycleError(failure, 'JOURNAL_FAILED', name);
+        if (failure !== undefined) throw lifecycleError(failure, 'JOURNAL_FAILED', name, undefined, timing.snapshot());
         phase = 'closed-state';
         if (!batch) await this.persist();
         if (!hasVerifiedManagedStop(command)) throw new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'CLOSURE_UNPROVEN', commandId: command.id, step: name,
@@ -180,7 +195,7 @@ class ManagedProcess implements ExecutionLifecycle {
           ...(result.ownedScope ? { scopeReason: result.ownedScope.reason, empty: result.ownedScope.empty } : {}),
           diagnostics: result.diagnostics.map(item => summarizeProcessFailure(item)) });
         // runner 的原始分类保存在回执；已验证受控停止时，执行结果仍保留取消/超时的原意。
-        return command.status === 'stopped' && requestedTermination ? { ...result, terminationReason: requestedTermination } : result;
+        return { ...result, ...(command.status === 'stopped' && requestedTermination ? { terminationReason: requestedTermination } : {}), preparation: timing.snapshot() };
       } catch (error) {
         failed.abort(); await running?.terminate(); await this.tail;
         if (batch ? !hasVerifiedManagedStop(command) : !command.terminalSha256) {

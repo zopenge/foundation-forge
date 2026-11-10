@@ -78,23 +78,32 @@ test('failed OS startup never creates a fake worker start or finish observation'
   await f.worker.stop(); assert.deepEqual(f.events, []); assert.deepEqual(f.signals, []);
 });
 
-test('independent pool instances keep their actual process slot until parent exit, before pipe close', async () => {
-  const f = fixture(), children = [], observations = [];
+test('queued workers retain IPC messages and keep their process slot until parent exit, before pipe close', async () => {
+  const f = fixture(), children = [], observations = [], messages = [];
   const pool = module.createHiddenVitestPool({ workers: 1, record: type => observations.push(type), forkCommand: () => {
     const child = new EventEmitter(); Object.assign(child, { pid: 20000 + children.length, exitCode: null, signalCode: null,
-      stdout: new PassThrough(), stderr: new PassThrough(), kill() { return true; } }); children.push(child); return child;
+      stdout: new PassThrough(), stderr: new PassThrough(), kill() { return true; },
+      send(message) { messages.push({ pid: child.pid, message }); } }); children.push(child); return child;
   } });
   const first = pool.createPoolWorker(f.options), second = pool.createPoolWorker(f.options);
   await first.start(); children[0].emit('spawn'); let secondStarted = false;
   const pending = second.start().then(() => { secondStarted = true; });
   try {
     await new Promise(accept => setImmediate(accept)); assert.equal(children.length, 1); assert.equal(secondStarted, false);
+    const cancellation = { t: 'q', m: 'onCancel', a: ['test-failure'] };
+    second.send(cancellation);
+    assert.deepEqual(messages, []);
     const stopping = first.stop(); await new Promise(accept => setImmediate(accept)); assert.equal(children.length, 1);
     children[0].exitCode = 0; children[0].emit('exit', 0); await pending;
     assert.equal(children.length, 2); children[1].emit('spawn');
+    assert.deepEqual(messages, [{ pid: children[1].pid, message: cancellation }]);
+    const request = { __vitest_worker_request__: true, type: 'start' };
+    second.send(request);
+    assert.deepEqual(messages.map(value => value.message), [cancellation, request]);
     assert.deepEqual(observations, ['start', 'finish', 'start']);
     children[0].emit('close', 0); await stopping;
     const nextStop = second.stop(); children[1].exitCode = 0; children[1].emit('exit', 0); children[1].emit('close', 0); await nextStop;
+    assert.throws(() => second.send(request), /worker is not running/u);
   } finally {
     for (const child of children) { child.exitCode = 0; child.emit('exit', 0); child.emit('close', 0); }
     await Promise.allSettled([pending, first.stop(), second.stop()]);

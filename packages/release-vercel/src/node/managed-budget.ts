@@ -4,6 +4,7 @@ import { performance } from 'node:perf_hooks';
 import { ReleaseError } from './errors.js';
 import { measureManagedUsage, measureManagedUsageOnce, type ManagedUsageProgress } from './managed-io.js';
 import { assertManagedPaths } from './managed-paths.js';
+import type { BudgetSampleTiming } from './managed-startup-timing.js';
 
 export interface BudgetObservation { readonly bytes: number; readonly freeBytes: number; readonly observedAt: number }
 export async function observeBudget(paths: ManagedPaths, config: ManagedSourceConfig, scan = measureManagedUsageOnce): Promise<BudgetObservation> {
@@ -43,14 +44,23 @@ export class BudgetMonitor {
   private sampling = Promise.resolve();
   constructor(readonly paths: ManagedPaths, readonly config: ManagedSourceConfig,
     private readonly observe: typeof observeBudget = observeBudget, private readonly reservedBytes = 0) {}
-  async sample(): Promise<void> {
-    const observation = this.sampling.then(() => this.sampleNow());
+  async sample(timing?: BudgetSampleTiming): Promise<void> {
+    const queued = performance.now();
+    const observation = this.sampling.then(() => {
+      if (timing) timing.queueMs += performance.now() - queued;
+      return this.sampleNow(timing);
+    });
     this.sampling = observation.catch(() => {});
     return observation;
   }
-  private async sampleNow(): Promise<void> {
+  private async sampleNow(timing?: BudgetSampleTiming): Promise<void> {
     let observation: BudgetObservation;
-    try { observation = await this.observe(this.paths, this.config); }
+    const scan = timing ? async (...args: Parameters<typeof measureManagedUsageOnce>) => {
+      const started = performance.now();
+      try { return await measureManagedUsageOnce(...args); }
+      finally { timing.scanMs += performance.now() - started; }
+    } : undefined;
+    try { observation = await this.observe(this.paths, this.config, scan); }
     catch (error) { this.complete = false; if (error instanceof ReleaseError) throw error; throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'OBSERVATION_FAILED' }); }
     this.count++; this.maxBytes = Math.max(this.maxBytes, observation.bytes); this.minFree = Math.min(this.minFree, observation.freeBytes);
     if (this.lastObserved !== undefined) this.maxGap = Math.max(this.maxGap, observation.observedAt - this.lastObserved);

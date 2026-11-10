@@ -7,7 +7,7 @@ import { createPosixProcessControl, createPosixProcessIdentityReader, createWind
 import type { ReleaseCheck, ReleaseConfig, ReleaseErrorCode, ReleaseStep } from '../contracts.js';
 import { assertActive, redact, ReleaseError } from './errors.js';
 import { LiveOutput } from './live-output.js';
-import type { ExecutionLifecycle } from './release-context.js';
+import type { ExecutionLifecycle, ExecutionResult } from './release-context.js';
 import { managedOwnedScopeProvider } from './owned-command-runner.js';
 import { ExecutionIdentityReady } from './execution-identity-ready.js';
 
@@ -75,7 +75,7 @@ export class Execution {
     const invocation = resolveInvocation(check.command, check.args ?? []);
     const live = onOutput === undefined ? undefined : new LiveOutput(this.config.limits.maxOutputBytes, onOutput);
     const execute = this.lifecycle ? this.lifecycle.execute.bind(this.lifecycle, this.runner, name) : this.runner.run.bind(this.runner);
-    const result = await execute({ ...invocation, cwd: this.cwd,
+    const result: ExecutionResult = await execute({ ...invocation, cwd: this.cwd,
       environment: { mode: 'inherit', values: { GIT_TERMINAL_PROMPT: '0', VERCEL_TELEMETRY_DISABLED: '1', ...values } },
       output: { mode: 'capture', maxBytesPerStream: this.config.limits.maxOutputBytes, overflow: 'truncate' },
       timeoutMs: remaining,
@@ -90,7 +90,8 @@ export class Execution {
     if (captureStep) this.steps.push({ name, ok, durationMs: result.durationMs,
       stdout, stderr, exitCode: result.exitCode, truncated: !!result.stdoutTruncated || !!result.stderrTruncated });
     assertActive(signal);
-    if (result.terminationReason === 'timeout') throw new ReleaseError('COMMAND_TIMEOUT', { step: name });
+    if (result.terminationReason === 'timeout') throw new ReleaseError('COMMAND_TIMEOUT', { step: name,
+      ...(result.preparation ? { preparation: result.preparation } : {}) });
     if (!ok) {
       if (errorCode === 'VERCEL_API' && /(?:no existing credentials|not authenticated|log ?in|unauthorized|invalid token|authentication)/iu.test(stdout + stderr)) {
         throw new ReleaseError('AUTH_REQUIRED');
@@ -111,7 +112,7 @@ export class Execution {
     const remaining = await this.identityReady?.prepare('git-stream', this.config.limits.commandMs, signal) ?? this.config.limits.commandMs;
     let failure: unknown;
     const execute = this.lifecycle ? this.lifecycle.execute.bind(this.lifecycle, this.runner, 'git-stream') : this.runner.run.bind(this.runner);
-    const result = await execute({ command: 'git', args: [...foregroundGitArguments, ...args], cwd: this.cwd,
+    const result: ExecutionResult = await execute({ command: 'git', args: [...foregroundGitArguments, ...args], cwd: this.cwd,
       environment: { mode: 'inherit', values: { GIT_TERMINAL_PROMPT: '0' } }, output: { mode: 'events' },
       timeoutMs: remaining, signal }, event => {
       if (event.type === 'stdout' && failure === undefined) {
@@ -121,7 +122,8 @@ export class Execution {
     if (failure !== undefined) throw failure;
     assertActive(this.signal);
     if (result.exitCode === null || !allowedExitCodes.includes(result.exitCode) || result.terminationReason !== 'exit') {
-      throw new ReleaseError('GIT_FAILED', { reason: 'STREAM_FAILED', exitCode: result.exitCode, termination: result.terminationReason });
+      throw new ReleaseError('GIT_FAILED', { reason: 'STREAM_FAILED', exitCode: result.exitCode, termination: result.terminationReason,
+        ...(result.terminationReason === 'timeout' && result.preparation ? { preparation: result.preparation } : {}) });
     }
   }
 }
