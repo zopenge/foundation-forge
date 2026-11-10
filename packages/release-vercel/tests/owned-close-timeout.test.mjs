@@ -6,8 +6,13 @@ import { TextDecoder } from 'node:util';
 import { expect, test } from 'vitest';
 import { createNodeCommandRunner } from '@openge/forge-command-runner/node';
 import { createWindowsOwnedProcessScopeProvider, createWindowsProcessControl,
-  createWindowsProcessIdentityReader } from '@openge/forge-process-control-node';
+  createWindowsNativeProcessIdentityReader } from '@openge/forge-process-control-node';
 import { observeLiveJobMember } from '../../process-control-node/tests/helpers/live-job-member.mjs';
+
+const prematureResult = (message, result) => new Error(message, { cause: {
+  terminationReason: result.terminationReason, durationMs: result.durationMs,
+  ownedScope: result.ownedScope, diagnostics: result.diagnostics,
+} });
 
 test.runIf(process.platform === 'win32')('the command deadline remains active during real owned Job drain', async () => {
   const base = resolve(import.meta.dirname, '../../../.tmp/owned-scope-tests');
@@ -17,7 +22,8 @@ test.runIf(process.platform === 'win32')('the command deadline remains active du
   const readyPromise = new Promise(accept => { ready = accept; });
   const activePromise = new Promise(accept => { active = accept; });
   const requests = [];
-  const reader = createWindowsProcessIdentityReader(), control = createWindowsProcessControl({ listenerBackend: 'netstat' });
+  // 身份读取与命令式 reader 的一致性由独立真实用例验证；本项专注于真实 Job 的期限与收尾。
+  const reader = createWindowsNativeProcessIdentityReader(), control = createWindowsProcessControl({ listenerBackend: 'netstat', identityReader: reader });
   const provider = createWindowsOwnedProcessScopeProvider();
   try {
     await observeLiveJobMember(() => childPid, () => active(), async () => {
@@ -46,9 +52,9 @@ test.runIf(process.platform === 'win32')('the command deadline remains active du
         }
       });
       try {
-        await Promise.race([readyPromise, running.result.then(() => { throw new Error('fixture not ready'); })]);
+        await Promise.race([readyPromise, running.result.then(result => { throw prematureResult('fixture not ready', result); })]);
         await writeFile(resolve(root, 'parent-exit'), 'exit');
-        await Promise.race([activePromise, running.result.then(() => { throw new Error('drain not observed'); })]);
+        await Promise.race([activePromise, running.result.then(result => { throw prematureResult('drain not observed', result); })]);
         expect(typeof expire).toBe('function'); expire();
         await writeFile(resolve(root, 'child-exit'), 'exit');
         expect(await running.result).toMatchObject({ terminationReason: 'termination-failure',
