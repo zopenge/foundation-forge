@@ -12,6 +12,7 @@
 | 内存中的确定性 ZIP32 编解码与安全检查 | [`@openge/forge-archive-zip`](archive-zip.md) |
 | 声明生成物计划、比较快照并安全发布文件 | [`@openge/forge-generated-artifacts`](generated-artifacts.md) |
 | 发布不可变对象、回读验证并最后切换指针 | [`@openge/forge-artifact-publish`](artifact-publish.md) |
+| 为显式制品后端提供持久占位、操作回执与只观察恢复 | [`artifact-publish` 制品操作](artifact-operations.md) |
 | 在明确配置的腾讯 COS 上提供不可变对象存储 | [`@openge/forge-artifact-publish-cos`](artifact-publish-cos.md) |
 | 创建带 manifest 的确定性配置 ZIP，并在 Node 中预检或导入 | [`@openge/forge-config-bundle`](config-bundle.md) |
 

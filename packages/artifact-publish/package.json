@@ -30,6 +30,7 @@
   "bugs": { "url": "https://github.com/zopenge/foundation-forge/issues" },
   "dependencies": {
     "@openge/forge-artifact-integrity": "workspace:0.1.0",
+    "@openge/forge-command-runner": "workspace:0.2.0",
     "@openge/forge-path-safety": "workspace:0.1.1"
   }
 }

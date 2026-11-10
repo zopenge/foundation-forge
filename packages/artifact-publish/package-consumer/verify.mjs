@@ -5,8 +5,10 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import process from 'node:process';
+import { fileURLToPath, URL } from 'node:url';
 import { activateArtifactRelease, publishArtifactRelease } from '@openge/forge-artifact-publish';
 import { publishArtifactFiles } from '@openge/forge-artifact-publish/node';
+import { verifyMultiArtifact } from './multi-artifact.mjs';
 
 const artifact = (key, text) => {
   const bytes = Buffer.from(text);
@@ -80,3 +82,10 @@ const browser = spawnSync(process.execPath, ['--conditions=browser', '--input-ty
   await assert.rejects(import('@openge/forge-artifact-publish/node'), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });
 `], { cwd: process.cwd(), encoding: 'utf8', windowsHide: true });
 assert.equal(browser.status, 0, browser.stdout + browser.stderr);
+
+await verifyMultiArtifact();
+
+const types = spawnSync(process.execPath, [process.env.PACKAGE_CONSUMER_TYPESCRIPT,
+  '--module', 'NodeNext', '--target', 'ES2023', '--lib', 'ES2023,DOM', '--strict', '--noEmit',
+  fileURLToPath(new URL('./type-usage.ts', import.meta.url))], { cwd: process.cwd(), encoding: 'utf8', windowsHide: true });
+assert.equal(types.status, 0, types.stdout + types.stderr);

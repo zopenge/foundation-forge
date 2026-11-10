@@ -44,6 +44,13 @@ export const loadPackageVerification = async (packageValue) => {
   }
   const consumerScript = await exists(candidate) ? candidate : undefined;
   const quickTests = configuration.quickTests;
+  const consumerDependencies = configuration.consumerDependencies;
+  if (consumerDependencies !== undefined && (!Array.isArray(consumerDependencies) || consumerDependencies.length > 32
+    || new Set(consumerDependencies).size !== consumerDependencies.length
+    || consumerDependencies.some(name => typeof name !== 'string' || name === packageValue.name
+      || !/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/u.test(name)))) {
+    throw new Error(`${packageValue.name} has invalid consumerDependencies`);
+  }
   if (quickTests !== undefined && (!Array.isArray(quickTests) || quickTests.length === 0
     || new Set(quickTests).size !== quickTests.length || quickTests.some(path => typeof path !== 'string'
       || !/^tests\/.+\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(path) || path.includes('\\') || path.split('/').includes('..'))))
@@ -65,6 +72,7 @@ export const loadPackageVerification = async (packageValue) => {
     }
   }
   return { browserExports, consumerScript, coverageWorkers, ...(quickTests ? { quickTests } : {}),
+    ...(consumerDependencies === undefined ? {} : { consumerDependencies }),
     ...(coverageShardWeights === undefined ? {} : { coverageShardWeights }) };
 };
 

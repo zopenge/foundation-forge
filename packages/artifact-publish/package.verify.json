@@ -1,1 +1,1 @@
-{ "browserExports": ["."] }
+{ "browserExports": ["."], "consumerDependencies": ["@openge/forge-process-control-node"] }

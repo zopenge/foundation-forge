@@ -15,6 +15,17 @@ import * as packageRunner from '../package-consumer-runner.mjs';
 
 const { preparePackagesForPacking, runBounded, runCaptured, runConsumerChecks } = packageRunner;
 
+test('consumer-only dependencies are explicit bounded package metadata', async context => {
+  const value = await createPackage(context);
+  const path = join(value.packageRoot, 'package.verify.json');
+  await writeFile(path, JSON.stringify({ browserExports: ['.'], consumerDependencies: ['@example/provider'] }));
+  assert.deepEqual((await loadPackageVerification(value)).consumerDependencies, ['@example/provider']);
+  for (const consumerDependencies of ['provider', [''], ['a', 'a'], [value.name], ['../escape']]) {
+    await writeFile(path, JSON.stringify({ browserExports: ['.'], consumerDependencies }));
+    await assert.rejects(loadPackageVerification(value), /consumerDependencies/u);
+  }
+});
+
 for (const hookFails of [false, true]) test(`package verification always removes its directory after the cleanup barrier${hookFails ? ' rejects' : ''}`, async context => {
   const base = resolve('.tmp/tests'); await mkdir(base, { recursive: true });
   const root = await mkdtemp(join(base, 'verification-cleanup-')), verificationRoot = join(root, 'verification');

@@ -57,3 +57,67 @@ Hard limits: 1–10,000 objects, concurrency 1–64, pointer limit at most 1 MiB
 `ArtifactPublicationError` supplies stable `code`, `phase`, optional `key`/`statusCode`, `closure`, and a `receipt` when validation progressed far enough. Receipts contain descriptors and stage evidence, never credentials or object bytes. Keep secrets out of caller-supplied keys, scope, and target metadata, which are intentionally recorded. An `unknown` write may have reached storage; even a failed operation can have changed the pointer. Reconcile under the same external serialization before proceeding. There are no automatic retries or rollbacks.
 
 See the [maintenance guide](../../docs/packages/artifacts/artifact-publish.md) for details.
+
+## Durable operations across explicit backends
+
+`bindArtifactOperation`, `performArtifactOperation`, and `observeArtifactOperation`
+also support a single backend operation independently of object storage. They bind
+the request ID, target, source commit, capability, configuration digest, and sorted
+artifact descriptors into a SHA-256 fingerprint. Supported facts are
+`artifact-upload`, `deployment-create`, `deployment-ready`, and `activation`.
+They are separate facts; an accepted upload never implies a ready deployment or
+application registration.
+
+Provide a fresh `ArtifactOperationTransport` and a journal implementing real
+atomic `load` / `compareAndSet`. Execution starts only after a confirmed durable
+claim with `writeState: 'unknown'`. Existing request IDs cannot execute again.
+Recovery calls `observeArtifactOperation`, which never calls `execute`, including
+when the remote resource is absent. Choose a new request only after explicitly
+reconciling the previous attempt under consumer-owned coordination.
+Recovery accepts an `ArtifactOperationObserver` without an `execute` method. Its
+configuration digest identifies the original operation, even when an explicitly
+configured observer uses a different host or rotated observation credentials.
+
+```ts
+import {
+  bindArtifactOperation, performArtifactOperation, observeArtifactOperation,
+} from '@openge/forge-artifact-publish';
+
+const binding = await bindArtifactOperation({
+  requestId: 'release-42-static', sourceCommit,
+  target: adapter.target, capability: adapter.capability,
+  configurationSha256: adapter.configurationSha256,
+  inputs: [{ name: 'static-tree', sha256: treeDigest, byteLength: treeBytes }],
+});
+const limits = { timeoutMilliseconds: 300_000, closeTimeoutMilliseconds: 5_000 };
+const receipt = await performArtifactOperation(adapter, binding, journal, limits);
+// A later process uses the same binding and journal, with a fresh adapter:
+const recovered = await observeArtifactOperation(freshAdapter, binding, journal, limits);
+```
+
+An adapter must independently verify remote target, identity, source and artifact
+bytes/digests before returning `succeeded`; echoing a caller-supplied fingerprint
+does not authenticate provenance. The journal serializes one request ID, not all
+writers to a target. Cross-request coordination remains the consumer's job.
+Journal storage must be durable, atomic, and exclusively managed by trusted
+writers; the SDK does not install a database or a distributed lock.
+
+The Node entry exports `createCommandArtifactOperation`. It requires an explicit
+Foundation `CommandRunner`, absolute executable and working-directory paths, a
+replacement environment, a bounded output limit, an observation adapter and its
+version key. It uses an owned process scope bound to the operation fingerprint.
+Exit zero with confirmed normal scope closure means `accepted`; remote readiness
+still requires observation. Unsupported scopes fail without a fallback. Commands
+receive `FORGE_ARTIFACT_REQUEST_ID`, `FORGE_ARTIFACT_FINGERPRINT`, and
+`FORGE_ARTIFACT_SOURCE_COMMIT`. Parameters, environment values, command output and
+raw exception causes are excluded from receipts. Keep secrets out of recorded
+identifiers, targets, references and descriptors.
+
+`ArtifactOperationError` exposes a stable `code`, `closure`, and an optional
+`receipt`. Inspect `writeState`, `observation`, `journalState`, and `closure`
+separately. `journalState: 'unknown'` means the receipt contains an attempted
+record whose persistence is unconfirmed. Recovery preserves `attemptFailure`.
+There are no automatic retries, redeployments, rollback, or business registration.
+
+The [operation and migration guide](../../docs/packages/artifacts/artifact-operations.md)
+defines provider obligations, error semantics, examples and acceptance boundaries.
