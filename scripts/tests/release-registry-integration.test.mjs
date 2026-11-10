@@ -11,7 +11,7 @@ import { createPackageManagerInvocation } from '../package-manager-command.mjs';
 import { createPublicConsumerEnvironment } from '../release-environment.mjs';
 import { installRegistryConsumer, runInstallCommand } from '../release-install.mjs';
 import { createPropagationBudget } from '../release-propagation.mjs';
-import { verifyRegistryPackages } from '../release-registry.mjs';
+import { selectReleasePackages, verifyRegistryPackages } from '../release-registry.mjs';
 import { serveFetchRegistry } from './helpers/fetch-registry-server.mjs';
 import { captureReleaseOutput } from './helpers/release-output.mjs';
 import { discoverTestProcessSupervisor } from '../test-process-runner.mjs';
@@ -120,6 +120,28 @@ test('真实 pnpm 包装的首次元数据断连会重试并成功安装', { tim
     budget: createPropagationBudget({ timeoutMilliseconds: 30_000, intervalMilliseconds: 1 }),
   });
   assert.ok(requests.filter(({ install, url }) => install && !url.endsWith('.tgz')).length >= 2);
+});
+
+test('定向 registry 验证在网络阶段前展开消费依赖且不扩大发布目标', async context => {
+  const root = await fixture(context);
+  const makePackage = async (name, consumerDependencies = []) => {
+    const packageRoot = resolve(root, name);
+    await mkdir(packageRoot);
+    await writeFile(resolve(packageRoot, 'package.verify.json'), JSON.stringify({ browserExports: [], consumerDependencies }));
+    return { name, version: '1.0.0', packageRoot, exports: [], bins: [], workspaceDependencies: [] };
+  };
+  const core = await makePackage('core', ['consumer-provider']), provider = await makePackage('consumer-provider', ['missing-consumer']);
+  const model = { repositoryRoot: root, packages: [core, provider] };
+  const requested = [];
+  await assert.rejects(verifyRegistryPackages({ model, mode: 'stable', packageNames: ['core'],
+    policy: { registry: 'https://registry.invalid', pollTimeoutMilliseconds: 1000 },
+    verificationRoot: resolve(root, '.tmp', 'verification'),
+    fetch: async url => { requested.push(url); throw new Error('stop before network'); },
+    budget: { remaining: () => 1000, retry: operation => operation() },
+  }), /unknown workspace package: missing-consumer/u);
+  assert.deepEqual(selectReleasePackages(model.packages, 'stable', ['core']).targets.map(value => value.name), ['core']);
+  assert.deepEqual(core.workspaceDependencies, []);
+  assert.equal(requested.length, 0);
 });
 
 test('安装阶段超时会回收实际子进程，耗尽预算后不再重试', { timeout: 10_000 }, async (context) => {
