@@ -16,7 +16,7 @@ export const prebuiltMarkerPath = '/.well-known/forge-prebuilt.json';
 export const prebuiltManifestLimit = 4_194_304;
 const manifestLimit = prebuiltManifestLimit;
 export function prebuiltArtifactPaths(cwd: string): { root: string; uploadRoot: string; manifestPath: string } {
-  const uploadRoot = resolve(cwd, '.tmp/forge-vercel-release/prebuilt');
+  const uploadRoot = resolve(cwd, 'state/forge-vercel-release/prebuilt');
   return { root: resolve(cwd, '.vercel/output'), uploadRoot, manifestPath: resolve(uploadRoot, '.vercel/forge-artifact.json') };
 }
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');

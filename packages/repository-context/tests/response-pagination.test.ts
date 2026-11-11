@@ -1,18 +1,22 @@
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { afterEach, expect, test } from 'vitest';
+import { afterAll, afterEach, beforeAll, expect, test as defineTest } from 'vitest';
 import { buildRepositoryCorpus } from '../src/node.js';
 import { runRepositoryContextCli } from '../src/node/cli.js';
 import { createTemporaryRepository, createTestTaskScope, type TemporaryRepository } from './node-fixtures.js';
 
 const repositories: TemporaryRepository[] = [];
+const sharedRepositories: TemporaryRepository[] = [];
 const testTasks = createTestTaskScope();
-afterEach(async () => {
+const test = (name: string, operation: () => Promise<unknown>) => defineTest(name, () => testTasks.run(operation));
+const cleanupRepositories = async (owned: TemporaryRepository[]) => {
   const errors = await testTasks.drain();
-  const cleanup = await Promise.allSettled(repositories.splice(0).map((repository) => repository.cleanup()));
+  const cleanup = await Promise.allSettled(owned.splice(0).map((repository) => repository.cleanup()));
   for (const result of cleanup) if (result.status === 'rejected') errors.push(result.reason);
   if (errors.length > 0) throw new AggregateError(errors, 'test task or repository cleanup failed');
-});
+};
+afterEach(() => cleanupRepositories(repositories));
+afterAll(() => cleanupRepositories(sharedRepositories));
 
 const run = async (args: readonly string[]) => {
   const outputs: string[] = [];
@@ -27,9 +31,9 @@ const run = async (args: readonly string[]) => {
 const createPagedRepository = async ({
   leafCount = 0,
   oversizedText = false,
-}: { leafCount?: number; oversizedText?: false | 'ascii' | 'unicode' } = {}) => {
+}: { leafCount?: number; oversizedText?: false | 'ascii' | 'unicode' } = {}, owned = repositories) => {
   const repository = await createTemporaryRepository();
-  repositories.push(repository);
+  owned.push(repository);
   await writeFile(join(repository.rootDir, 'src', 'hub.ts'), 'export function hub(): string { return "hub"; }\n', 'utf8');
   await Promise.all(Array.from({ length: leafCount }, (_, index) => writeFile(
     join(repository.rootDir, 'src', `leaf-${index}.ts`),
@@ -55,8 +59,16 @@ const createPagedRepository = async ({
   return repository;
 };
 
-test('investigate pages high-indegree relations within the requested byte budget', async () => testTasks.run(async () => {
-  const repository = await createPagedRepository({ leafCount: 40 });
+let highIndegree: TemporaryRepository | undefined;
+// 三个只读协议用例共享同一份40来源输入；修改源码/切代用例仍创建独立仓库。
+beforeAll(() => testTasks.run(async () => { highIndegree = await createPagedRepository({ leafCount: 40 }, sharedRepositories); }));
+const highIndegreeRepository = () => {
+  if (!highIndegree) throw new Error('PAGINATION_FIXTURE_NOT_READY');
+  return highIndegree;
+};
+
+test('investigate pages high-indegree relations within the requested byte budget', async () => {
+  const repository = highIndegreeRepository();
   const base = [
     'investigate', '--root', repository.rootDir, '--index', repository.indexRoot,
     '--query', 'hub', '--scope', 'src/', '--view', 'relations', '--max-bytes', '4096',
@@ -79,7 +91,7 @@ test('investigate pages high-indegree relations within the requested byte budget
   } while (cursor !== null);
   expect(seen.size).toBe(40);
   expect(pageCount).toBeGreaterThan(1);
-}));
+});
 test('investigate trims an oversized single-line excerpt without claiming completeness', async () => {
   const repository = await createPagedRepository({ oversizedText: 'ascii' });
   const page = await run([
@@ -130,7 +142,7 @@ test('investigate explicitly identifies a complete small source file', async () 
 });
 
 test('continuation cursor is bound to the original investigation request', async () => {
-  const repository = await createPagedRepository({ leafCount: 16 });
+  const repository = highIndegreeRepository();
   const first = await run([
     'investigate', '--root', repository.rootDir, '--index', repository.indexRoot,
     '--query', 'hub', '--scope', 'src/', '--view', 'relations', '--max-bytes', '4096',
@@ -228,7 +240,7 @@ test('rejects an invalid response budget before index I/O', async () => {
   expect((result.parsed.diagnostics as Array<{ code: string }>)[0]?.code).toBe('INVALID_ARGUMENT');
 });
 test('rejects a cursor whose offset was modified without a matching checksum', async () => {
-  const repository = await createPagedRepository({ leafCount: 16 });
+  const repository = highIndegreeRepository();
   const first = await run([
     'investigate', '--root', repository.rootDir, '--index', repository.indexRoot,
     '--query', 'hub', '--scope', 'src/', '--view', 'relations', '--max-bytes', '4096',

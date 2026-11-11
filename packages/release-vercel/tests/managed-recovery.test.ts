@@ -12,9 +12,15 @@ import type { ReleaseTransport } from '../src/contracts.js';
 import { runRelease } from '../src/node.js';
 import { assertManagedRemoteSettled } from '../src/node/managed-remote-state.js';
 import { protocolComponentSlot } from './helpers/component-session.js';
+import { createTestTaskScope } from '../../../scripts/test-task-scope.mjs';
 
 const fixtures: Awaited<ReturnType<typeof managedFixture>>[] = [];
-afterEach(async () => { for (const f of fixtures.splice(0)) await f.dispose(); });
+const testTasks = createTestTaskScope();
+afterEach(async () => {
+  const errors = await testTasks.drain();
+  for (const f of fixtures.splice(0)) try { await f.dispose(); } catch (error) { errors.push(error); }
+  if (errors.length) throw new AggregateError(errors, 'recovery test task or fixture cleanup failed');
+});
 // 协议组件仅减少前置回执/状态写入的来源跟踪查询；被测公开恢复入口仍执行真实准入。
 // 来源、remote、anchor 专项显式使用 admission，保留其完整准备边界。
 const fixture = async (boundary: 'protocol' | 'admission' = 'protocol') => {
@@ -89,7 +95,7 @@ it('classifies real Git ancestry without fetching or changing refs', async () =>
   expect(await classifyRemoteRef(f.execution, f.source.sha, 'f'.repeat(40))).toBe('unknown');
   expect(f.ref('main')).toBe(f.initial);
 });
-it('recovers a retained old lock with real closed-process evidence and a pending install junction', async () => {
+it('recovers a retained old lock with real closed-process evidence and a pending install junction', async () => testTasks.run(async () => {
   const f = await fixture();
   const worker = resolve(import.meta.dirname, 'helpers/closed-managed-worker.mjs');
   const result = await promisify(execFile)(process.execPath, [worker, f.cwd], { cwd: f.root, windowsHide: true, timeout: 120_000, encoding: 'utf8' });
@@ -113,7 +119,7 @@ it('recovers a retained old lock with real closed-process evidence and a pending
   expect(f.ref('dev')).toBe(f.initial); expect(f.ref('main')).toBe(f.initial);
   const reused = await openManagedSlot(f.source, f.execution);
   expect(reused.slotId).toBe(f.slot.slotId); await reused.lock.release();
-});
+}));
 it('routes public status through the frozen receipt even when current config no longer validates', async () => {
   const f = await fixture('admission'); await writeFile(resolve(f.cwd, 'release.config.json'), '{"later":true}'); f.commit();
   const transport: ReleaseTransport = { api: async path => path.startsWith('/v9/projects') ? { id: 'prj_fixture', accountId: 'team_fixture', link: { type: 'github', org: 'fixture', repo: 'repository', repoId: 101, productionBranch: 'main', gitCredentialId: 'fixture', deployHooks: [] } } : { deployments: [] }, buildInfo: async () => ({}) };

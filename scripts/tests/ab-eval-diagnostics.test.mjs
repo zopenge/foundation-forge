@@ -8,7 +8,7 @@ import test from 'node:test';
 import { main as abEvalMain } from '../ab-eval.mjs';
 import { diagnoseEvaluation } from '../ab-eval/diagnostics.mjs';
 
-const tempRoot=resolve(import.meta.dirname,'../../.tmp');
+const tempRoot=resolve(import.meta.dirname,'../../tmp');
 const writeJson=(path,value)=>writeFile(path,JSON.stringify(value));
 test('diagnosis extracts token regression and repeated missing scope evidence',async()=>{
   await mkdir(tempRoot,{recursive:true});

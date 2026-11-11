@@ -15,7 +15,7 @@ export async function verifyNotStartedConsumer({ cwd, binary, sha, execute }) {
   const report = JSON.parse(worker.stdout);
   assert.equal(report.candidateSha, sha); assert.equal(report.effects.developmentPush, 'not-attempted');
   assert.equal(report.effects.releasePush, 'not-attempted');
-  const statePath = resolve(cwd, '.tmp/release-slot/state.json'), receiptPath = resolve(cwd, '.tmp/release-slot/latest-check.json');
+  const statePath = resolve(cwd, 'state/release-slot/state.json'), receiptPath = resolve(cwd, 'state/release-slot/latest-check.json');
   const state = await readFile(statePath), receipt = await readFile(receiptPath);
   assert.equal(JSON.parse(receipt).report.error.code, 'CANCELLED');
   const recovered = JSON.parse(execute(cwd, process.execPath, [binary, 'recover', '--cwd', cwd]));

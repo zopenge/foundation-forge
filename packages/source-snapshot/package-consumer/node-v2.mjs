@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import process from 'node:process';
 import {
@@ -13,7 +12,9 @@ import {
 const binaries = JSON.parse(process.env.PACKAGE_CONSUMER_BINARIES ?? '{}');
 const bin = binaries['forge-source-snapshot'];
 assert.equal(typeof bin, 'string');
-const base = await mkdtemp(join(tmpdir(), 'source-snapshot-neutral-consumer-'));
+const temporaryRoot = process.env.FORGE_CHECK_JOB_TEMP;
+if (!temporaryRoot) throw new Error('PACKAGE_CONSUMER_TEMP_REQUIRED');
+const base = await mkdtemp(join(temporaryRoot, 'source-snapshot-neutral-consumer-'));
 const source = join(base, 'source'); const target = join(base, 'target'); const state = join(base, 'state');
 await Promise.all([mkdir(source), mkdir(target), mkdir(state)]);
 try {

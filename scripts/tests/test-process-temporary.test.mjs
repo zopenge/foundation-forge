@@ -5,9 +5,9 @@ import test from 'node:test';
 import { runTestProcess } from '../test-process-runner.mjs';
 
 const repositoryRoot = resolve(import.meta.dirname, '../..');
-const temporaryBase = resolve(repositoryRoot, '.tmp/test-work');
+const temporaryBase = resolve(repositoryRoot, 'tmp/test-work');
 const fixture = async t => {
-  const base = resolve(repositoryRoot, '.tmp/tests');
+  const base = resolve(repositoryRoot, 'tmp/tests');
   await mkdir(base, { recursive: true });
   const root = await mkdtemp(resolve(base, 'temporary-lifecycle-')), owned = [];
   t.after(async () => {

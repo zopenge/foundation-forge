@@ -113,7 +113,7 @@ it('includes identity waiting in the total manual termination budget', async () 
 });
 
 it('bounds pipe closure after natural exit while its descendant owns inherited output', async () => {
-  const marker = fileURLToPath(new URL('../../../.tmp/logs/command-runner-pipe-' + randomUUID() + '.txt', import.meta.url));
+  const marker = fileURLToPath(new URL('../../../tmp/logs/command-runner-pipe-' + randomUUID() + '.txt', import.meta.url));
   await mkdir(dirname(marker), { recursive: true });
   try {
     const { runner, terminations } = makeRunner({ terminationTimeoutMs: 60 });

@@ -18,25 +18,25 @@ it('accepts a real autocrlf checkout of committed ignore rules', async () => {
   git(f.cwd, 'add', '--', '.gitignore');
   expect(git(f.cwd, 'diff', '--cached', '--', '.gitignore')).toBe('');
   expect(git(f.cwd, 'status', '--porcelain=v1', '--untracked-files=no')).toBe('');
-  expect(await readFile(resolve(f.cwd, '.gitignore'), 'utf8')).toBe('.tmp/\r\nnode_modules/\r\n');
+  expect(await readFile(resolve(f.cwd, '.gitignore'), 'utf8')).toBe('tmp/\r\nstate/\r\nnode_modules/\r\n');
   expect(git(f.cwd, 'diff', 'HEAD', '--', '.gitignore')).toBe('');
   const source = await freezeManagedSource(f.cwd, 'release.config.json', f.execution);
-  await expect(resolveManagedPaths(source, f.execution)).resolves.toMatchObject({ slotRoot: resolve(f.cwd, '.tmp/release-slot') });
+  await expect(resolveManagedPaths(source, f.execution)).resolves.toMatchObject({ slotRoot: resolve(f.cwd, 'state/release-slot') });
 });
 
 it('rejects changed ignore rules even when their line endings are CRLF', async () => {
   const f = await fixture(), source = await freezeManagedSource(f.cwd, 'release.config.json', f.execution);
-  await writeFile(resolve(f.cwd, '.gitignore'), '.tmp/\r\nnode_modules/\r\nuncommitted/\r\n');
+  await writeFile(resolve(f.cwd, '.gitignore'), 'tmp/\r\nstate/\r\nnode_modules/\r\nuncommitted/\r\n');
   await expect(resolveManagedPaths(source, f.execution)).rejects.toMatchObject({ code: 'SLOT_PATH', details: { reason: 'IGNORE_NOT_COMMITTED' } });
 });
 
 it('does not let a clean filter conceal changed ignore rules', async () => {
   const f = await fixture(), source = await freezeManagedSource(f.cwd, 'release.config.json', f.execution);
   const filter = resolve(f.root, 'filter.cjs');
-  await writeFile(filter, 'require("node:fs").readFileSync(0);process.stdout.write(".tmp/\\nnode_modules/\\n")');
+  await writeFile(filter, 'require("node:fs").readFileSync(0);process.stdout.write("tmp/\\nstate/\\nnode_modules/\\n")');
   await writeFile(resolve(f.cwd, '.git/info/attributes'), '.gitignore filter=fixture\n');
   git(f.cwd, 'config', 'filter.fixture.clean', `"${process.execPath.replaceAll('\\', '/')}" "${filter.replaceAll('\\', '/')}"`);
-  await writeFile(resolve(f.cwd, '.gitignore'), '.tmp/\nnode_modules/\nuncommitted/\n');
+  await writeFile(resolve(f.cwd, '.gitignore'), 'tmp/\nstate/\nnode_modules/\nuncommitted/\n');
   expect(git(f.cwd, 'hash-object', '.gitignore')).toBe(git(f.cwd, 'rev-parse', 'HEAD:.gitignore'));
   expect(git(f.cwd, 'diff', 'HEAD', '--', '.gitignore')).toBe('');
   await expect(resolveManagedPaths(source, f.execution)).rejects.toMatchObject({ code: 'SLOT_PATH', details: { reason: 'IGNORE_NOT_COMMITTED' } });
@@ -47,7 +47,7 @@ it.each(['global', 'info-exclude'])('rejects management rules supplied only by %
   await writeFile(resolve(f.cwd, '.gitignore'), 'node_modules/\n'); f.commit();
   const source = await freezeManagedSource(f.cwd, 'release.config.json', f.execution);
   const path = mode === 'global' ? resolve(f.root, 'global-ignore') : resolve(f.cwd, '.git/info/exclude');
-  await writeFile(path, '.tmp/\n');
+  await writeFile(path, 'tmp/\nstate/\n');
   if (mode === 'global') git(f.cwd, 'config', 'core.excludesFile', path);
   await expect(resolveManagedPaths(source, f.execution)).rejects.toMatchObject({ code: 'SLOT_PATH' });
 });

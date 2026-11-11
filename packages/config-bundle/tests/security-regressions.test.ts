@@ -4,11 +4,17 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createConfigBundle, decodeConfigBundle } from '../src/index.js';
 import { applyConfigBundleImport, inspectConfigBundleImport } from '../src/node.js';
 import { files } from '../src/node/files.js';
-let root: string;
+import { ensureTestTemporaryDirectory } from '../../../scripts/test-temporary-directory.mjs';
+let root = '';
 const options = { conflictPolicy: 'overwrite', pathCaseSensitivity: 'case-insensitive' } as const;
 const bundle = async (entries: Record<string, string>) => decodeConfigBundle(await createConfigBundle(Object.entries(entries).map(([path, content]) => ({ path, content: new TextEncoder().encode(content) })), { createdAt: '2026-09-04T00:00:00Z' }));
-beforeEach(async () => { root = await fs.mkdtemp(path.resolve(import.meta.dirname, '../../../.tmp/config-bundle-regression-')); });
-afterEach(async () => { vi.restoreAllMocks(); await fs.rm(root, { recursive: true, force: true }); });
+beforeEach(async () => {
+    root = '';
+    const repositoryRoot = path.resolve(import.meta.dirname, '../../..');
+    const parent = await ensureTestTemporaryDirectory(repositoryRoot, path.resolve(repositoryRoot, 'tmp'));
+    root = await fs.mkdtemp(path.join(parent, 'config-bundle-regression-'));
+});
+afterEach(async () => { vi.restoreAllMocks(); if (root) await fs.rm(root, { recursive: true, force: true }); });
 it('rejects case aliases in ancestor components before any writes', async () => {
     const b = await bundle({ 'Config/a': 'a', 'config/b': 'b' });
     expect((await inspectConfigBundleImport(root, b, options)).conflicts).toEqual(['Config/a', 'config/b']);

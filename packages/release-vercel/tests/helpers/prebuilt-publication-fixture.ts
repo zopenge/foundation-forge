@@ -27,7 +27,7 @@ async function fixture(withAlias = false) {
   source: { ...value.config.source, prepare: [{ command: 'node', args: ['-e',
     'const f=require("node:fs");f.mkdirSync(".vercel/output/static",{recursive:true});f.writeFileSync(".vercel/output/config.json",JSON.stringify({version:3}));f.writeFileSync(".vercel/output/static/index.html","candidate");'] }] } };
   await writeFile(resolve(value.cwd, 'release.config.json'), JSON.stringify(config));
-  await writeFile(resolve(value.cwd, '.gitignore'), '.tmp/\nnode_modules/\n.vercel/\n'); const sha = value.commit();
+  await writeFile(resolve(value.cwd, '.gitignore'), 'tmp/\nstate/\nnode_modules/\n.vercel/\n'); const sha = value.commit();
   boundary.counter = resolve(value.root, 'create-count.txt');
   let aliased: string | undefined, promotions = 0, assignments = 0; const paths: string[] = [];
   const versionBindings = new Map<string, string>();
@@ -44,7 +44,7 @@ async function fixture(withAlias = false) {
       if (path.startsWith('/v13/deployments/dpl_candidate')) {
         const id = path.split('/')[3]?.split('?')[0]; if (!id) throw new Error('deployment ID required');
         if (!markers.has(id)) markers.set(id, JSON.parse(await readFile(resolve(value.cwd,
-          '.tmp/release-slot/checkout/.tmp/forge-vercel-release/prebuilt/.vercel/output/static/.well-known/forge-prebuilt.json'), 'utf8')));
+          'state/release-slot/checkout/state/forge-vercel-release/prebuilt/.vercel/output/static/.well-known/forge-prebuilt.json'), 'utf8')));
         return { id, ownerId: 'team_fixture', projectId: 'prj_fixture', target: 'production', source: 'cli', readyState: 'READY', url: `${id.slice(4)}.vercel.app` };
       }
       if (path.startsWith('/v4/aliases/')) {

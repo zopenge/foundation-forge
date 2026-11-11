@@ -32,8 +32,8 @@ test('consumer-only dependencies are packed without adding a runtime dependency 
 });
 
 test('consumer preparation reads only the reachable formal metadata and includes transitive test dependencies', async context => {
-  await mkdir(resolve('.tmp/tests'), { recursive: true });
-  const root = await mkdtemp(resolve('.tmp/tests/consumer-select-'));
+  await mkdir(resolve('tmp/tests'), { recursive: true });
+  const root = await mkdtemp(resolve('tmp/tests/consumer-select-'));
   context.after(() => rm(root, { recursive: true, force: true }));
   const packages = [];
   for (const [name, dependencies, consumerDependencies] of [['base', [], []], ['core', ['base'], ['provider']], ['provider', ['base'], []]]) {

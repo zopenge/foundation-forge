@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import { expect, test } from 'vitest';
 
 test('process profiling preserves callback, promisified and synchronous command results without logging arguments', async () => {
-  const temporary = fileURLToPath(new URL('../../../.tmp/', import.meta.url));
+  const temporary = fileURLToPath(new URL('../../../tmp/', import.meta.url));
   await mkdir(temporary, { recursive: true });
   const root = await mkdtemp(resolve(temporary, 'process-profile-test-'));
   try {

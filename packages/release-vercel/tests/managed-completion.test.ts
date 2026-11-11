@@ -18,21 +18,21 @@ it('executes completion after exact production proof under the original lock, na
     catch (error) {
       const failures = [error];
       try {
-        const state = JSON.parse(await readFile(resolve(value.cwd, '.tmp/release-slot/state.json'), 'utf8'));
+        const state = JSON.parse(await readFile(resolve(value.cwd, 'state/release-slot/state.json'), 'utf8'));
         const observation = { stage: state.stage, completion: state.completion?.status,
           lastCommands: state.processes.slice(-3).map((item: { name: string; status: string }) => ({ name: item.name, status: item.status })) };
         failures.push(new Error(JSON.stringify(observation)));
       } catch (readError) { failures.push(readError); }
       throw new AggregateError(failures, 'completion readiness failed', { cause: error });
     }
-    const live = JSON.parse(await readFile(resolve(value.cwd, '.tmp/release-slot/state.json'), 'utf8'));
+    const live = JSON.parse(await readFile(resolve(value.cwd, 'state/release-slot/state.json'), 'utf8'));
     expect(live.completion).toMatchObject({ status: 'running', attempts: [{ status: 'running' }] });
     const concurrent = await runRelease({ command: 'check', cwd: value.cwd, transport: value.transport });
     expect(concurrent, JSON.stringify(concurrent.error)).toMatchObject({ ok: false,
       error: { code: 'RECOVERY_REQUIRED', details: { reason: 'OWNER_NOT_INACTIVE', owner: 'active', runId: live.runId } } });
     const status = await runRelease({ command: 'status', cwd: value.cwd, transport: value.transport });
     expect(status, JSON.stringify(status.error)).toMatchObject({ ok: false, completion: { status: 'running' } });
-    expect(git(resolve(value.cwd, '.tmp/release-slot/checkout'), 'rev-parse', 'HEAD')).toBe(value.sha);
+    expect(git(resolve(value.cwd, 'state/release-slot/checkout'), 'rev-parse', 'HEAD')).toBe(value.sha);
   } finally { await writeFile(value.control, 'ok'); }
   const report = await pending;
   expect(report, JSON.stringify(report.error)).toMatchObject({ ok: true, stage: 'complete', processes: { status: 'closed' },
@@ -41,12 +41,12 @@ it('executes completion after exact production proof under the original lock, na
   expect(report).not.toHaveProperty('completionInput');
   const observed = await value.results();
   expect(observed).toHaveLength(1);
-  expect(observed[0]).toMatchObject({ cwd: resolve(value.cwd, '.tmp/release-slot/checkout'), lockRunId: report.runId,
+  expect(observed[0]).toMatchObject({ cwd: resolve(value.cwd, 'state/release-slot/checkout'), lockRunId: report.runId,
     context: { sourceSha: value.sha, configSha256: report.configSha256, artifactSha256: report.prebuilt?.artifactSha256,
       productionUrl: 'https://fixture.example.invalid', deploymentId: 'dpl_candidate' },
     metadata: { FORGE_RELEASE_COMMAND: 'publish', FORGE_RELEASE_SHA: value.sha, FORGE_RELEASE_URL: 'https://fixture.example.invalid',
       FORGE_RELEASE_PHASE: 'completion', FORGE_RELEASE_DEPLOYMENT_ID: 'dpl_candidate', FORGE_RELEASE_VERSION_URL: `https://fixture-${value.sha}.vercel.app` } });
-  const state = JSON.parse(await readFile(resolve(value.cwd, '.tmp/release-slot/state.json'), 'utf8'));
+  const state = JSON.parse(await readFile(resolve(value.cwd, 'state/release-slot/state.json'), 'utf8'));
   const command = state.processes.find((item: { name: string }) => item.name === 'completion:0');
   expect(command).toMatchObject({ status: 'closed', closure: { exitCode: 0, ownedScope: { status: 'closed', reason: 'normal', empty: true } } });
   expect(command.terminalSha256).toMatch(/^[a-f0-9]{64}$/u);
@@ -61,12 +61,12 @@ it('retries a failed production completion through the public entry without repe
   expect(failed, JSON.stringify(failed.error)).toMatchObject({ ok: false, error: { code: 'COMPLETION_FAILED' },
     processes: { status: 'closed' }, prebuilt: { createEffect: 'accepted', promoteEffect: 'accepted', promotionVerified: true },
     completion: { status: 'failed', attempts: [{ status: 'failed', jobs: [{ status: 'failed' }] }] } });
-  const receipt = await readFile(resolve(value.cwd, '.tmp/release-slot/latest-publish.json'));
+  const receipt = await readFile(resolve(value.cwd, 'state/release-slot/latest-publish.json'));
   const status = await runRelease({ command: 'status', cwd: value.cwd, sha: value.sha, transport: value.transport });
   expect(status, JSON.stringify(status.error)).toMatchObject({ ok: false, completion: { status: 'failed' },
     processes: { status: 'closed' }, error: { code: 'RECOVERY_REQUIRED', details: { reason: 'COMPLETION_PENDING' } } });
-  expect(git(resolve(value.cwd, '.tmp/release-slot/checkout'), 'rev-parse', 'HEAD')).toBe(value.sha);
-  expect(await readFile(resolve(value.cwd, '.tmp/release-slot/latest-publish.json'))).toEqual(receipt);
+  expect(git(resolve(value.cwd, 'state/release-slot/checkout'), 'rev-parse', 'HEAD')).toBe(value.sha);
+  expect(await readFile(resolve(value.cwd, 'state/release-slot/latest-publish.json'))).toEqual(receipt);
   expect(await value.counts()).toEqual({ creates: 1, promotions: 1, assignments: 1 });
   expect(await value.results()).toHaveLength(1);
   await writeFile(value.control, 'ok');
@@ -78,6 +78,6 @@ it('retries a failed production completion through the public entry without repe
   expect(resumed.completion?.attempts[1]).toMatchObject({ runId: resumed.runId, status: 'completed' });
   expect(await value.results()).toHaveLength(2);
   expect(await value.counts()).toEqual({ creates: 1, promotions: 1, assignments: 1 });
-  expect(await readFile(resolve(value.cwd, '.tmp/release-slot/latest-publish.json'))).toEqual(receipt);
-  expect(git(resolve(value.cwd, '.tmp/release-slot/checkout'), 'rev-parse', 'HEAD')).toBe(value.sha);
+  expect(await readFile(resolve(value.cwd, 'state/release-slot/latest-publish.json'))).toEqual(receipt);
+  expect(git(resolve(value.cwd, 'state/release-slot/checkout'), 'rev-parse', 'HEAD')).toBe(value.sha);
 }, 300_000);

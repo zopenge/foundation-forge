@@ -1,6 +1,6 @@
 ﻿import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { sourceTestTemporaryDirectory } from '../temporary-directory.js';
 import { afterEach, expect, test } from 'vitest';
 import { buildSourceTextPackage, createTextSnapshotManifest, stageSourceTextFile } from '../../src/index.js';
 import {
@@ -15,7 +15,7 @@ import { acquireSourceSnapshotLock } from '../../src/node/lock.js';
 
 const roots: string[] = [];
 const makeRoot = async () => {
-  const base = await mkdtemp(join(tmpdir(), 'snapshot-pins-')); roots.push(base);
+  const base = await mkdtemp(join(await sourceTestTemporaryDirectory(), 'snapshot-pins-')); roots.push(base);
   const source = join(base, 'source'); const targetRoot = join(base, 'target'); const state = join(base, 'state');
   await Promise.all([mkdir(source), mkdir(targetRoot), mkdir(state)]);
   return { base, source, targetRoot, lockPath: join(state, 'snapshot.lock'), ownerId: 'pin-owner' };

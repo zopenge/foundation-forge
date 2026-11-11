@@ -187,7 +187,7 @@ test('Posix reader rejects a native command launch failure instead of reporting 
   const reader = createPosixProcessIdentityReader({
     runner: request => runProcessCommand({
       ...request,
-      command: resolve('.tmp', 'identity-reader-command-does-not-exist'),
+      command: resolve('tmp', 'identity-reader-command-does-not-exist'),
     }),
   });
   await expect(reader.readIdentity({ pid: process.pid })).rejects.toMatchObject({
@@ -223,7 +223,7 @@ test('Posix reader rejects nonempty output with a failed exit status', async () 
 test.runIf(process.platform === 'win32')('Windows reader works without cmdlet module loading', async context => {
   const { startIdentityCommand } = await import('./helpers/identity-command.js');
   const { readIdentityPair } = await import('./helpers/identity-read-pair.js');
-  const traceBase = fileURLToPath(new URL('../../../.tmp/', import.meta.url));
+  const traceBase = fileURLToPath(new URL('../../../tmp/', import.meta.url));
   await mkdir(traceBase, { recursive: true });
   const traceRoot = await mkdtemp(resolve(traceBase, 'windows-reader-')), traceFiles: string[] = [];
   let calls = 0;

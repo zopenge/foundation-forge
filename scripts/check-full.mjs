@@ -121,8 +121,8 @@ export const runFullCheck = async ({ run = runPnpmScript, verify = verifyLocalPa
     if (!lateLint) await timed('lint', () => run('lint', { signal: activeSignal }));
     await timed('pack:check', () => verify({
       repositoryRoot,
-      verificationRoot: resolve(repositoryRoot, '.tmp', 'package-verification'),
-      tarballCacheRoot: resolve(repositoryRoot, '.tmp', 'check-cache', 'packs'),
+      verificationRoot: resolve(repositoryRoot, 'tmp', 'package-verification'),
+      tarballCacheRoot: resolve(repositoryRoot, 'tmp', 'check-cache', 'packs'),
       onBuilt, onConsumerReady, onBeforeCleanup, serialConsumerChecks: overlapConsumers, signal: activeSignal,
     }));
     if (!built) throw new Error('package build did not complete');

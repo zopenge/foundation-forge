@@ -49,7 +49,7 @@ export const runQuickCheck = async ({ signal, repositoryRoot = fileURLToPath(new
   signal?.throwIfAborted();
   const model = await discover({ repositoryRoot }), fingerprint = await collect(repositoryRoot);
   let state;
-  try { state = loadState ? await loadState() : JSON.parse(await readFile(resolve(repositoryRoot, '.tmp/check-cache/state.json'), 'utf8')); }
+  try { state = loadState ? await loadState() : JSON.parse(await readFile(resolve(repositoryRoot, 'tmp/check-cache/state.json'), 'utf8')); }
   catch { throw fullCheckRequired('BASELINE_UNAVAILABLE'); }
   const packages = await Promise.all(model.packages.map(async value => {
     const verification = value.verification ?? await loadPackageVerification(value);

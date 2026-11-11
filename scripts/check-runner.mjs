@@ -19,7 +19,7 @@ import { openCheckCancellation } from './check-cancellation.mjs';
 import { readFastCheckResources, resolveCheckOptions } from './check-options.mjs';
 
 const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
-const cacheRoot = resolve(repositoryRoot, '.tmp', 'check-cache');
+const cacheRoot = resolve(repositoryRoot, 'tmp', 'check-cache');
 const tarballCacheRoot = resolve(cacheRoot, 'packs');
 const statePath = resolve(cacheRoot, 'state.json');
 const scriptPath = fileURLToPath(import.meta.url);

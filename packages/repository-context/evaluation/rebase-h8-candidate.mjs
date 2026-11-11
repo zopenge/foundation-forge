@@ -7,7 +7,7 @@ import { gunzipSync } from 'node:zlib';
 
 import { freezePack, validatePack } from '../../../scripts/ab-eval/manifest.mjs';
 
-const temporaryRoot=resolve(import.meta.dirname,'../../../.tmp');
+const temporaryRoot=resolve(import.meta.dirname,'../../../tmp');
 const fail=code=>Object.assign(new Error(code),{code});
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex').toUpperCase();
 const inside=(base,path)=>path===base||path.startsWith(base+sep);

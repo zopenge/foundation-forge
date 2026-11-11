@@ -55,7 +55,7 @@ export async function runCiCheck(args, signal) {
     return;
   }
   if (command.kind === 'shard' || command.kind === 'coverage-shard') {
-    const shard = parseCoverageShard(command.shard), directory = resolve(repositoryRoot, '.tmp/ci-shards');
+    const shard = parseCoverageShard(command.shard), directory = resolve(repositoryRoot, 'tmp/ci-shards');
     try { await lstat(resolve(directory, `part-${shard.index}`)); throw new Error('CI_SHARD_OUTPUT_EXISTS'); }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
     let partial, context;

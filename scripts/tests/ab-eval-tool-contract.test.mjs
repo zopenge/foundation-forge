@@ -15,7 +15,7 @@ import { executeEvaluation, prepareEvaluation,
   verifyEvaluationConnections } from '../ab-eval/workflow.mjs';
 import { makeTarballFixture } from './ab-eval-tarball-fixture.mjs';
 
-const tempRoot=resolve(import.meta.dirname,'../../.tmp');
+const tempRoot=resolve(import.meta.dirname,'../../tmp');
 const sha=value=>createHash('sha256').update(value).digest('hex').toUpperCase();
 const schema={type:'object',additionalProperties:false,
   required:['query'],properties:{query:{type:'string'}}};

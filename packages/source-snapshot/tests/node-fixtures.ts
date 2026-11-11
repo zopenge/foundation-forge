@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { sourceTestTemporaryDirectory } from './temporary-directory.js';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 const exec = promisify(execFile);
@@ -9,7 +9,7 @@ export const runGit = async (cwd: string, args: readonly string[]): Promise<stri
   return result.stdout;
 };
 export const createRepository = async (): Promise<string> => {
-  const root = await mkdtemp(join(tmpdir(), 'forge-source-snapshot-'));
+  const root = await mkdtemp(join(await sourceTestTemporaryDirectory(), 'forge-source-snapshot-'));
   await runGit(root, ['init', '--quiet']);
   await writeFile(join(root, '.gitignore'), 'ignored/\n', 'utf8');
   await runGit(root, ['add', '.gitignore']);

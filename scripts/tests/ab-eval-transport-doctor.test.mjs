@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import test from 'node:test';
 
@@ -14,9 +14,32 @@ test('transport doctor CLI requires an explicit executable and new output path',
     {code:'TRANSPORT_PROBE_OUTPUT_OUTSIDE_TEMP'});
 });
 
+test('transport doctor creates its private temporary ancestors on first use',async()=>{
+  await mkdir(resolve('tmp/tests'),{recursive:true});
+  const fixture=await mkdtemp(resolve('tmp/tests','transport-first-use-'));
+  const repositoryRoot=resolve(fixture,'repository');
+  await mkdir(repositoryRoot);
+  const outputDir=resolve(repositoryRoot,'tmp/nested/probe');
+  const stop=new Error('stop before opening a provider');
+  let calls=0;
+  const processRunner=async()=>{calls++;throw stop;};
+  try{
+    await assert.rejects(lstat(resolve(repositoryRoot,'tmp')),{code:'ENOENT'});
+    await assert.rejects(probeTransportObservation({executable:'fake-opencode',
+      repositoryRoot,outputDir,processRunner}),error=>error===stop);
+    assert.equal((await lstat(outputDir)).isDirectory(),true);
+    assert.equal(calls,1);
+    await assert.rejects(probeTransportObservation({executable:'fake-opencode',
+      repositoryRoot,outputDir:resolve(repositoryRoot,'outside'),processRunner}),
+    {code:'TRANSPORT_PROBE_OUTPUT_OUTSIDE_TEMP'});
+    assert.equal(calls,1);
+    await assert.rejects(lstat(resolve(repositoryRoot,'outside')),{code:'ENOENT'});
+  }finally{await rm(fixture,{recursive:true,force:true});}
+});
+
 test('transport doctor uses an isolated fake provider and retains sanitized evidence',async()=>{
-  await mkdir(resolve('.tmp'),{recursive:true});
-  const parent=await mkdtemp(resolve('.tmp','transport-doctor-test-'));
+  await mkdir(resolve('tmp'),{recursive:true});
+  const parent=await mkdtemp(resolve('tmp','transport-doctor-test-'));
   const outputDir=resolve(parent,'probe');
   const calls=[];
   try{

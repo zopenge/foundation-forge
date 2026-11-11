@@ -193,7 +193,7 @@ test('keeps Node 24 and requires common gates plus complete per-platform coverag
   const upload = windows.steps.find(step => step.uses === 'actions/upload-artifact@v7');
   assert.equal(upload.with['if-no-files-found'], 'error');
   assert.equal(upload.with['include-hidden-files'], true);
-  assert.equal(upload.with.path, '.tmp/ci-shards/');
+  assert.equal(upload.with.path, 'tmp/ci-shards/');
   assert.equal(upload.with['retention-days'], 1);
   const gates = workflow.jobs['verify-gates'];
   assert.deepEqual(gates.strategy.matrix.os, ['ubuntu-24.04', 'windows-2025']);
@@ -205,11 +205,11 @@ test('keeps Node 24 and requires common gates plus complete per-platform coverag
   assert.equal(merge['runs-on'], '${{ matrix.os }}');
   assert.equal(merge.if, undefined);
   assert.ok(merge.steps.some(step => step.run === 'pnpm build'));
-  assert.ok(merge.steps.some(step => step.run === 'pnpm check:ci --merge .tmp/ci-shards'));
+  assert.ok(merge.steps.some(step => step.run === 'pnpm check:ci --merge tmp/ci-shards'));
   const download = merge.steps.find(step => step.uses === 'actions/download-artifact@v8');
   assert.equal(download.with.pattern, '${{ matrix.os }}-coverage-*-${{ github.run_attempt }}');
   assert.equal(download.with['merge-multiple'], true);
-  assert.equal(download.with.path, '.tmp/ci-shards');
+  assert.equal(download.with.path, 'tmp/ci-shards');
   const complete = workflow.jobs.complete;
   assert.deepEqual(complete.needs, ['verify-gates', 'merge']);
   assert.equal(complete.if, '${{ always() }}');

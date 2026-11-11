@@ -49,7 +49,7 @@ const assertContained = (root, path) => {
 
 const reportDirectory = async (repositoryRoot) => {
   const root = resolve(repositoryRoot);
-  const directory = resolve(root, '.tmp', 'release');
+  const directory = resolve(root, 'state', 'release');
   await mkdir(directory, { recursive: true });
   assertContained(await realpath(root), await realpath(directory));
   return directory;
@@ -70,7 +70,7 @@ export const writeReleaseReport = async (repositoryRoot, report) => {
 };
 
 export const readReleaseReport = async (repositoryRoot, path) => {
-  const directory = resolve(repositoryRoot, '.tmp', 'release');
+  const directory = resolve(repositoryRoot, 'state', 'release');
   const absolute = resolve(repositoryRoot, path);
   assertContained(directory, absolute);
   assertContained(await realpath(directory), await realpath(absolute));
@@ -127,5 +127,5 @@ export const printReleaseSummary = (report, path) => {
     && Object.values(report.stages).every((state) => ['succeeded', 'not-required'].includes(state));
   process.stdout.write(`${complete ? '发布验证完成' : '发布后仍有未完成阶段'}：${published.join(', ') || '尚无已确认发布项'}\n`);
   process.stdout.write(`阶段：${JSON.stringify(report.stages)}\n报告：${path}\n`);
-  if (!complete) process.stdout.write(`续验：pnpm release:resume --report ${JSON.stringify(`.tmp/release/${basename(path)}`)}\n`);
+  if (!complete) process.stdout.write(`续验：pnpm release:resume --report ${JSON.stringify(`state/release/${basename(path)}`)}\n`);
 };

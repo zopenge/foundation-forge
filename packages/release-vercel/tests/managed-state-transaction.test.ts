@@ -13,7 +13,7 @@ async function interrupted(phase: 'before' | 'after', stage: 'closure' | 'later'
   const worker = resolve(import.meta.dirname, 'helpers/state-transaction-worker.mjs');
   await expect(promisify(execFile)(process.execPath, [worker, f.cwd, phase, stage], { windowsHide: true, timeout: 120_000 }))
     .rejects.toMatchObject({ code: 71 });
-  const slot = resolve(f.cwd, '.tmp/release-slot'), statePath = resolve(slot, 'state.json');
+  const slot = resolve(f.cwd, 'state/release-slot'), statePath = resolve(slot, 'state.json');
   expect(await readFile(resolve(slot, 'checkout/crash-boundary'), 'utf8')).toBe(`${phase}:${stage}`);
   const original = await readFile(statePath, 'utf8');
   return { ...f, slot, statePath, original, state: JSON.parse(original) };

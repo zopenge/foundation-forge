@@ -91,7 +91,7 @@ pnpm check
 ```
 
 首次检查会从源码生成 dist、真实 tarball、测试 fixture 和验证缓存，不需要复制
-另一台机器的 `node_modules`、dist 或 `.tmp/`。正常安装需要访问依赖源；包管理器的
+另一台机器的 `node_modules`、dist 或 `tmp/`。正常安装需要访问依赖源；包管理器的
 持久 store 可复用，缺失依赖仍由锁文件安装。Git 历史及发布 tag 应完整获取，
 不能把只含源码的压缩包当作可发布的 Git checkout。
 
@@ -100,7 +100,7 @@ pnpm check
 发布，依赖仓库 App、npm environment 和 Trusted Publisher 配置。上述权限与审批
 不会由本地命令跳过，也不需要 AI 工具代为执行。
 
-`.tmp/` 是运行时生成的缓存、锁和报告目录，不是首次开发或发布所需的预置输入。
+`tmp/` 是运行时生成的缓存、锁和报告目录，不是首次开发或发布所需的预置输入。
 `release:resume` 是例外：续验一个中断操作必须保留该操作的报告并匹配其源码及
 验证环境。新 checkout 没有旧报告时，不应伪造报告或再次 publish；先用
 `release:verify --mode <模式>` 回读已发布状态，需要补齐 Trusted Publisher 时使用
@@ -157,16 +157,18 @@ CLI 和 smoke 检查。registry consumer 不使用 prefer-offline，也不会清
 验证精确版本和 tarball，不要求其当前 dist-tag 与本次发布模式相同。完整
 `pnpm check` 的全仓验收范围不变。
 
-每次 bootstrap 或独立 registry 验证会在忽略的 `.tmp/release/` 下保存 JSON 报告。
+每次 bootstrap 或独立 registry 验证会在忽略的 `state/release/` 下保存 JSON 报告。
 报告绑定源码 commit、验证输入指纹、包名、版本与依赖闭包；原子更新阶段状态，
 保存脱敏首错和最近一次错误。独立 `release:verify` 保持 registry/consumer 验证
 语义，将 Trusted Publisher 标为 `not-required`；bootstrap 报告则要求回读并补齐
 该阶段。报告不是跳过外部检查的授权，续验仍会回读 registry、dist-tag 和 Git tag。
 
+升级目录约定前，未结束的发布或续验须先使用原 checkout 和原工具完成，并核对原活动锁；旧临时目录中的报告和锁不自动迁移，也不作为新 `state/release/` 的输入。不要通过复制报告或重写绑定来继续未知发布副作用。
+
 失败时直接复制输出中的命令，例如：
 
 ```sh
-pnpm release:resume --report .tmp/release/<报告文件名>.json
+pnpm release:resume --report state/release/<报告文件名>.json
 ```
 
 续验不要求重新执行已通过的源码检查，但必须匹配报告的源码、依赖和运行环境。
@@ -175,7 +177,7 @@ pnpm release:resume --report .tmp/release/<报告文件名>.json
 的 publish 视为未确认，必须先核实实际外部状态；没有报告的历史失败仍按下文的
 分步恢复方法处理。
 
-发布与续验通过 `.tmp/release/active.lock` 防止并发操作相同临时资源。遗留锁不会
+发布与续验通过 `state/release/active.lock` 防止并发操作相同发布与续验资源。遗留锁不会
 被自动抢占：先核实其中的 PID、启动时间、原日志和报告，确认原操作不在运行后
 再按工作区资源规则精确处理。消费者临时目录在正常完成或捕获失败后回收，小型
 报告保留；进程被强制终止后的临时目录在确认无运行任务后可回收。
@@ -251,7 +253,7 @@ workflow 内部命令，不得通过全局关闭 provenance 绕过。
 ```sh
 pnpm release:bootstrap --auth-mode web
 pnpm release:configure-trusted-publishers --package <包名> --auth-mode web
-pnpm release:resume --report .tmp/release/<报告文件名>.json --auth-mode web
+pnpm release:resume --report state/release/<报告文件名>.json --auth-mode web
 ```
 
 这些是不同场景的入口，不应依次重复执行。首次创建使用 bootstrap；已确认发布且
@@ -375,7 +377,7 @@ Linux 的进程退出检查不能把 `SIGKILL` 已发送等同于 PID 已回收�
 `Z` 状态，`process.kill(pid, 0)` 此时仍成功。对于文档已允许系统继续完成 teardown
 的失败结果，测试应在独立、有限的清理等待期内确认 PID 最终消失；不能修改返回契约
 或跳过清理断言来消除失败。测试使用的 marker 目录也必须在启动子进程前自行创建，
-并在结束后清理；不得依赖开发机已经存在的 `.tmp/logs` 等目录。
+并在结束后清理；不得依赖开发机已经存在的 `tmp/logs` 等目录。
 
 ### WSL 验证找不到 Node
 

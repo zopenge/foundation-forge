@@ -36,14 +36,14 @@ const git = (cwd: string, ...args: string[]) => {
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 
 const fixture = async () => {
-  const base = resolve(repositoryRoot, '.tmp/release-vercel-tests');
+  const base = resolve(repositoryRoot, 'tmp/release-vercel-tests');
   await mkdir(base, { recursive: true });
   const root = await mkdtemp(resolve(base, 'r-'));
   roots.push(root);
   const remote = resolve(root, 'remote.git');
   const cwd = resolve(root, 'work');
   await mkdir(cwd);
-  await writeFile(resolve(cwd, '.gitignore'), '.tmp/\n');
+  await writeFile(resolve(cwd, '.gitignore'), 'tmp/\nstate/\n');
   await writeFile(resolve(cwd, 'source.txt'), 'initial\n');
   const { initial, sha } = await prepareManagedFixtureHistory(root, cwd, remote);
   const declared = 'https://github.com/fixture/repository.git';
@@ -97,7 +97,7 @@ describe('strict configuration', () => {
 describe('real Git release gates', () => {
   // 发布决策的失败矩阵由 publication.test.ts 严格组件脚本覆盖；这里验证真实入口和Git服务器行为。
   it('releases its own lock on entry failure and records recovery after post-push verification failure', async () => {
-    const f = await fixture(), lockPath = resolve(f.cwd, '.tmp/forge-vercel-release/publish.lock');
+    const f = await fixture(), lockPath = resolve(f.cwd, 'state/forge-vercel-release/publish.lock');
     const untracked = resolve(f.cwd, 'untracked.txt'); await writeFile(untracked, 'dirty');
     const refused = await f.run();
     expect(refused).toMatchObject({ ok: false, error: { code: 'GIT_DIRTY' }, effects: { developmentPush: 'not-attempted', releasePush: 'not-attempted' } });
@@ -111,7 +111,7 @@ describe('real Git release gates', () => {
       recovery: { candidateSha: f.sha, nextCommand: `forge-vercel-release verify --sha ${f.sha}` } });
     expect(f.ref('dev')).toBe(f.sha); expect(f.ref('main')).toBe(f.sha);
     await expect(readFile(lockPath)).rejects.toMatchObject({ code: 'ENOENT' });
-    const saved = JSON.parse(await readFile(resolve(f.cwd, '.tmp/forge-vercel-release/latest-publish.json'), 'utf8'));
+    const saved = JSON.parse(await readFile(resolve(f.cwd, 'state/forge-vercel-release/latest-publish.json'), 'utf8'));
     expect(saved).toMatchObject({ schemaVersion: failed.schemaVersion, command: failed.command, ok: false,
       candidateSha: f.sha, error: failed.error, effects: failed.effects, recovery: failed.recovery });
     expect(Number.isFinite(Date.parse(saved.finishedAt))).toBe(true);
@@ -149,12 +149,12 @@ describe('real Git release gates', () => {
   it('preserves a replaced lock owned by another publisher', async () => {
     const f = await fixture();
     const transport: ReleaseTransport = { ...f.transport, buildInfo: async () => {
-      await writeFile(resolve(f.cwd, '.tmp/forge-vercel-release/publish.lock'), '{"token":"other"}');
+      await writeFile(resolve(f.cwd, 'state/forge-vercel-release/publish.lock'), '{"token":"other"}');
       return { revision: f.sha };
     } };
     const report = await f.run('publish', { transport });
     expect(report.error?.code).toBe('LOCK_OWNERSHIP');
-    expect(await readFile(resolve(f.cwd, '.tmp/forge-vercel-release/publish.lock'), 'utf8')).toBe('{"token":"other"}');
+    expect(await readFile(resolve(f.cwd, 'state/forge-vercel-release/publish.lock'), 'utf8')).toBe('{"token":"other"}');
   });
   it('lets the Git server reject a remote advance after the final refs snapshot', async () => {
     const f = await fixture();

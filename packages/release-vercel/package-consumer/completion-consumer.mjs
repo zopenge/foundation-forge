@@ -25,7 +25,7 @@ export async function verifyCompletionConsumer({ cwd, config, git, binary }) {
       if (path.startsWith('/v9/projects/')) return { id: 'prj_fixture', accountId: 'team_fixture', link: null,
         ...(promoted ? { lastAliasRequest: { type: 'promote', jobStatus: 'succeeded', toDeploymentId: promoted } } : {}) };
       if (path.startsWith('/v13/deployments/')) {
-        marker ??= JSON.parse(await readFile(resolve(cwd, '.tmp/release-slot/checkout/.tmp/forge-vercel-release/prebuilt/.vercel/output/static/.well-known/forge-prebuilt.json'), 'utf8'));
+        marker ??= JSON.parse(await readFile(resolve(cwd, 'state/release-slot/checkout/state/forge-vercel-release/prebuilt/.vercel/output/static/.well-known/forge-prebuilt.json'), 'utf8'));
         return { id: 'dpl_candidate', ownerId: 'team_fixture', projectId: 'prj_fixture', target: 'production', source: 'cli', readyState: 'READY', url: 'candidate.vercel.app' };
       }
       if (path.startsWith('/v4/aliases/') && promoted) return { alias: 'fixture.example.invalid', projectId: 'prj_fixture', deploymentId: promoted };
@@ -60,7 +60,7 @@ export async function verifyCompletionConsumer({ cwd, config, git, binary }) {
     if (published.code !== 1 || published.report.error?.code !== 'COMPLETION_FAILED' || published.report.completion?.status !== 'failed'
       || !published.report.prebuilt?.promotionVerified || published.report.processes?.status !== 'closed')
       throw new Error(`tarball completion failure contract: ${JSON.stringify(published.report.error)}`);
-    const receiptPath = resolve(cwd, '.tmp/release-slot/latest-publish.json'), receipt = await readFile(receiptPath);
+    const receiptPath = resolve(cwd, 'state/release-slot/latest-publish.json'), receipt = await readFile(receiptPath);
     await writeFile(control, 'ok');
     const resumed = await run('cli-verify-retry'), completed = resumed.report;
     if (resumed.code !== 0 || !completed.ok || completed.candidateSha !== sha || completed.completion?.status !== 'completed'

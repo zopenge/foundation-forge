@@ -1,5 +1,5 @@
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { sourceTestTemporaryDirectory } from '../temporary-directory.js';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import {
@@ -15,7 +15,7 @@ const limits = { maxObjectBytes: 1_048_576, maxFileBytes: 16_777_216, maxTotalBy
 async function publishedFixture() {
   const source = await createRepository();
   await addCommittedFile(source, 'src/main.ts', 'alpha\r\nbeta🙂');
-  const base = await mkdtemp(join(tmpdir(), 'forge-source-reader-'));
+  const base = await mkdtemp(join(await sourceTestTemporaryDirectory(), 'forge-source-reader-'));
   const target = join(base, 'store');
   const state = join(base, 'state');
   await mkdir(state);

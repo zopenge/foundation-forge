@@ -11,7 +11,7 @@ test('real isolated Vitest shards merge both test files and their original branc
   const { runWorkspaceCoverageBatch, mergeWorkspaceCoverage } = await import('../run-workspace-coverage-batch.mjs');
   assert.equal(typeof mergeWorkspaceCoverage, 'function');
   const repositoryRoot = fileURLToPath(new URL('../../', import.meta.url));
-  const base = await ensureTestTemporaryDirectory(repositoryRoot, resolve(repositoryRoot, '.tmp/ci-shard-tests'));
+  const base = await ensureTestTemporaryDirectory(repositoryRoot, resolve(repositoryRoot, 'tmp/ci-shard-tests'));
   const root = await mkdtemp(resolve(base, 'r-')), owned = await lstat(root);
   let context;
   t.after(async () => {

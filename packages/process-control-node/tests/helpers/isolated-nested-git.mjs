@@ -8,7 +8,7 @@ import { assertNestedGitResult } from '../fixtures/nested-git.mjs';
 
 // 用户批准仅false负例复用本次自有隐藏控制台；不再声称覆盖Git新建可见控制台。
 export async function runIsolatedNestedGit({ iterations = 12, timeoutMs = 170_000 } = {}) {
-  const base = resolve(import.meta.dirname, '../../../../.tmp/nested-git-isolated');
+  const base = resolve(import.meta.dirname, '../../../../tmp/nested-git-isolated');
   await mkdir(base, { recursive: true });
   const root = await mkdtemp(resolve(base, 'fixture-'));
   try {

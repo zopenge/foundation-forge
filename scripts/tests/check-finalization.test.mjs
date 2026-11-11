@@ -7,7 +7,7 @@ import { setImmediate } from 'node:timers';
 import { createTestWorkerBudget } from '../test-worker-budget.mjs';
 
 const scopedRunner = async t => {
-  const base = resolve(import.meta.dirname, '../../.tmp/tests'); await mkdir(base, { recursive: true });
+  const base = resolve(import.meta.dirname, '../../tmp/tests'); await mkdir(base, { recursive: true });
   const root = await mkdtemp(resolve(base, 'finalization-'));
   t.after(async () => {
     const child = relative(base, root); assert.ok(child && !child.startsWith('..') && !isAbsolute(child));
@@ -25,7 +25,7 @@ const scopedRunner = async t => {
 
 test('a failed final worker audit cannot leave a targeted success receipt', async t => {
   const { root, runPackages } = await scopedRunner(t);
-  const packageRoot = resolve(root, 'package'), packRoot = resolve(root, '.tmp/check-cache/packs');
+  const packageRoot = resolve(root, 'package'), packRoot = resolve(root, 'tmp/check-cache/packs');
   await mkdir(packageRoot); await mkdir(packRoot, { recursive: true });
   await writeFile(resolve(packRoot, 'tarballs.json'), '{"example":"example.tgz"}');
   const tarball = resolve(root, 'next.tgz'); await writeFile(tarball, 'verified tarball');
@@ -59,7 +59,7 @@ test('a failed final worker audit cannot leave a targeted success receipt', asyn
 
 const stageFixture = async t => {
   const { root, runPackages } = await scopedRunner(t), packages = [];
-  const packs = resolve(root, '.tmp/check-cache/packs'); await mkdir(packs, { recursive: true });
+  const packs = resolve(root, 'tmp/check-cache/packs'); await mkdir(packs, { recursive: true });
   const targetTarballs = new Map(), tarballDigests = {};
   for (const name of ['one', 'two']) {
     const packageRoot = resolve(root, name); await mkdir(resolve(packageRoot, 'dist'), { recursive: true });
@@ -88,7 +88,7 @@ test('a failed targeted work-directory cleanup cannot leave a success receipt', 
     distValid: async () => true, tarballsValid: async () => ({}), assertInputs: async () => {},
     removeWorkRoot: async directory => {
       assert.equal(finalized, 1);
-      const inside = relative(resolve(fixture.root, '.tmp/check-cache'), directory);
+      const inside = relative(resolve(fixture.root, 'tmp/check-cache'), directory);
       assert.ok(inside && !inside.startsWith('..') && !isAbsolute(inside));
       cleanupCalls++; throw failure;
     },

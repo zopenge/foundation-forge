@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { sourceTestTemporaryDirectory } from './temporary-directory.js';
 import { join } from 'node:path';
 import { afterEach, expect, test } from 'vitest';
 import {
@@ -21,7 +21,7 @@ const policy = {
 const pack = { targetObjectBytes: 4096, maxObjectBytes: 8192, maxObjectCount: 50, maxObjectBytesTotal: 1_000_000 };
 const groupForPath = (path: string): string => path.startsWith('src/') ? 'src' : 'root';
 const options = (sourceRoot: string) => ({ sourceRoot, projectId: 'fixture-project', policyVersion: '1', publishedAt: now, policy, pack, groupForPath });
-const createOutside = async (prefix: string): Promise<string> => { const root = await mkdtemp(join(tmpdir(), prefix)); roots.push(root); return root; };
+const createOutside = async (prefix: string): Promise<string> => { const root = await mkdtemp(join(await sourceTestTemporaryDirectory(), prefix)); roots.push(root); return root; };
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }))); });
 test('plans tracked and untracked source with caller-owned policy and grouping', async () => {
   const source = await createRepository(); roots.push(source);

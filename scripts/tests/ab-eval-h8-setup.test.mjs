@@ -5,7 +5,7 @@ import test from 'node:test';
 
 import { prepareH8Arm } from '../../packages/repository-context/evaluation/h8-setup.mjs';
 
-const tempRoot=resolve(import.meta.dirname,'../../.tmp');
+const tempRoot=resolve(import.meta.dirname,'../../tmp');
 test('H8 setup builds only the C index from packed runtime and task metadata',async()=>{
   await mkdir(tempRoot,{recursive:true});
   const pack=await mkdtemp(resolve(tempRoot,'ab-eval-h8-setup-'));

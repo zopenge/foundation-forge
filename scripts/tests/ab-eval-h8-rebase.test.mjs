@@ -8,7 +8,7 @@ import { rebaseH8Candidate } from '../../packages/repository-context/evaluation/
 import { freezePack, validatePack } from '../ab-eval/manifest.mjs';
 import { makeTarballFixture } from './ab-eval-tarball-fixture.mjs';
 
-const tempRoot=resolve(import.meta.dirname,'../../.tmp');
+const tempRoot=resolve(import.meta.dirname,'../../tmp');
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex').toUpperCase();
 const packageJson={name:'fixture',version:'1.0.0',type:'module',
   bin:{fixture:'./dist/node/cli.js'},dependencies:{typescript:'6.0.3'}};

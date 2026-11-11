@@ -1,5 +1,7 @@
 # 验证分层与安全边界
 
+真实关闭协调器的恢复用例通过共享 `createTestTaskScope` 跟踪整个异步主体；测试超时或同池 bail 后，先排空后续操作和断言，再删除其仍可能作为子进程 cwd 的夹具。晚到错误继续报告，不把提前停止等待视为任务已终止。分页的三个只读协议用例共享一次真实构建的40来源输入；会修改源码或切换 generation 的用例仍独立创建，查询本身保留原5秒期限，准备沿用原hook期限。完整墙钟包含全部准备与清理，不能将阶段移动算成净提速。
+
 测试按要捕获的失败机制划分。组件测试减少无关流程的重复执行，不把合成状态或边界错误当作完整发布成功；测试数量、覆盖率数字本身不能证明语义等价。
 
 `managed-checkout-observation` 用真实 Git 配置写入和 Node 命令验证非批次日记、执行前身份及最终闭合。包管理器接线合并到 alpha 真实 tarball 消费者原有的 Native pnpm install：postinstall 读取本次 checkout 的日记，确认身份已持久化后才输出独立整行 marker；首个 check 后验证唯一 install、非批次、exit 0、normal/empty、scope 身份及终止凭证摘要。该验证不额外执行 `pnpm store path`，不增加安装次数，也不修改原 fixture、消费者或生产命令预算。
@@ -61,13 +63,13 @@ managed-state 的7项集成保留首次固定slot/独占锁、foreign/unignored/
 
 [managed-recovery-lock.test.ts](managed-recovery-lock.test.ts) 的3项锁协议直接准备独立真实目录、原始锁和当前schema3，并建立自有最小Git仓库/空HEAD；父侧与真实child的索引守卫继续实际查询，仓库根断言防止向上发现外层工作树。仅省去与锁协议无关的完整来源冻结/首次slot准备，state来源SHA仍明确是组件输入。独立claim互斥、替换锁不删除、真实恢复协调器被杀后的claim恢复与state原字节断言全部保留；没有合成OS关闭证明。
 
-worker 运行已构建的 `dist`，遵循仓库先 build、再测试/打包的标准顺序。所有 helper 随仓库维护，动态仓库、文件和进程在测试自有的 `.tmp/` 目录生成并清理；不能依赖历史缓存、手工输入或忽略目录中的诊断脚本。调试 hook 仅用于采样，不能成为测试通过的前提。
+worker 运行已构建的 `dist`，遵循仓库先 build、再测试/打包的标准顺序。所有 helper 随仓库维护，动态仓库、文件和进程在测试自有的 `tmp/` 目录生成并清理；不能依赖历史缓存、手工输入或忽略目录中的诊断脚本。调试 hook 仅用于采样，不能成为测试通过的前提。
 
-`managedFixture` 在监督入口提供 `FORGE_CHECK_JOB_TEMP` 时，把动态仓库放入本次 Job 的短路径目录；没有该变量时仍从仓库 `.tmp/managed-release-tests` 新建独立夹具。正常用例继续自行 dispose；父侧仅在确认 Job 空且目录身份未改变后清理该 Job 根，防止 worker 取消时绕过 afterEach 留下仓库。身份改变、关闭未确认或清理失败必须报告并保留本次定位信息，不能扫描并删除历史同名目录。
+`managedFixture` 在监督入口提供 `FORGE_CHECK_JOB_TEMP` 时，把动态仓库放入本次 Job 的短路径目录；没有该变量时仍从仓库 `tmp/managed-release-tests` 新建独立夹具。正常用例继续自行 dispose；父侧仅在确认 Job 空且目录身份未改变后清理该 Job 根，防止 worker 取消时绕过 afterEach 留下仓库。身份改变、关闭未确认或清理失败必须报告并保留本次定位信息，不能扫描并删除历史同名目录。
 
 [managed-fixture-git.ts](helpers/managed-fixture-git.ts) 仅用真实 Git `fast-import` 批量准备通用夹具的固定初始文件、两个提交和独立 bare remote，再用 `read-tree` 建立真实索引。`fastimport.unpackLimit=0` 只传给这两次准备命令，不写入 Git 配置；不共享对象库、工作树或 slot，也不复用文件身份、锁和凭证。固定文件使用 LF，准备阶段不测试 clean filter 或提交 hook；后续 `commit()`、发布 push/fetch、受管观察与故障注入仍执行原命令。[managed-fixture.test.ts](managed-fixture.test.ts) 检查提交字节/父关系/身份、分支和远端 refs、索引、独立 clone 与后续真实 commit/push，并验证准备失败时仅清理自有目录、保留原始错误及清理错误。checkout 的换行转换仍遵循 Git 配置，tarball 消费者继续覆盖 CRLF 来源。
 
-[managed-budget-fixture.test.ts](managed-budget-fixture.test.ts) 验证预算组件在 Git 不可用时仍可创建真实资源、写入原子元数据，并核对夹具之间的隔离与清理边界。预算夹具每次从空目录生成，不复用旧 `.tmp/` 内容。
+[managed-budget-fixture.test.ts](managed-budget-fixture.test.ts) 验证预算组件在 Git 不可用时仍可创建真实资源、写入原子元数据，并核对夹具之间的隔离与清理边界。预算夹具每次从空目录生成，不复用旧 `tmp/` 内容。
 
 tarball smoke 使用两个独立仓库：alpha 的同一次公开 Node managed prebuilt check 同时验证 CRLF、内部 junction、精确制品/版本入口上下文及迁移后的链接闭包，再通过实装 CLI recover 验证已停止历史不被重写、未重新安装或执行检查；公开 publish 失败及 CLI retry 保留第二条真实 managed 准备链。beta 通过实装 CLI 执行 workspace check，再提交 managed 配置并验证外来 slot 在安装和应用命令前被拒绝。alpha 核对当前 schema3 宿主证据和真实关闭状态；两者均核对冻结命令环境、锁文件字节、源文件/分支和远端 refs 不变。alpha 保留未跟踪辅助文件，beta 将辅助文件明确写入忽略规则，遵守 workspace 的脏树门禁。真实 postinstall 失败、同 slot/路径重试、失败回执与缓存保留由 managed-resume 专项继续验证。所有云 I/O 连接自有受控边界，不能声明线上生产成功；真实 tarball、两份独立来源与精确版本继续保留。
 

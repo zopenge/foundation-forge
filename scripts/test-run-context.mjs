@@ -22,7 +22,7 @@ export const createTestRunContext = async ({ packages, workers = testWorkerLimit
   signal ??= inheritedCancellation?.signal;
   try {
     signal?.throwIfAborted();
-    const parent = await ensureTestTemporaryDirectory(repositoryRoot, resolve(repositoryRoot, '.tmp/check-runs'));
+    const parent = await ensureTestTemporaryDirectory(repositoryRoot, resolve(repositoryRoot, 'tmp/check-runs'));
     const root = await mkdtemp(resolve(parent, 'run-'));
     const inheritedEvents = process.env.FORGE_CHECK_WORKER_EVENTS;
     const workerEvents = inheritedEvents ?? resolve(root, 'workers.jsonl');

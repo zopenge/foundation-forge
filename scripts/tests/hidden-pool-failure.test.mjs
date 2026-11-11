@@ -21,7 +21,7 @@ test('a pool drain failure rejects the CLI even when its descendant subsequently
   t.signal.addEventListener('abort', cancelled, { once: true });
   t.after(() => { t.signal.removeEventListener('abort', cancelled); });
   trace('fixture-start');
-  const base = resolve(repositoryRoot, '.tmp/tests'); await mkdir(base, { recursive: true });
+  const base = resolve(repositoryRoot, 'tmp/tests'); await mkdir(base, { recursive: true });
   const root = await mkdtemp(resolve(base, 'finite-pipe-'));
   t.after(async () => {
     const child = relative(base, root); assert.ok(child && !child.startsWith('..') && !isAbsolute(child));

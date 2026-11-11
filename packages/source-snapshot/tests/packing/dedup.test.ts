@@ -1,5 +1,5 @@
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { sourceTestTemporaryDirectory } from '../temporary-directory.js';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import {
@@ -106,7 +106,7 @@ test('alias add/remove keeps v2 content-block object identity stable', async () 
 });
 
 test('shared v2 object is reused across snapshots, survives old-alias GC, and cannot cross project ownership', async () => {
-  const base = await mkdtemp(join(tmpdir(), 'dedup-store-'));
+  const base = await mkdtemp(join(await sourceTestTemporaryDirectory(), 'dedup-store-'));
   const source = join(base, 'source'); const targetRoot = join(base, 'target'); const state = join(base, 'state');
   await Promise.all([mkdir(source), mkdir(targetRoot), mkdir(state)]);
   try {

@@ -6,7 +6,7 @@ import { createTestRunContext } from '../test-run-context.mjs';
 
 const repositoryRoot = resolve(import.meta.dirname, '../..');
 const fixture = async (t, ceiling) => {
-  const parent = resolve(repositoryRoot, '.tmp/tests'); await mkdir(parent, { recursive: true });
+  const parent = resolve(repositoryRoot, 'tmp/tests'); await mkdir(parent, { recursive: true });
   const root = await mkdtemp(resolve(parent, 'worker-ceiling-')), events = resolve(root, 'events.jsonl');
   await writeFile(events, '');
   const originals = Object.fromEntries(['FORGE_CHECK_WORKER_EVENTS', 'FORGE_CHECK_WORKER_CEILING'].map(key => [key, process.env[key]]));
@@ -18,7 +18,7 @@ const fixture = async (t, ceiling) => {
       if (value === undefined) Reflect.deleteProperty(process.env, key); else process.env[key] = value;
     }
     for (const path of [...contexts.map(value => value.root), root]) {
-      const inside = relative(await realpath(resolve(repositoryRoot, '.tmp')), await realpath(path));
+      const inside = relative(await realpath(resolve(repositoryRoot, 'tmp')), await realpath(path));
       assert.ok(inside && !inside.startsWith('..') && !isAbsolute(inside));
       assert.equal((await lstat(path)).isSymbolicLink(), false);
       await rm(path, { recursive: true, force: true });

@@ -10,11 +10,11 @@ export const openCheckCancellation = ({
   env = process.env, events = process,
   io = { existsSync, mkdirSync, mkdtempSync, unwatchFile, watchFile, writeFileSync },
 } = {}) => {
-  const parent = resolve(repositoryRoot, '.tmp/check-controls');
+  const parent = resolve(repositoryRoot, 'tmp/check-controls');
   const inherited = env[controlKey];
   if (!inherited) io.mkdirSync(parent, { recursive: true });
   const path = inherited ?? resolve(io.mkdtempSync(resolve(parent, 'run-')), 'cancel');
-  const contained = relative(resolve(repositoryRoot, '.tmp'), resolve(path));
+  const contained = relative(resolve(repositoryRoot, 'tmp'), resolve(path));
   if (!isAbsolute(path) || !contained || contained.startsWith('..') || isAbsolute(contained)) throw new Error('check cancellation file escaped its owned directory');
   const controller = new globalThis.AbortController();
   const reason = Object.assign(new Error('check cancelled'), { code: 'FORGE_CHECK_CANCELLED' });

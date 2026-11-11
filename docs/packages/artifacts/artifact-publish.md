@@ -83,4 +83,4 @@ const fromFiles = await publishArtifactFiles(fileTransport, absoluteRoot, filePl
 
 ## 验证与依赖
 
-Core 使用 [`artifact-integrity`](artifact-integrity.md) 与 [`path-safety`](path-safety.md)，Node 命令适配复用中立 [`command-runner`](../process-execution/command-runner.md)；[`artifact-publish-cos`](artifact-publish-cos.md) 单向依赖 Core。运行时 Core 不依赖 Provider。包内测试覆盖编排、预算、并发、真实普通文件及关闭；`package-consumer/verify.mjs` 从真实 tarball 导入公开入口、自建并清理 fixture，既有 `.tmp` 内容不是通过前提。完整仓库门禁为 `pnpm check`。
+Core 使用 [`artifact-integrity`](artifact-integrity.md) 与 [`path-safety`](path-safety.md)，Node 命令适配复用中立 [`command-runner`](../process-execution/command-runner.md)；[`artifact-publish-cos`](artifact-publish-cos.md) 单向依赖 Core。运行时 Core 不依赖 Provider。包内测试覆盖编排、预算、并发、真实普通文件及关闭；`package-consumer/verify.mjs` 从真实 tarball 导入公开入口、自建并清理 fixture，既有 `tmp` 内容不是通过前提。完整仓库门禁为 `pnpm check`。

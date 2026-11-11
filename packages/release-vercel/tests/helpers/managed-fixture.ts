@@ -8,7 +8,7 @@ import { ensureTestTemporaryDirectory } from '../../../../scripts/test-temporary
 export { git } from './managed-fixture-git.js';
 export async function managedFixture() {
   const repositoryRoot = resolve(import.meta.dirname, '../../../..');
-  const repositoryTemporary = await ensureTestTemporaryDirectory(repositoryRoot, resolve(repositoryRoot, '.tmp'));
+  const repositoryTemporary = await ensureTestTemporaryDirectory(repositoryRoot, resolve(repositoryRoot, 'tmp'));
   const ownedTemporary = process.env.FORGE_CHECK_JOB_TEMP;
   if (ownedTemporary) {
     if (!isAbsolute(ownedTemporary)) throw new Error('managed fixture temporary root must be absolute');
@@ -36,7 +36,7 @@ export async function managedFixture() {
   try {
     await mkdir(cwd);
     const config: ReleaseConfig = {
-      schemaVersion: 2, source: { mode: 'managed-commit', slotPath: '.tmp/release-slot', maxBytes: 2 ** 31,
+      schemaVersion: 2, source: { mode: 'managed-commit', slotPath: 'state/release-slot', maxBytes: 2 ** 31,
         minFreeBytes: 5 * 2 ** 30, sampleIntervalMs: 250, install: { packageManager: 'pnpm' }, prepare: [] },
       git: { remote: 'origin', repository: remote, developmentBranch: 'dev', releaseBranch: 'main' },
       vercel: { teamId: 'team_fixture', projectId: 'prj_fixture', productionUrl: 'https://fixture.example.invalid' },
@@ -45,7 +45,7 @@ export async function managedFixture() {
       buildInfo: { path: '/build-info.json', revisionField: 'revision' },
       limits: { commandMs: 15_000, deploymentMs: 1000, pollMs: 20, requestMs: 1000, maxOutputBytes: 4096 },
     };
-    await writeFile(resolve(cwd, '.gitignore'), '.tmp/\nnode_modules/\n');
+    await writeFile(resolve(cwd, '.gitignore'), 'tmp/\nstate/\nnode_modules/\n');
     await writeFile(resolve(cwd, 'package.json'), JSON.stringify({ name: 'managed-fixture', private: true, packageManager: 'pnpm@10.33.2' }));
     await writeFile(resolve(cwd, 'pnpm-workspace.yaml'), 'packages: []\n');
     await writeFile(resolve(cwd, 'pnpm-lock.yaml'), "lockfileVersion: '9.0'\n\nsettings:\n  autoInstallPeers: true\n  excludeLinksFromLockfile: false\n\nimporters:\n\n  .: {}\n");

@@ -1,11 +1,11 @@
 import { lstat, mkdir, realpath } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 
-// 仅创建仓库 .tmp 内的普通目录；先拒绝重解析祖先，不能把解析后的外部目录当信任根。
+// 仅创建仓库 tmp 内的普通目录；先拒绝重解析祖先，不能把解析后的外部目录当信任根。
 export const ensureTestTemporaryDirectory = async (repositoryRoot, target, io = { lstat, mkdir, realpath }) => {
   const inside = relative(resolve(repositoryRoot), resolve(target)), parts = inside.split(sep);
-  if (!inside || isAbsolute(inside) || parts[0] !== '.tmp' || parts.includes('..'))
-    throw new Error('test temporary directory must be under repository .tmp');
+  if (!inside || isAbsolute(inside) || parts[0] !== 'tmp' || parts.some(part => part.startsWith('.')))
+    throw new Error('test temporary directory must be under repository tmp');
   const canonicalRepository = await io.realpath(repositoryRoot);
   let path = resolve(repositoryRoot);
   for (const [index, part] of parts.entries()) {

@@ -13,7 +13,7 @@ export const workspaceConfig = {
   limits: { commandMs: 10000, deploymentMs: 1000, pollMs: 20, requestMs: 1000, maxOutputBytes: 4096 },
 };
 export const managedConfig = { ...workspaceConfig, source: {
-  mode: 'managed-commit', slotPath: '.tmp/release-slot', maxBytes: 2147483648, minFreeBytes: 5368709120,
+  mode: 'managed-commit', slotPath: 'state/release-slot', maxBytes: 2147483648, minFreeBytes: 5368709120,
   sampleIntervalMs: 1000, install: { packageManager: 'pnpm' }, prepare: [],
 } };
 

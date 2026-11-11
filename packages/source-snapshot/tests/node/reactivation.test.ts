@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { sourceTestTemporaryDirectory } from '../temporary-directory.js';
 import { afterEach, expect, test } from 'vitest';
 import { buildSourceTextPackage, createTextSnapshotManifest, stageSourceTextFile } from '../../src/index.js';
 import { publishSourceSnapshot, verifyPublishedSourceSnapshot } from '../../src/node.js';
@@ -13,7 +13,7 @@ const first = <T>(values: readonly T[]): T => {
   return value;
 };
 const makeRoot = async (): Promise<string> => {
-  const root = await mkdtemp(join(tmpdir(), 'snapshot-reactivation-'));
+  const root = await mkdtemp(join(await sourceTestTemporaryDirectory(), 'snapshot-reactivation-'));
   roots.push(root);
   return root;
 };

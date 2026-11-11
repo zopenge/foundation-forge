@@ -17,7 +17,7 @@ const pending = () => {
 const contextFixture = async (t, options) => {
   const context = await createTestRunContext(options);
   const owned = await realpath(context.root), identity = await lstat(context.root, { bigint: true });
-  const inside = relative(await realpath(resolve(root, '.tmp')), owned);
+  const inside = relative(await realpath(resolve(root, 'tmp')), owned);
   assert.ok(inside && !inside.startsWith('..') && !isAbsolute(inside));
   t.after(async () => {
     // 只删除本用例已完成 finalize 的注入上下文；失败或未收尾时留下明确证据。
@@ -133,7 +133,7 @@ test('pre-abort 进程入口不创建日志或 scope，不进行身份读取及�
   const control = new globalThis.AbortController(), reason = new Error('cancel process');
   control.abort(reason); let started = 0, identified = 0;
   await assert.rejects(runTestProcess({ name: 'pre-abort', command: 'never-executed',
-    logRoot: resolve(root, '.tmp/tests/pre-abort-must-not-start'),
+    logRoot: resolve(root, 'tmp/tests/pre-abort-must-not-start'),
     signal: control.signal, supervisor: {
       provider: { start: () => { started++; throw new Error('must not start'); } },
       reader: { readIdentity: async () => { identified++; } },
@@ -252,7 +252,7 @@ test('context 在已结束 Job 的输出读取阶段仍拒绝独立 spec 取消'
 });
 
 const receiptFixture = ({ onWrite = async () => {}, onClose = async () => {}, onCommit = () => {} } = {}) => {
-  const statePath = resolve(root, '.tmp/check-cache/state.json');
+  const statePath = resolve(root, 'tmp/check-cache/state.json');
   const files = new Map([[statePath, 'previous receipt']]), removed = [], committed = [];
   const io = {
     mkdir: async () => {},

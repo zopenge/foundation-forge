@@ -43,8 +43,8 @@ export const discoverTestProcessSupervisor = async ({ packages, platform = proce
 
 export const runTestProcess = async ({ supervisor, name, command, args = [], cwd, env = process.env, logRoot, signal }) => {
   signal?.throwIfAborted();
-  const contained = relative(resolve(repositoryRoot, '.tmp'), resolve(logRoot));
-  if (!contained || contained.startsWith('..') || isAbsolute(contained)) throw new Error('test logs must have an owned directory under .tmp');
+  const contained = relative(resolve(repositoryRoot, 'tmp'), resolve(logRoot));
+  if (!contained || contained.startsWith('..') || isAbsolute(contained)) throw new Error('test logs must have an owned directory under tmp');
   await ensureTestTemporaryDirectory(repositoryRoot, logRoot);
   const stdout = openSync(resolve(logRoot, 'stdout.log'), 'w'), stderr = openSync(resolve(logRoot, 'stderr.log'), 'w');
   const startedAt = new Date().toISOString(), start = performance.now();
@@ -57,7 +57,7 @@ export const runTestProcess = async ({ supervisor, name, command, args = [], cwd
   };
   try {
     signal?.throwIfAborted();
-    const temporaryParent = await ensureTestTemporaryDirectory(repositoryRoot, resolve(repositoryRoot, '.tmp/test-work'));
+    const temporaryParent = await ensureTestTemporaryDirectory(repositoryRoot, resolve(repositoryRoot, 'tmp/test-work'));
     const path = await mkdtemp(resolve(temporaryParent, 'r-'));
     temporary = { path, status: 'active' };
     const temporaryIdentity = await lstat(path, { bigint: true });

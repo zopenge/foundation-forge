@@ -2,7 +2,7 @@ import type { PrebuiltDeliveryConfig, ReleaseConfig } from '../../src/contracts.
 
 export function prebuiltConfiguration(): Omit<ReleaseConfig, 'delivery'> & { delivery: PrebuiltDeliveryConfig } {
   return {
-    schemaVersion: 2, source: { mode: 'managed-commit', slotPath: '.tmp/release-slot', maxBytes: 2 ** 31,
+    schemaVersion: 2, source: { mode: 'managed-commit', slotPath: 'state/release-slot', maxBytes: 2 ** 31,
       minFreeBytes: 2 ** 30, sampleIntervalMs: 250, install: { packageManager: 'pnpm' }, prepare: [] },
     delivery: { mode: 'prebuilt', maxFiles: 10_000, maxBytes: 268_435_456,
       concurrencyControl: { mode: 'external-serialization', scope: 'fixture-project' },

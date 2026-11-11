@@ -7,7 +7,7 @@ import { setTimeout } from 'node:timers';
 import { runPairSchedule } from '../ab-eval/scheduler.mjs';
 
 const repoRoot=resolve(import.meta.dirname,'../..');
-const tempRoot=resolve(repoRoot,'.tmp');
+const tempRoot=resolve(repoRoot,'tmp');
 const withJournal=async fn=>{
   await mkdir(tempRoot,{recursive:true});
   const dir=await mkdtemp(resolve(tempRoot,'ab-eval-schedule-'));

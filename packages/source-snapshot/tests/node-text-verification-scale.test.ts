@@ -1,5 +1,5 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { sourceTestTemporaryDirectory } from './temporary-directory.js';
 import { dirname, join } from 'node:path';
 import { afterEach, expect, test } from 'vitest';
 import { createSnapshotManifest, stageSourceTextFile } from '../src/index.js';
@@ -8,7 +8,7 @@ import { createSourceTextSpoolBuilder } from '../src/node/text-spool.js';
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
-const makeRoot = async (prefix: string): Promise<string> => { const root = await mkdtemp(join(tmpdir(), prefix)); roots.push(root); return root; };
+const makeRoot = async (prefix: string): Promise<string> => { const root = await mkdtemp(join(await sourceTestTemporaryDirectory(), prefix)); roots.push(root); return root; };
 
 test('verifies thousands of aliases without per-file manifest scans or repeated object reads', async () => {
   const spoolRoot = await makeRoot('snapshot-verify-spool-');

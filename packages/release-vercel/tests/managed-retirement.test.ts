@@ -57,7 +57,7 @@ const fixture = async ({ maxBytes = 2 ** 31 } = {}) => {
   const original = await readFile(statePath, 'utf8'), lock = await readFile(f.slot.paths.lockPath, 'utf8');
   let host: RetirementHost = { ...native, uptimeSeconds: 1030 };
   const initial = '1'.repeat(40), successor = '2'.repeat(40), refs = { dev: initial, main: initial };
-  const ignore = Buffer.from('.tmp/\n'), ignoreOid = createHash('sha1').update(Buffer.from(`blob ${ignore.length}\0`)).update(ignore).digest('hex');
+  const ignore = Buffer.from('tmp/\nstate/\n'), ignoreOid = createHash('sha1').update(Buffer.from(`blob ${ignore.length}\0`)).update(ignore).digest('hex');
   await writeFile(resolve(f.cwd, '.gitignore'), ignore);
   // 只替换 Git 来源/远端组件输入。状态解析、文件身份、锁、lease、PID 查询及原子写入仍真实执行。
   vi.spyOn(sourceBoundary, 'freezeManagedSource').mockResolvedValue(f.source);
@@ -72,13 +72,13 @@ const fixture = async ({ maxBytes = 2 ** 31 } = {}) => {
     if (JSON.stringify(args) === JSON.stringify(['merge-base', '--is-ancestor', initial, f.sha])) return '';
     if (JSON.stringify(args) === JSON.stringify(['rev-parse', '--verify', `${f.sha}:.gitignore`])) return ignoreOid;
     if (args.length === 7 && JSON.stringify(args.slice(0, 6)) === JSON.stringify(['-c', 'core.quotepath=false', 'check-ignore', '--no-index', '-v', '--'])
-      && ['.tmp/release-slot/', '.tmp/forge-vercel-release/managed.json'].includes(args[6] ?? '')) return `.gitignore:1:.tmp/\t${args[6]}`;
+      && ['state/release-slot/', 'state/forge-vercel-release/managed.json'].includes(args[6] ?? '')) return `.gitignore:2:state/\t${args[6]}`;
     throw new Error(`unexpected retirement component Git query: ${JSON.stringify(args)}`);
   });
   vi.spyOn(Execution.prototype, 'streamGit').mockImplementation(async (args, consume) => {
-    const pathspec = process.platform === 'win32' ? ':(icase,literal).tmp' : ':(literal).tmp';
+    const pathspec = process.platform === 'win32' ? ':(icase,literal)state' : ':(literal)state';
     if (JSON.stringify(args) === JSON.stringify(['ls-files', '--cached', '--with-tree=HEAD', '-z', '--', pathspec])) return;
-    if (JSON.stringify(args) === JSON.stringify(['ls-tree', '-rz', f.sha, '--', '.tmp/release-slot'])) return;
+    if (JSON.stringify(args) === JSON.stringify(['ls-tree', '-rz', f.sha, '--', 'state/release-slot'])) return;
     if (JSON.stringify(args) === JSON.stringify(['cat-file', 'blob', ignoreOid])) { consume(ignore); return; }
     throw new Error(`unexpected retirement component Git stream: ${JSON.stringify(args)}`);
   });
@@ -101,7 +101,7 @@ const unstartedFixture = async () => {
         status: 'unknown', reason: 'provider-failed', empty: true } } };
   const original = JSON.stringify(f.state);
   await writeFile(f.statePath, original);
-  const anchorPath = resolve(f.cwd, '.tmp/forge-vercel-release/managed.json');
+  const anchorPath = resolve(f.cwd, 'state/forge-vercel-release/managed.json');
   const anchor = JSON.parse(await readFile(anchorPath, 'utf8'));
   anchor.latestPublish = { sha: f.sha, runId: f.state.runId, configSha256: f.source.configSha256 };
   await writeFile(anchorPath, JSON.stringify(anchor));

@@ -58,7 +58,7 @@ test('CI artifacts reject changed blob bytes and never overwrite a previous shar
   const { persistCoverageShard, readCoverageShardArtifacts } = await import('../ci-coverage-shards.mjs');
   assert.equal(typeof persistCoverageShard, 'function');
   const repositoryRoot = fileURLToPath(new URL('../../', import.meta.url));
-  const base = await ensureTestTemporaryDirectory(repositoryRoot, resolve(repositoryRoot, '.tmp/ci-shard-tests'));
+  const base = await ensureTestTemporaryDirectory(repositoryRoot, resolve(repositoryRoot, 'tmp/ci-shard-tests'));
   const root = await mkdtemp(resolve(base, 'io-')), owned = await lstat(root);
   t.after(async () => {
     const current = await lstat(root);

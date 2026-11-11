@@ -12,32 +12,11 @@ export interface TemporaryRepository {
   cleanup(): Promise<void>;
 }
 
-export const createTestTaskScope = () => {
-  const tasks = new Set<Promise<unknown>>();
-  return {
-    run<T>(operation: () => Promise<T>): Promise<T> {
-      const task = Promise.resolve().then(operation);
-      tasks.add(task);
-      // 测试超时不会停止原异步函数；拒绝保留到 drain，由收尾钩子继续报告。
-      void task.catch(() => {});
-      return task;
-    },
-    async drain(): Promise<unknown[]> {
-      const errors: unknown[] = [];
-      while (tasks.size > 0) {
-        const pending = [...tasks];
-        const settled = await Promise.allSettled(pending);
-        for (const task of pending) tasks.delete(task);
-        for (const result of settled) if (result.status === 'rejected') errors.push(result.reason);
-      }
-      return errors;
-    },
-  };
-};
+export { createTestTaskScope } from '../../../scripts/test-task-scope.mjs';
 
 export const createTemporaryRepository = async (): Promise<TemporaryRepository> => {
-  const rootDir = join(repositoryRoot, '.tmp', 'tests', `repository-${randomUUID()}`);
-  const indexRoot = join(rootDir, '.tmp', 'repository-context');
+  const rootDir = join(repositoryRoot, 'tmp', 'tests', `repository-${randomUUID()}`);
+  const indexRoot = join(rootDir, 'tmp', 'repository-context');
   const tsconfigPath = join(rootDir, 'tsconfig.json');
   await mkdir(join(rootDir, 'src'), { recursive: true });
   await Promise.all([writeFile(join(rootDir, 'src', 'session.ts'), [

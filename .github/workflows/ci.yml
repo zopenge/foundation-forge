@@ -61,7 +61,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: ubuntu-24.04-coverage-${{ matrix.shard }}-${{ github.run_attempt }}
-          path: .tmp/ci-shards/
+          path: tmp/ci-shards/
           if-no-files-found: error
           include-hidden-files: true
           retention-days: 1
@@ -92,7 +92,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: windows-2025-coverage-${{ matrix.shard }}-${{ github.run_attempt }}
-          path: .tmp/ci-shards/
+          path: tmp/ci-shards/
           if-no-files-found: error
           include-hidden-files: true
           retention-days: 1
@@ -123,8 +123,8 @@ jobs:
         with:
           pattern: ${{ matrix.os }}-coverage-*-${{ github.run_attempt }}
           merge-multiple: true
-          path: .tmp/ci-shards
-      - run: pnpm check:ci --merge .tmp/ci-shards
+          path: tmp/ci-shards
+      - run: pnpm check:ci --merge tmp/ci-shards
 
   complete:
     name: Complete CI

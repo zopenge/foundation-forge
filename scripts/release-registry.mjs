@@ -217,10 +217,10 @@ export const verifyRegistryPackages = async ({
 }) => {
   const { targets } = selectReleasePackages(model.packages, mode, packageNames);
   if (targets.length === 0) throw new Error(`no ${mode} package versions were selected for verification`);
-  const inside = relative(resolve(model.repositoryRoot, '.tmp'), verificationRoot);
+  const inside = relative(resolve(model.repositoryRoot, 'tmp'), verificationRoot);
   if (!inside || inside.startsWith('..') || isAbsolute(inside)) throw new Error('unsafe registry verification directory');
   await mkdir(verificationRoot, { recursive: true });
-  const actual = relative(await realpath(resolve(model.repositoryRoot, '.tmp')), await realpath(verificationRoot));
+  const actual = relative(await realpath(resolve(model.repositoryRoot, 'tmp')), await realpath(verificationRoot));
   if (!actual || actual.startsWith('..') || isAbsolute(actual)) throw new Error('unsafe registry verification symlink');
   await rm(verificationRoot, { force: true, recursive: true });
   await mkdir(verificationRoot, { recursive: true });

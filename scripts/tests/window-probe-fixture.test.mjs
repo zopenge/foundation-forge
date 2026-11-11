@@ -20,7 +20,7 @@ test('短探针继承的取消门闩初始不存在，不能预创建空文件�
 });
 
 test('自包含 Git 夹具的 lifecycle 使用 PATH Node，避免 cmd 双层引号截断带空格的可执行文件', async t => {
-  const base = resolve(import.meta.dirname, '../../.tmp/tests'); await mkdir(base, { recursive: true });
+  const base = resolve(import.meta.dirname, '../../tmp/tests'); await mkdir(base, { recursive: true });
   const root = await mkdtemp(resolve(base, 'window-fixture-'));
   t.after(() => rm(root, { recursive: true }));
   const sha = await prepareWindowProbeFixture(root), manifest = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));

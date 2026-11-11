@@ -15,19 +15,19 @@ const execute = promisify(execFile);
 
 // 在独立工作区执行真实检查入口，仅替换会启动构建、安装和打包的外部边界。
 const createCheckWorkspace = async (context, scenario) => {
-  await mkdir(resolve('.tmp/tests'), { recursive: true });
-  const root = await mkdtemp(resolve('.tmp/tests', 'check-cli-'));
+  await mkdir(resolve('tmp/tests'), { recursive: true });
+  const root = await mkdtemp(resolve('tmp/tests', 'check-cli-'));
   context.after(() => rm(root, { recursive: true, force: true }));
   const put = async (path, text) => {
     const target = resolve(root, path);
     await mkdir(dirname(target), { recursive: true });
     await writeFile(target, text);
   };
-  await put('.gitignore', '.tmp/\nnode_modules/\npackages/*/dist/\n');
+  await put('.gitignore', 'tmp/\nnode_modules/\npackages/*/dist/\n');
   await put('package.json', JSON.stringify({ private: true, type: 'module' }));
   await put('README.md', '# Workspace\n');
   await put('node_modules/.modules.yaml', 'fixture: true\n');
-  await put('.tmp/scenario.json', JSON.stringify(scenario));
+  await put('tmp/scenario.json', JSON.stringify(scenario));
   const packages = ['leaf', 'other', 'third'].map((name) => ({
     name, directory: 'packages/' + name, packageRoot: resolve(root, 'packages', name),
     manifest: { scripts: { 'test:coverage': 'vitest run --coverage' } }, workspaceDependencies: [], exports: [], bins: [],
@@ -37,9 +37,9 @@ const createCheckWorkspace = async (context, scenario) => {
     await put(directory + '/dist/index.js', 'export const value = 1;\n');
     await put(directory + '/README.md', '# Package\n');
     await put(directory + '/package.verify.json', '{"browserExports":[]}');
-    await put('.tmp/check-cache/packs/' + name + '.tgz', 'verified ' + name);
+    await put('tmp/check-cache/packs/' + name + '.tgz', 'verified ' + name);
   }
-  await put('.tmp/check-cache/packs/tarballs.json',
+  await put('tmp/check-cache/packs/tarballs.json',
     JSON.stringify(Object.fromEntries(packages.map(({ name }) => [name, name + '.tgz']))));
   for (const name of ['check-runner.mjs', 'check-mode.mjs', 'check-options.mjs']) {
     await mkdir(resolve(root, 'scripts'), { recursive: true });
@@ -67,7 +67,7 @@ const createCheckWorkspace = async (context, scenario) => {
     'let changed = false;',
     'export const collectDistDigests = async (...args) => {',
     '  const result = await real.collectDistDigests(...args);',
-    '  const scenario = JSON.parse(await readFile(resolve(".tmp/scenario.json"), "utf8"));',
+    '  const scenario = JSON.parse(await readFile(resolve("tmp/scenario.json"), "utf8"));',
     '  if (scenario.kind === "cached-input" && !changed) {',
     '    changed = true;',
     '    await writeFile(resolve("packages/leaf/src/index.js"), "changed during verification");',
@@ -85,7 +85,7 @@ const createCheckWorkspace = async (context, scenario) => {
     'export const preparePackagesForPacking = real.preparePackagesForPacking;',
     'export const verifyDocumentationLinks = async (...args) => {',
     '  await real.verifyDocumentationLinks(...args);',
-    '  const scenario = JSON.parse(await readFile(".tmp/scenario.json", "utf8"));',
+    '  const scenario = JSON.parse(await readFile("tmp/scenario.json", "utf8"));',
     '  if (scenario.kind === "after-docs-input") {',
     '    await writeFile("packages/leaf/src/index.js", "changed during documentation check");',
     '  }',
@@ -95,20 +95,20 @@ const createCheckWorkspace = async (context, scenario) => {
     'import { resolve } from "node:path";',
     'export const verifyTargetedPackages = async ({ packageNames }) => ({',
     '  targetTarballs: new Map(packageNames.map((name) =>',
-    '    [name, resolve(".tmp", name + "-next.tgz")]))',
+    '    [name, resolve("tmp", name + "-next.tgz")]))',
     '});',
   ].join('\n'));
   await put('scripts/package-manager-command.mjs', [
     'import { resolve } from "node:path";',
     'export const createPackageManagerInvocation = (_manager, args) => ({',
-    '  command: process.execPath, args: [resolve(".tmp/fake-pnpm.mjs"), ...args]',
+    '  command: process.execPath, args: [resolve("tmp/fake-pnpm.mjs"), ...args]',
     '});',
   ].join('\n'));
-  await put('.tmp/fake-pnpm.mjs', [
+  await put('tmp/fake-pnpm.mjs', [
     'import { mkdir, readFile, writeFile } from "node:fs/promises";',
     'import { resolve } from "node:path";',
     'const args = process.argv.slice(2);',
-    'const scenario = JSON.parse(await readFile(".tmp/scenario.json", "utf8"));',
+    'const scenario = JSON.parse(await readFile("tmp/scenario.json", "utf8"));',
     'if (args.at(-1) === "check:full:run" && scenario.kind === "failed-full") process.exit(1);',
     'if (args.at(-1) === "lint" && scenario.kind === "drift") {',
     '  await writeFile(resolve(scenario.path), "unverified output");',
@@ -119,14 +119,14 @@ const createCheckWorkspace = async (context, scenario) => {
     '  await writeFile(resolve(directory, "index.js"), "export const value = 2;");',
     '}',
   ].join('\n'));
-  for (const { name } of packages) await put('.tmp/' + name + '-next.tgz', 'next ' + name);
+  for (const { name } of packages) await put('tmp/' + name + '-next.tgz', 'next ' + name);
   await execute('git', ['init', '--quiet'], { cwd: root, windowsHide: true });
   const state = {
     ...await collectWorkspaceFingerprint(root),
     distDigests: await collectDistDigests(packages),
-    tarballDigests: await collectTarballDigests(packages, resolve(root, '.tmp/check-cache/packs')),
+    tarballDigests: await collectTarballDigests(packages, resolve(root, 'tmp/check-cache/packs')),
   };
-  const receiptPath = resolve(root, '.tmp/check-cache/state.json');
+  const receiptPath = resolve(root, 'tmp/check-cache/state.json');
   const receipt = JSON.stringify(state);
   await writeFile(receiptPath, receipt);
   const run = async (args = []) => {
@@ -166,7 +166,7 @@ test('单包检查拒绝包 README 与同批文档中的断链，失败不更新
 
 test('文档与单包检查拒绝验证期间变化的复用产物和 tarball', async (context) => {
   for (const mode of ['docs', 'leaf']) {
-    for (const path of ['packages/other/dist/index.js', '.tmp/check-cache/packs/other.tgz']) {
+    for (const path of ['packages/other/dist/index.js', 'tmp/check-cache/packs/other.tgz']) {
       await context.test(mode + '/' + path, async (child) => {
         const workspace = await createCheckWorkspace(child, { kind: 'drift', path });
         await workspace.put(mode === 'docs' ? 'README.md' : 'packages/leaf/src/index.js', 'changed\n');
@@ -213,8 +213,8 @@ test('单包检查在构建前清除目标包的过期 dist 文件', async (cont
 });
 
 test('a leaf check rebuilds its own dist while preserving verified dependency outputs', async () => {
-  await mkdir(resolve('.tmp/tests'), { recursive: true });
-  const root = await mkdtemp(resolve('.tmp/tests', 'check-runner-'));
+  await mkdir(resolve('tmp/tests'), { recursive: true });
+  const root = await mkdtemp(resolve('tmp/tests', 'check-runner-'));
   const packages = ['core', 'leaf', 'other'].map((name) => ({ name, packageRoot: resolve(root, name) }));
   try {
     for (const packageValue of packages) {
@@ -233,8 +233,8 @@ test('a leaf check rebuilds its own dist while preserving verified dependency ou
 });
 
 test('a package group may rebuild its own outputs but must preserve every other dist', async () => {
-  await mkdir(resolve('.tmp/tests'), { recursive: true });
-  const root = await mkdtemp(resolve('.tmp/tests', 'check-runner-'));
+  await mkdir(resolve('tmp/tests'), { recursive: true });
+  const root = await mkdtemp(resolve('tmp/tests', 'check-runner-'));
   const packages = ['core', 'leaf', 'other'].map((name) => ({ name, packageRoot: resolve(root, name) }));
   try {
     for (const packageValue of packages) {
@@ -254,8 +254,8 @@ test('a package group may rebuild its own outputs but must preserve every other 
 });
 
 test('a package group drains failed checks and never writes a success receipt', async () => {
-  await mkdir(resolve('.tmp/tests'), { recursive: true });
-  const root = await mkdtemp(resolve('.tmp/tests', 'check-runner-'));
+  await mkdir(resolve('tmp/tests'), { recursive: true });
+  const root = await mkdtemp(resolve('tmp/tests', 'check-runner-'));
   let finishScripts;
   const scripts = new Promise((resolve) => { finishScripts = resolve; });
   const calls = [];

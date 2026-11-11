@@ -10,7 +10,7 @@ import { discoverWorkspacePackageModel } from '../workspace-packages.mjs';
 import { createTestRunContext } from '../test-run-context.mjs';
 
 const module = await import('../test-process-runner.mjs').catch(error => ({ error }));
-const repositoryRoot = resolve(import.meta.dirname, '../..'), base = resolve(repositoryRoot, '.tmp/tests');
+const repositoryRoot = resolve(import.meta.dirname, '../..'), base = resolve(repositoryRoot, 'tmp/tests');
 let supervisor;
 async function native() {
   assert.ifError(module.error);
@@ -23,7 +23,7 @@ async function fixture(t, { fakeScope = false } = {}) {
     if (fakeScope) {
       // 此替身从未启动 OS 进程；收据只能授权移除本例创建且身份未变的空根。
       const temporary = JSON.parse(await readFile(resolve(root, 'temporary.json'), 'utf8'));
-      const inside = relative(resolve(repositoryRoot, '.tmp/test-work'), temporary.path);
+      const inside = relative(resolve(repositoryRoot, 'tmp/test-work'), temporary.path);
       assert.ok(inside && !inside.startsWith('..') && !isAbsolute(inside));
       const identity = await lstat(temporary.path, { bigint: true });
       assert.equal(identity.isSymbolicLink(), false); assert.equal(identity.isDirectory(), true);

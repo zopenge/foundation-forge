@@ -44,7 +44,7 @@ it('inherits an explicit Git fixture route in real command children', async () =
   } finally { vi.unstubAllEnvs(); await f.dispose(); }
 });
 it('retains the frozen lock bytes after a real Git clone and local object fetch', async () => {
-  const f = await managedFixture(); const parent = resolve(f.cwd, '.tmp/release-slot'), checkout = resolve(parent, 'checkout');
+  const f = await managedFixture(); const parent = resolve(f.cwd, 'state/release-slot'), checkout = resolve(parent, 'checkout');
   try {
     await mkdir(parent, { recursive: true });
     git(parent, 'clone', '--no-checkout', '--no-local', '--config', 'core.autocrlf=false', '--config', 'core.eol=lf', '--origin', 'origin', '--', f.remote, checkout);
@@ -94,9 +94,9 @@ it('creates and fetches a managed checkout beyond the Windows legacy path limit'
   try {
     if (f.config.source.mode !== 'managed-commit') throw new Error('managed fixture required');
     // 按 fixture 实际根补齐路径，跨过 pack 的 260 字符限制，同时避开 Git 自身 GIT_DIR 的字节限制。
-    const paddingBytes = 214 - Buffer.byteLength(resolve(f.cwd, '.tmp/release-slot/checkout/.git')) - 1;
+    const paddingBytes = 214 - Buffer.byteLength(resolve(f.cwd, 'state/release-slot/checkout/.git')) - 1;
     expect(paddingBytes).toBeGreaterThan(0);
-    const config = { ...f.config, source: { ...f.config.source, slotPath: `.tmp/${'p'.repeat(paddingBytes)}/release-slot` } };
+    const config = { ...f.config, source: { ...f.config.source, slotPath: `state/${'p'.repeat(paddingBytes)}/release-slot` } };
     await writeFile(resolve(f.cwd, 'release.config.json'), JSON.stringify(config));
     f.commit();
     const sourceConfig = git(f.cwd, 'config', '--local', '--list');

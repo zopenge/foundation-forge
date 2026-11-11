@@ -115,4 +115,4 @@ runner 必须由消费者显式配置真实 owned scope Provider；不支持时�
 
 [Pages Direct Upload](https://developers.cloudflare.com/pages/get-started/direct-upload/)、[Wrangler Pages 命令](https://developers.cloudflare.com/workers/wrangler/commands/pages/)、[OCI Distribution Specification](https://github.com/opencontainers/distribution-spec/blob/main/spec.md) 和 [crane digest](https://github.com/google/go-containerregistry/blob/main/cmd/crane/doc/crane_digest.md) 分别定义部署、CLI 与 blob/manifest 语义；本包不声称覆盖这些协议的全部实现。
 
-`package-consumer` 的两类 fixture 从真实 tarball 安装公开包。目录场景由 COS Provider 包拥有；多制品场景由 Core 包拥有，调用真正的 Node CLI 和显式 owned scope Provider，并回读 blob、manifest、静态字节和运行状态。类型 fixture 仅从消费目录解析打包后的公开声明；TypeScript 编译器使用仓库现有工具。所有运行资源由测试创建，处于 ignored `.tmp/` 下并按生命周期关闭/清理。
+`package-consumer` 的两类 fixture 从真实 tarball 安装公开包。目录场景由 COS Provider 包拥有；多制品场景由 Core 包拥有，调用真正的 Node CLI 和显式 owned scope Provider，并回读 blob、manifest、静态字节和运行状态。类型 fixture 仅从消费目录解析打包后的公开声明；TypeScript 编译器使用仓库现有工具。所有运行资源由测试创建，处于 ignored `tmp/` 下并按生命周期关闭/清理。

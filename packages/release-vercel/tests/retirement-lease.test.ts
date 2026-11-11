@@ -10,7 +10,7 @@ import { readRetirementHost } from '../src/node/retirement-host.js';
 const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 const fixture = async () => {
-  const base = resolve(import.meta.dirname, '../../../.tmp/retirement-lease-tests');
+  const base = resolve(import.meta.dirname, '../../../tmp/retirement-lease-tests');
   await mkdir(base, { recursive: true }); const slotRoot = await mkdtemp(resolve(base, 'l-')); roots.push(slotRoot);
   return { paths: { slotRoot, slotIdentity: await fileIdentity(slotRoot) }, host: await readRetirementHost() };
 };

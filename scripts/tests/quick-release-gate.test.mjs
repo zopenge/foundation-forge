@@ -17,10 +17,10 @@ test('发布门禁只接受当前完整指纹、dist和真实 tarball摘要匹�
     assert.throws(() => verify(receipt), error => error.code === 'FULL_CHECK_REQUIRED');
 });
 test('直接 JS 发布调用在 quick 收据下拒绝，不访问 registry、不打包', async t => {
-  const base = resolve(import.meta.dirname, '../../.tmp/tests'); await mkdir(base, { recursive: true });
+  const base = resolve(import.meta.dirname, '../../tmp/tests'); await mkdir(base, { recursive: true });
   const root = await mkdtemp(resolve(base, 'quick-gate-')); t.after(() => rm(root, { recursive: true, force: true }));
-  await mkdir(resolve(root, '.tmp/check-cache'), { recursive: true });
-  const path = resolve(root, '.tmp/check-cache/state.json'), bytes = JSON.stringify({ ...state, validation: { schemaVersion: 1, kind: 'quick' } });
+  await mkdir(resolve(root, 'tmp/check-cache'), { recursive: true });
+  const path = resolve(root, 'tmp/check-cache/state.json'), bytes = JSON.stringify({ ...state, validation: { schemaVersion: 1, kind: 'quick' } });
   await writeFile(path, bytes);
   t.mock.method(globalThis, 'fetch', () => assert.fail('发布门禁前不得查询 registry'));
   for (const bootstrap of [false, true]) await assert.rejects(publishIfNeeded({ model: { repositoryRoot: root }, bootstrap }), error => error.code === 'FULL_CHECK_REQUIRED');

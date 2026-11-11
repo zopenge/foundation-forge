@@ -7,9 +7,12 @@ import { pathToFileURL } from 'node:url';
 
 import { collectRelativeModuleClosure } from '../../../scripts/ab-eval/module-closure.mjs';
 import { freezePack, validatePack } from '../../../scripts/ab-eval/manifest.mjs';
+import { ensureTestTemporaryDirectory } from '../../../scripts/test-temporary-directory.mjs';
 
 const repoRoot=resolve(import.meta.dirname,'../../..');
+// 历史迁移只读原档案；新输出独立使用当前临时根。
 const sourceRoot=resolve(repoRoot,'.tmp');
+const outputRoot=resolve(repoRoot,'tmp');
 const optimizationRoot=resolve(sourceRoot,'repository-context-optimization-v3');
 const labRoot=resolve(sourceRoot,'repository-context-lab');
 const fail=code=>Object.assign(new Error(code),{code});
@@ -222,10 +225,12 @@ const buildConfigs=async({packet,output,legacyRunRoot})=>{
 };
 
 export const exportH8Pack=async({outputDir,clientVersion,
+  legacyWorkspace=false,
   packetPath=resolve(optimizationRoot,'evaluation/manifests/fro08-v85-full-closed.json'),
   legacyRunRoot=resolve(optimizationRoot,'runs/fro08-formal-sol-opencode-high-063-full')})=>{
+  if(legacyWorkspace!==true)throw fail('H8_LEGACY_ARCHIVE_REQUIRED');
   const output=resolve(outputDir);
-  if(!inside(sourceRoot,output)||output===sourceRoot
+  if(!inside(outputRoot,output)||output===outputRoot
     ||typeof clientVersion!=='string'||!/^\d+\.\d+\.\d+$/u.test(clientVersion))
     throw fail('H8_EXPORT_ARGUMENT_INVALID');
   const packet=await json(packetPath);
@@ -233,7 +238,7 @@ export const exportH8Pack=async({outputDir,clientVersion,
     ||packet.candidate?.sha256!==
       '95127183010B99844CC3E35F80602DBD4C7B97DD66FD87E53CD2D0699010EC57')
     throw fail('H8_PACKET_IDENTITY_INVALID');
-  await mkdir(dirname(output),{recursive:true});
+  await ensureTestTemporaryDirectory(repoRoot,dirname(output));
   await mkdir(output,{recursive:false});
   const candidate=await copyCandidate({packet,output});
   const runtimeModules=await copyRuntimeModules(output);
@@ -271,8 +276,9 @@ export const exportH8Pack=async({outputDir,clientVersion,
 };
 
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href){
-  const [flag,outputDir,versionFlag,clientVersion]=process.argv.slice(2);
+  const [flag,outputDir,versionFlag,clientVersion,legacyFlag,...extra]=process.argv.slice(2);
   if(flag!=='--out'||versionFlag!=='--client-version'||!outputDir||!clientVersion)
     throw fail('H8_EXPORT_ARGUMENT_INVALID');
-  process.stdout.write(`${JSON.stringify(await exportH8Pack({outputDir,clientVersion}))}\n`);
+  if(legacyFlag!=='--legacy-workspace'||extra.length)throw fail('H8_LEGACY_ARCHIVE_REQUIRED');
+  process.stdout.write(`${JSON.stringify(await exportH8Pack({outputDir,clientVersion,legacyWorkspace:true}))}\n`);
 }

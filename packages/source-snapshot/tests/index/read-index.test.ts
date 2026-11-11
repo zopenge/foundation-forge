@@ -1,5 +1,5 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { sourceTestTemporaryDirectory } from '../temporary-directory.js';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import {
@@ -81,7 +81,7 @@ test('publishes machine and human indexes from the same derived read index', asy
     { path: 'src/main.ts', group: 'code', text: 'export const value = 1\n' },
     { path: 'docs/readme.md', group: 'docs', text: '# 文档\n' },
   ]);
-  const base = await mkdtemp(join(tmpdir(), 'forge-read-index-'));
+  const base = await mkdtemp(join(await sourceTestTemporaryDirectory(), 'forge-read-index-'));
   const targetRoot = join(base, 'store');
   try {
     await publishSourceSnapshot({ manifest, textPackage }, {

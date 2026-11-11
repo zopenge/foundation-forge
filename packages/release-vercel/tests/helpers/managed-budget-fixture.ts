@@ -10,7 +10,7 @@ import { metadataReserveBytes } from '../../src/node/managed-metadata.js';
 
 /** 预算组件保留真实文件身份、锁及原子写入；Git 准入由独立集成测试覆盖。 */
 export async function managedBudgetFixture() {
-  const base = resolve(import.meta.dirname, '../../../../.tmp/managed-budget-tests');
+  const base = resolve(import.meta.dirname, '../../../../tmp/managed-budget-tests');
   await mkdir(base, { recursive: true });
   const root = await mkdtemp(resolve(base, 'r-'));
   const dispose = async () => {
@@ -22,14 +22,14 @@ export async function managedBudgetFixture() {
     await rm(target, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   };
   try {
-    const sourceRoot = resolve(root, 'source 空间 with spaces'), slotRoot = resolve(sourceRoot, '.tmp/release-slot');
-    const anchorPath = resolve(sourceRoot, '.tmp/forge-vercel-release/managed.json');
+    const sourceRoot = resolve(root, 'source 空间 with spaces'), slotRoot = resolve(sourceRoot, 'state/release-slot');
+    const anchorPath = resolve(sourceRoot, 'state/forge-vercel-release/managed.json');
     await mkdir(slotRoot, { recursive: true }); await mkdir(resolve(anchorPath, '..'), { recursive: true });
     const paths: ManagedPaths = { sourceRoot, slotRoot, anchorPath, checkoutRoot: resolve(slotRoot, 'checkout'),
       ownershipPath: resolve(slotRoot, 'ownership.json'), statePath: resolve(slotRoot, 'state.json'),
       lockPath: resolve(slotRoot, 'run.lock'), recoveryLockPath: resolve(slotRoot, 'recover.lock'),
       sourceIdentity: await fileIdentity(sourceRoot), slotIdentity: await fileIdentity(slotRoot) };
-    const limits: ManagedSourceConfig = { mode: 'managed-commit', slotPath: '.tmp/release-slot', maxBytes: 2 ** 31,
+    const limits: ManagedSourceConfig = { mode: 'managed-commit', slotPath: 'state/release-slot', maxBytes: 2 ** 31,
       minFreeBytes: 5 * 2 ** 30, sampleIntervalMs: 250, install: { packageManager: 'pnpm' }, prepare: [] };
     const lock = await acquireLock(paths.lockPath), slotId = randomUUID();
     const guard = async () => { await assertManagedPaths(paths); await lock.assertOwned(); };

@@ -26,7 +26,7 @@ import {
 import { discoverWorkspacePackageModel } from './workspace-packages.mjs';
 import { createTestRunContext } from './test-run-context.mjs';
 
-const ignoredDirectories = new Set(['.git', '.tmp', 'coverage', 'dist', 'node_modules']);
+const ignoredDirectories = new Set(['.git', '.tmp', 'tmp', 'coverage', 'dist', 'node_modules']);
 const execFileAsync = promisify(execFile);
 const packageConcurrency = Math.min(8, availableParallelism());
 const toolingRoot = fileURLToPath(new URL('../', import.meta.url));
@@ -129,7 +129,10 @@ const listMarkdownFiles = async (root, directory = root) => {
   const results = [];
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     if (entry.isDirectory()) {
-      if (!ignoredDirectories.has(entry.name)) {
+      // 持久运行数据只在仓库根排除；源码内部的同名目录仍受验证。
+      const persistentRoot = directory === root
+        && (process.platform === 'win32' ? entry.name.toLowerCase() : entry.name) === 'state';
+      if (!ignoredDirectories.has(entry.name) && !persistentRoot) {
         results.push(...await listMarkdownFiles(root, resolve(directory, entry.name)));
       }
     } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.md')) {

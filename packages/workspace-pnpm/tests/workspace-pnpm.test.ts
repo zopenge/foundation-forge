@@ -6,7 +6,7 @@ import { afterEach, expect, test } from 'vitest';
 
 import { readPnpmWorkspace } from '../src/index.js';
 
-const testRoot = resolve(import.meta.dirname, '..', '.tmp', 'tests');
+const testRoot = resolve(import.meta.dirname, '..', 'tmp', 'tests');
 const createdDirectories: string[] = [];
 
 afterEach(async () => {

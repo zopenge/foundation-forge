@@ -19,7 +19,7 @@ export async function runRelease(options: RunReleaseOptions): Promise<ReleaseRep
       || (options.abandonUnstarted && options.confirmOrigin !== undefined))) throw new ReleaseError('ARGUMENT_INVALID');
     if (options.command === 'retire' ? !options.runId || !/^[a-f0-9-]{36}$/u.test(options.runId) || (options.confirmOrigin !== undefined && !/^[a-f0-9]{64}$/u.test(options.confirmOrigin)) : options.runId !== undefined || options.confirmOrigin !== undefined) throw new ReleaseError('ARGUMENT_INVALID');
     if (options.command === 'login') return await runWorkspaceRelease(options);
-    const managed = await pathExists(resolve(options.cwd, '.tmp/forge-vercel-release/managed.json'));
+    const managed = await pathExists(resolve(options.cwd, 'state/forge-vercel-release/managed.json'));
     if (options.command === 'retire') {
       if (!managed) throw new ReleaseError('SOURCE_UNSUPPORTED', { reason: 'RETIREMENT_REQUIRES_MANAGED_RUN' });
       return await runManagedRetirement(options);

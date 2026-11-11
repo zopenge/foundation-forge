@@ -12,8 +12,8 @@ const binding = { commit: 'a'.repeat(40), fingerprint: 'b'.repeat(64),
 const packages = [{ name: '@example/pkg', version: '1.0.0-rc.0', workspaceDependencies: [] }];
 const fixture = async (context) => {
   captureReleaseOutput(context);
-  await mkdir(resolve('.tmp', 'release-tests'), { recursive: true });
-  const repositoryRoot = await mkdtemp(resolve('.tmp', 'release-tests', 'recover-'));
+  await mkdir(resolve('tmp', 'release-tests'), { recursive: true });
+  const repositoryRoot = await mkdtemp(resolve('tmp', 'release-tests', 'recover-'));
   context.after(() => rm(repositoryRoot, { recursive: true, force: true }));
   return { repositoryRoot, packages };
 };

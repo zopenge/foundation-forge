@@ -30,8 +30,8 @@ const filePlan = () => {
 };
 
 beforeEach(async () => {
-  await mkdir(resolve(repositoryRoot, '.tmp'), { recursive: true });
-  directory = await mkdtemp(resolve(repositoryRoot, '.tmp', 'apf-'));
+  await mkdir(resolve(repositoryRoot, 'tmp'), { recursive: true });
+  directory = await mkdtemp(resolve(repositoryRoot, 'tmp', 'apf-'));
   source = resolve(directory, 's');
   await mkdir(source);
   await writeFile(resolve(source, 'one.bin'), 'one');

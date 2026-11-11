@@ -25,7 +25,7 @@ const deniedFs = Object.fromEntries(Object.entries(fs).filter(([key]) => key !==
   [key, typeof value === 'function' ? () => { throw new Error(`unexpected fs operation: ${key}`); } : value]));
 const fakeFs = { ...deniedFs,
   lstat: async path => {
-    assert.ok(String(path).replaceAll('\\', '/').endsWith('/.tmp/ci-shards/part-1'));
+    assert.ok(String(path).replaceAll('\\', '/').endsWith('/tmp/ci-shards/part-1'));
     throw Object.assign(new Error('absent'), { code: 'ENOENT' });
   },
   readFile: async path => {

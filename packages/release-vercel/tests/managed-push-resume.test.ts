@@ -80,7 +80,7 @@ it('observes an accepted push with a lost response and never pushes that old int
   const pushes = [...first.fixturePushes, ...gitCalls.mock.calls.filter(([args]) => args[0] === 'push').map(([args]) => args.at(-1) ?? '')];
   expect(pushes.filter(target => target.endsWith(':refs/heads/dev'))).toEqual([`${sha}:refs/heads/dev`]);
   expect(pushes.filter(target => target.endsWith(':refs/heads/main'))).toEqual([`${sha}:refs/heads/main`]);
-  const history = JSON.parse(await readFile(resolve(f.cwd, '.tmp/release-slot/history', `${first.runId}.json`), 'utf8'));
+  const history = JSON.parse(await readFile(resolve(f.cwd, 'state/release-slot/history', `${first.runId}.json`), 'utf8'));
   expect(JSON.parse(history.snapshot.publish).report).toMatchObject({ ok: false, effects: { developmentPush: 'unknown' } });
   const prior = JSON.parse(history.snapshot.state);
   expect(prior.pendingPush).toBe('developmentPush');

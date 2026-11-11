@@ -21,7 +21,7 @@ export async function completionFixture({ completion = true, mode = 'ok', jobTim
       args: [resolve(import.meta.dirname, '../../package-consumer/completion-job.mjs'), control, proof, observations],
       ...(jobTimeoutMs === undefined ? {} : { timeoutMs: jobTimeoutMs }) }] } } : {}) };
     await writeFile(control, mode);
-    await writeFile(resolve(value.cwd, '.gitignore'), '.tmp/\nnode_modules/\n.vercel/\n');
+    await writeFile(resolve(value.cwd, '.gitignore'), 'tmp/\nstate/\nnode_modules/\n.vercel/\n');
     await writeFile(resolve(value.cwd, 'release.config.json'), JSON.stringify(config));
     const sha = value.commit(), trace: string[] = [];
     const markers = new Map<string, Record<string, unknown>>(), versions = new Map<string, string>();
@@ -35,7 +35,7 @@ export async function completionFixture({ completion = true, mode = 'ok', jobTim
         if (path.startsWith('/v13/deployments/')) {
           const id = path.split('/')[3]?.split('?')[0]; if (!id) throw new Error('deployment required');
           if (!markers.has(id)) markers.set(id, JSON.parse(await readFile(resolve(value.cwd,
-            '.tmp/release-slot/checkout/.tmp/forge-vercel-release/prebuilt/.vercel/output/static/.well-known/forge-prebuilt.json'), 'utf8')));
+            'state/release-slot/checkout/state/forge-vercel-release/prebuilt/.vercel/output/static/.well-known/forge-prebuilt.json'), 'utf8')));
           return { id, ownerId: 'team_fixture', projectId: 'prj_fixture', target: 'production', source: 'cli', readyState: 'READY', url: `${id.slice(4)}.vercel.app` };
         }
         if (path.startsWith('/v4/aliases/')) {

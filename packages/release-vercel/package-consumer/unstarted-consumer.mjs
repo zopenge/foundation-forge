@@ -13,7 +13,7 @@ export async function verifyUnstartedConsumer({ cwd, binary, sha, execute }) {
   assert.equal(worker.status, 0, worker.error?.message ?? worker.stdout);
   const failed = JSON.parse(worker.stdout);
   assert.equal(failed.candidateSha, sha); assert.equal(failed.processes?.status, 'unknown');
-  const statePath = resolve(cwd, '.tmp/release-slot/state.json'), receiptPath = resolve(cwd, '.tmp/release-slot/latest-check.json');
+  const statePath = resolve(cwd, 'state/release-slot/state.json'), receiptPath = resolve(cwd, 'state/release-slot/latest-check.json');
   const state = await readFile(statePath), receipt = await readFile(receiptPath);
   const ordinary = spawnSync(process.execPath, [binary, 'retire', '--cwd', cwd, '--run-id', failed.runId],
     { cwd, encoding: 'utf8', shell: false, windowsHide: true, timeout: 180_000 });
@@ -25,7 +25,7 @@ export async function verifyUnstartedConsumer({ cwd, binary, sha, execute }) {
   assert.equal(retired.ok, true); assert.equal(retired.retirement?.cessation, 'recorded-empty-unstarted-scope');
   assert.equal(retired.retirement?.historicalVerification, 'unknown'); assert.equal(retired.processes?.status, 'unknown');
   assert.equal((await readFile(statePath)).equals(state), true); assert.equal((await readFile(receiptPath)).equals(receipt), true);
-  await assert.rejects(readFile(resolve(cwd, '.tmp/release-slot/run.lock')), { code: 'ENOENT' });
+  await assert.rejects(readFile(resolve(cwd, 'state/release-slot/run.lock')), { code: 'ENOENT' });
   const archivePath = retired.retirement.archivePath, archived = await readFile(archivePath), evidence = JSON.parse(archived);
   assert.equal(evidence.snapshot.state, state.toString('utf8')); assert.equal(evidence.snapshot.check, receipt.toString('utf8'));
   assert.equal(evidence.final.observation.developmentRef.relation, 'unknown');

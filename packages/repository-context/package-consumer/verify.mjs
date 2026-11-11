@@ -25,7 +25,7 @@ assert.equal(typeof core.selectEvidence, 'function');
 assert.equal(typeof core.buildEvidenceUnits, 'function');
 const cpp = extractCpp({ path: 'include/example.hpp', text: 'class Example {};', corpusId: 'consumer', generationId: 'g1' });
 assert.equal(cpp.readiness, 'ready-for-lexical-evidence');
-const fixtureRoot = resolve('.tmp', 'repository-context-consumer');
+const fixtureRoot = resolve('tmp', 'repository-context-consumer');
 const indexRoot = resolve(fixtureRoot, '.index');
 await rm(fixtureRoot, { recursive: true, force: true });
 await mkdir(resolve(fixtureRoot, 'src'), { recursive: true });

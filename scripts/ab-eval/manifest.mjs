@@ -162,7 +162,7 @@ export const validatePack=async manifestPath=>{
 export const slicePack=async({manifestPath,outputDir,id,pairIds})=>{
   const {manifest,base,manifestSha256}=await validatePack(manifestPath);
   const target=resolve(outputDir);
-  const temporaryRoot=resolve(import.meta.dirname,'../../.tmp');
+  const temporaryRoot=resolve(import.meta.dirname,'../../tmp');
   if(!safeId(id)||!Array.isArray(pairIds)||pairIds.length===0
     ||new Set(pairIds).size!==pairIds.length
     ||!inside(temporaryRoot,target)||target===temporaryRoot

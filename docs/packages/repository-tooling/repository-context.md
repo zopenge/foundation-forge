@@ -23,11 +23,11 @@ pnpm add @openge/forge-repository-context
 ## CLI 调查与预算
 
 ```sh
-forge-repository-context investigate --root . --index .tmp/repository-context \
+forge-repository-context investigate --root . --index tmp/repository-context \
   --query "semantic input package exports" --scope packages/repository-context/src/ \
   --view evidence --max-bytes 4096
 
-forge-repository-context read --root . --index .tmp/repository-context \
+forge-repository-context read --root . --index tmp/repository-context \
   --path packages/repository-context/src/node/reader.ts --line-start 1 --line-end 80 \
   --max-bytes 16384
 ```
@@ -43,10 +43,10 @@ forge-repository-context read --root . --index .tmp/repository-context \
 ## 构建与 current 校验
 
 ```sh
-forge-repository-context build --root . --index .tmp/repository-context \
+forge-repository-context build --root . --index tmp/repository-context \
   --corpus local --scope packages --language typescript --tsconfig tsconfig.json
 
-forge-repository-context check --root . --index .tmp/repository-context
+forge-repository-context check --root . --index tmp/repository-context
 ```
 构建只扫描明确 scope，拒绝绝对路径、`..`、符号链接逃逸、秘密文件和常规派生输出。generation 同时绑定源码摘要与 TypeScript 配置闭包，包括 tsconfig/extends、project references、相关 package manifest、workspace/lockfile 以及已解析或缺失模块目标。
 
@@ -63,8 +63,8 @@ SDK 构建接受可选 `signal: AbortSignal`。指针切换前取消或发布失
 frozen 快路径只接受已经由 `@openge/forge-source-snapshot` 发布并授权的不可变 snapshot store；必须同时提供固定的 root、owner 和 snapshot id：
 
 ```sh
-forge-repository-context check --root . --index .tmp/repository-context \
-  --snapshot-root .tmp/source-snapshots --snapshot-owner local-owner \
+forge-repository-context check --root . --index tmp/repository-context \
+  --snapshot-root tmp/source-snapshots --snapshot-owner local-owner \
   --snapshot-id snapshot-<sha256>
 ```
 

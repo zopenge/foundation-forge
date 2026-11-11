@@ -125,7 +125,7 @@ async function recoverManagedPublication(options: RunReleaseOptions): Promise<Re
       : state?.prebuilt ? state.prebuilt.deploymentId ? 'verify' : 'status' : effects.releasePush === 'pushed' || effects.releasePush === 'already-current' ? 'verify' : 'publish' });
 }
 export async function settleManagedSlot(options: RunReleaseOptions): Promise<void> {
-  if (!await pathExists(resolve(options.cwd, '.tmp/forge-vercel-release/managed.json'))) return;
+  if (!await pathExists(resolve(options.cwd, 'state/forge-vercel-release/managed.json'))) return;
   const location = await readManagedLocation(options.cwd, options.configPath ?? 'release.config.json');
   const value = await readBoundedJson(location.paths.statePath);
   if (value === undefined) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'STATE_MISSING' });
@@ -313,7 +313,7 @@ function identity(value: unknown): FileIdentity {
   return { dev: item.dev, ino: item.ino };
 }
 export async function readManagedLocation(cwd: string, configPath: string): Promise<ManagedLocation> {
-  const root = await realpath(cwd), path = relativeConfigPath(root, configPath), anchorPath = resolve(root, '.tmp/forge-vercel-release/managed.json');
+  const root = await realpath(cwd), path = relativeConfigPath(root, configPath), anchorPath = resolve(root, 'state/forge-vercel-release/managed.json');
   await assertPathChain(root, anchorPath);
   const value = await readBoundedJson(anchorPath, 65_536);
   if (value === undefined) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'ANCHOR_MISSING' });
