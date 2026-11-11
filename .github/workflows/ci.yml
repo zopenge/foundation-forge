@@ -121,7 +121,7 @@ jobs:
       - run: pnpm build
       - uses: actions/download-artifact@v8
         with:
-          pattern: ${{ matrix.os }}-coverage-*-${{ github.run_attempt }}
+          pattern: ${{ matrix.os }}-coverage-*
           merge-multiple: true
           path: tmp/ci-shards
       - run: pnpm check:ci --merge tmp/ci-shards
@@ -129,11 +129,13 @@ jobs:
   complete:
     name: Complete CI
     if: ${{ always() }}
-    needs: [verify-gates, merge]
+    needs: [verify-gates, verify, verify-windows, merge]
     runs-on: ubuntu-24.04
     steps:
       - name: Require all real gates and complete coverage
         shell: bash
         run: |
           test '${{ needs.verify-gates.result }}' = success
+          test '${{ needs.verify.result }}' = success
+          test '${{ needs.verify-windows.result }}' = success
           test '${{ needs.merge.result }}' = success

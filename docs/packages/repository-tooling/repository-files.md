@@ -42,6 +42,8 @@ const changedFiles = await listChangedRepositoryFiles({ cwd: process.cwd() });
 
 ## 行为与限制
 
+传入 `AbortSignal` 取消操作后，Promise 在 Git 子进程及其流实际关闭后才以 `OPERATION_ABORTED` 拒绝。调用方应等待该 Promise 终态，再回收本次操作自有的目录或文件；取消通知本身不代表进程已经关闭。
+
 本包不提供 commit、branch、push、index 修改或工作区写操作，也不理解 context、风险等级、代码语义或产品目录含义。
 
 ## 与其他 Foundation Forge 包的关系

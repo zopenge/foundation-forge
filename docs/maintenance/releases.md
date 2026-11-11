@@ -72,7 +72,7 @@ npm publish 继续只使用 `npm` environment 约束的 OIDC Trusted Publishing�
 
 配置完成后的发布事件验收应由一次新的 `main` push 触发，确认 Release workflow
 生成或更新 `Version Packages` PR。独立 CI 只由维护者显式手动启动，使用 Node 24
-验证 Linux，以及 Windows 的两个单 worker 覆盖率片和必需汇总；不通过关闭/重开 PR、手工批准、重跑或跳过 CI 来制造成功。
+验证 Linux 四片、Windows 八片的单 worker 覆盖率及两个必需汇总；不通过关闭/重开 PR、手工批准或跳过 CI 来制造成功。定向重跑后仍须通过完整汇总，复用边界见[验证契约](validation.md#ci-公共门禁与覆盖率分片)。
 本地 YAML 与测试通过只能证明配置结构和凭据映射正确，不能替代这次 GitHub 事件验收。
 
 仓库、package、版本、public exports、内部依赖和发布顺序均从 workspace、
@@ -87,21 +87,24 @@ trust CLI 版本和轮询时限等不可推导策略保留在 release policy 中
 
 ```sh
 pnpm install --frozen-lockfile
+pnpm check:full
 pnpm check
 ```
 
-首次检查会从源码生成 dist、真实 tarball、测试 fixture 和验证缓存，不需要复制
+首次完整检查会从源码生成 dist、真实 tarball、测试 fixture 和验证缓存，不需要复制
 另一台机器的 `node_modules`、dist 或 `tmp/`。正常安装需要访问依赖源；包管理器的
 持久 store 可复用，缺失依赖仍由锁文件安装。Git 历史及发布 tag 应完整获取，
 不能把只含源码的压缩包当作可发布的 Git checkout。
+
+`pnpm check` 是 quick 入口，缓存缺失或变更范围要求全量时会返回 `FULL_CHECK_REQUIRED`；此时显式执行 `pnpm check:full`，通过后再运行 quick。不要为满足检查手工预置缓存或复制旧收据。
 
 新机器发布还需要维护者自己的 GitHub 访问权限；首次 bootstrap 需要 npm 登录和
 真实交互终端，可使用默认掩码 OTP 或显式网页授权。常规稳定版继续由合并 Changesets 版本 PR 后的 workflow
 发布，依赖仓库 App、npm environment 和 Trusted Publisher 配置。上述权限与审批
 不会由本地命令跳过，也不需要 AI 工具代为执行。
 
-`tmp/` 是运行时生成的缓存、锁和报告目录，不是首次开发或发布所需的预置输入。
-`release:resume` 是例外：续验一个中断操作必须保留该操作的报告并匹配其源码及
+`tmp/` 仅保存可重建的过程材料，不是首次开发或发布所需的预置输入。发布锁及续验报告保存在明确的持久目录 `state/release/`，不能随临时清理删除。
+`release:resume` 续验一个中断操作时，必须保留该操作的持久报告并匹配其源码及
 验证环境。新 checkout 没有旧报告时，不应伪造报告或再次 publish；先用
 `release:verify --mode <模式>` 回读已发布状态，需要补齐 Trusted Publisher 时使用
 `release:configure-trusted-publishers --package <包名>`。这类重新验证不等同于恢复
@@ -155,7 +158,7 @@ CLI 和 smoke 检查。registry consumer 不使用 prefer-offline，也不会清
 指定 `--package` 后，元数据、安装与 smoke 都只包含目标包和 workspace 依赖图
 的传递闭包。目标包仍须通过 dist-tag、Git tag 与适用的 provenance 检查；依赖包
 验证精确版本和 tarball，不要求其当前 dist-tag 与本次发布模式相同。完整
-`pnpm check` 的全仓验收范围不变。
+`pnpm check:full` 的全仓验收范围不变。
 
 每次 bootstrap 或独立 registry 验证会在忽略的 `state/release/` 下保存 JSON 报告。
 报告绑定源码 commit、验证输入指纹、包名、版本与依赖闭包；原子更新阶段状态，
@@ -368,7 +371,7 @@ Git tag 和源 commit。已发布版本不能再次 publish，也不能把对应
 同时继续脱敏 npm 和 GitHub 凭据。只有 `ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL`
 或退出码不能说明根因，也不能据此要求用户重新输入 OTP。
 
-`release:next` 先执行完整 `pnpm check`，检查失败时尚未调用 publish。修复前仍应
+`release:next` 先执行完整 `pnpm check:full`，检查失败时尚未调用 publish。修复前仍应
 核对 registry，区分尚未发布与部分发布。代码或测试需要修复时，提交并推送新 commit
 后重新运行 `pnpm release:request-next`；只有确认同一 commit 可以安全重试时才使用
 `pnpm release:request-next --retry`。不得跳过门禁或重新发布已经存在的版本。

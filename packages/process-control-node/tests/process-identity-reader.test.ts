@@ -271,4 +271,5 @@ test.runIf(process.platform === 'win32')('Windows reader works without cmdlet mo
     expect(observation.phases[1]).toMatch(/^queried:\d+$/u);
   }
   process.stdout.write(`${JSON.stringify({ kind: 'WINDOWS_READER_LIVE', calls, observations })}\n`);
-});
+  // 外层覆盖原有七秒操作预算及真实关闭、诊断和清理，避免测试先于操作截止。
+}, 15_000);

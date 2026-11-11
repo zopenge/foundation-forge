@@ -25,7 +25,7 @@ const deniedFs = Object.fromEntries(Object.entries(fs).filter(([key]) => key !==
   [key, typeof value === 'function' ? () => { throw new Error(`unexpected fs operation: ${key}`); } : value]));
 const fakeFs = { ...deniedFs,
   lstat: async path => {
-    assert.ok(String(path).replaceAll('\\', '/').endsWith('/tmp/ci-shards/part-1'));
+    assert.ok(String(path).replaceAll('\\', '/').endsWith('/tmp/ci-shards/fixture-part-1'));
     throw Object.assign(new Error('absent'), { code: 'ENOENT' });
   },
   readFile: async path => {
@@ -59,6 +59,9 @@ if (phase.startsWith('own-')) {
   });
   let persisted = 0;
   await module('ci-coverage-shards.mjs', { parseCoverageShard: () => ({ index: 1, count: 2 }),
+    coverageShardDirectoryName: (index, attempt) => {
+      assert.equal(index, 1); assert.equal(attempt, process.env.GITHUB_RUN_ATTEMPT ?? null); return 'fixture-part-1';
+    },
     persistCoverageShard: async () => { persisted++; await Promise.resolve(); controller.abort(reason); },
     readCoverageShardArtifacts: async () => ({ expected: {}, blobs: [] }),
   });

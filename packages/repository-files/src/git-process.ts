@@ -1,4 +1,4 @@
-import { execFile, spawn } from 'node:child_process';
+import { execFile, spawn, type ExecFileException } from 'node:child_process';
 
 import { repositoryFilesErrorCodes } from './contracts.js';
 import { RepositoryFilesError } from './errors.js';
@@ -53,13 +53,26 @@ export const runGitCommand = async (
     return runGitCommandWithInput(args, options);
   }
   return new Promise((resolvePromise, rejectPromise) => {
-    execFile('git', [...args], {
+    let outcome: { error: ExecFileException | null; stdout: string } | undefined;
+    const child = execFile('git', [...args], {
       cwd: options.cwd,
       encoding: 'utf8',
       maxBuffer: 16 * 1_024 * 1_024,
       windowsHide: true,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
-    }, (error, stdout) => {
+    }, (error, stdout) => { outcome = { error, stdout }; });
+    // AbortError 的 callback 可以早于真实关闭；清理只能发生在 close 屏障之后。
+    child.once('close', () => {
+      if (options.signal?.aborted) {
+        rejectPromise(toRepositoryFilesError(outcome?.error ?? options.signal.reason, args, options.cwd, options.signal));
+        return;
+      }
+      if (!outcome) {
+        rejectPromise(new RepositoryFilesError(repositoryFilesErrorCodes.gitCommandFailed,
+          { args, cwd: options.cwd, reason: 'COMMAND_RESULT_MISSING' }));
+        return;
+      }
+      const { error, stdout } = outcome;
       const exitCode = readNumericErrorCode(error);
       if (error !== null && (exitCode === undefined || !options.allowedExitCodes?.has(exitCode))) {
         rejectPromise(toRepositoryFilesError(error, args, options.cwd, options.signal));
@@ -84,6 +97,8 @@ const runGitCommandWithInput = (
   const stdout: Buffer[] = [];
   const stderr: Buffer[] = [];
   let settled = false;
+  let processFailed = false, processFailure: unknown, streamFailed = false, streamFailure: unknown;
+  const recordStreamError = (error: unknown) => { if (!streamFailed) { streamFailed = true; streamFailure = error; } };
   const rejectOnce = (error: unknown): void => {
     if (settled) return;
     settled = true;
@@ -91,9 +106,14 @@ const runGitCommandWithInput = (
   };
   child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
   child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
-  child.on('error', rejectOnce);
-  child.on('close', (code) => {
+  child.once('error', error => { processFailed = true; processFailure = error; });
+  child.stdin.on('error', recordStreamError);
+  child.stdout.on('error', recordStreamError); child.stderr.on('error', recordStreamError);
+  child.once('close', (code) => {
     if (settled) return;
+    if (options.signal?.aborted) { rejectOnce(options.signal.reason); return; }
+    if (processFailed) { rejectOnce(processFailure); return; }
+    if (streamFailed) { rejectOnce(streamFailure); return; }
     if (code !== 0 && (code === null || !options.allowedExitCodes?.has(code))) {
       rejectOnce(Object.assign(new Error(Buffer.concat(stderr).toString('utf8').trim()), { code }));
       return;

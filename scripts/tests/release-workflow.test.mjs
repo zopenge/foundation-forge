@@ -207,14 +207,15 @@ test('keeps Node 24 and requires common gates plus complete per-platform coverag
   assert.ok(merge.steps.some(step => step.run === 'pnpm build'));
   assert.ok(merge.steps.some(step => step.run === 'pnpm check:ci --merge tmp/ci-shards'));
   const download = merge.steps.find(step => step.uses === 'actions/download-artifact@v8');
-  assert.equal(download.with.pattern, '${{ matrix.os }}-coverage-*-${{ github.run_attempt }}');
+  assert.equal(download.with.pattern, '${{ matrix.os }}-coverage-*');
+  for (const key of ['run-id', 'repository', 'github-token']) assert.equal(download.with[key], undefined);
   assert.equal(download.with['merge-multiple'], true);
   assert.equal(download.with.path, 'tmp/ci-shards');
   const complete = workflow.jobs.complete;
-  assert.deepEqual(complete.needs, ['verify-gates', 'merge']);
+  assert.deepEqual(complete.needs, ['verify-gates', 'verify', 'verify-windows', 'merge']);
   assert.equal(complete.if, '${{ always() }}');
   assert.equal(complete['runs-on'], 'ubuntu-24.04');
-  assert.equal(complete.steps[0].run.trim(), "test '${{ needs.verify-gates.result }}' = success\ntest '${{ needs.merge.result }}' = success");
+  assert.equal(complete.steps[0].run.trim(), "test '${{ needs.verify-gates.result }}' = success\ntest '${{ needs.verify.result }}' = success\ntest '${{ needs.verify-windows.result }}' = success\ntest '${{ needs.merge.result }}' = success");
   for (const job of [workflow.jobs.verify, windows, gates, merge]) {
     assert.equal(job.if, undefined);
     assert.equal(job.steps.find(step => step.uses === 'actions/setup-node@v6').with['node-version'], '${{ env.FORGE_CI_NODE_VERSION }}');
