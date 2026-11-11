@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, expect, it } from 'vitest';
-import { classifyRemoteRef, inspectManagedRecovery, runManagedReceiptCommand, selectManagedPublication } from '../src/node/managed-recovery.js';
+import { classifyRemoteRef, runManagedReceiptCommand, selectManagedPublication } from '../src/node/managed-recovery.js';
 import { committedFixtureSource } from './helpers/committed-fixture-source.js';
 import { openManagedSlot } from '../src/node/managed-paths.js';
 import { git, managedFixture } from './helpers/managed-fixture.js';
@@ -13,6 +13,7 @@ import { runRelease } from '../src/node.js';
 import { assertManagedRemoteSettled } from '../src/node/managed-remote-state.js';
 import { protocolComponentSlot } from './helpers/component-session.js';
 import { createTestTaskScope } from '../../../scripts/test-task-scope.mjs';
+import { createManagedSession } from '../src/node/managed-process.js';
 
 const fixtures: Awaited<ReturnType<typeof managedFixture>>[] = [];
 const testTasks = createTestTaskScope();
@@ -38,8 +39,8 @@ const fixture = async (boundary: 'protocol' | 'admission' = 'protocol') => {
       error: { code: 'CHECK_FAILED', details: { reason: 'SELECTION_FIXTURE' } },
       effects: { developmentPush: 'not-attempted', releasePush: 'not-attempted' } } };
   await slot.store.writeReceipt('publish', receipt);
-  await slot.store.writeState({ schemaVersion: 2, slotId: slot.slotId, runId: slot.runId, source, command: 'publish', coordinator: slot.coordinator,
-    stage: 'checks', status: 'closed', processes: [], effects: { developmentPush: 'not-attempted', releasePush: 'not-attempted' } });
+  const session = await createManagedSession(slot, 'publish');
+  session.state.stage = 'checks'; session.state.status = 'closed'; await session.persist();
   await slot.store.writeAnchor({ schemaVersion: 2, slotId: slot.slotId, slotPath: slot.paths.slotRoot, sourceRoot: source.root,
     configPath: source.configPath, latestPublish: { sha: source.sha, runId: slot.runId, configSha256: source.configSha256 } });
   await slot.lock.release();
@@ -59,16 +60,6 @@ it('rejects a replaced slot anchor', async () => {
   const anchor = JSON.parse(await readFile(f.slot.paths.anchorPath, 'utf8')) as Record<string, unknown>;
   await writeFile(f.slot.paths.anchorPath, JSON.stringify({ ...anchor, slotId: '00000000-0000-0000-0000-000000000000' }));
   await expect(selectManagedPublication(f.cwd, 'release.config.json')).rejects.toMatchObject({ code: 'SLOT_STATE' });
-});
-it('reads historical polling witnesses but never upgrades them to OS closure', async () => {
-  const f = await fixture();
-  const state: ManagedState = { schemaVersion: 2, slotId: f.slot.slotId, runId: f.slot.runId, source: f.source, command: 'publish', coordinator: f.slot.coordinator,
-    status: 'closed', stage: 'checks', effects: { developmentPush: 'not-attempted', releasePush: 'not-attempted' },
-    processes: [{ id: f.slot.runId, name: 'legacy-command', status: 'closed', descendants: [], identity: { pid: 123, startToken: 'old-instance' }, observationComplete: true,
-      closure: { observedAt: new Date().toISOString(), exitCode: 0, termination: 'exit' } }] };
-  await writeFile(f.slot.paths.statePath, JSON.stringify(state));
-  expect(await inspectManagedRecovery(state, f.slot.paths, undefined, { readIdentity: async () => ({ status: 'ABSENT' }) })).toMatchObject({ owner: 'inactive', processes: 'unknown' });
-  await expect(openManagedSlot(f.source, f.execution)).rejects.toMatchObject({ code: 'RECOVERY_REQUIRED' });
 });
 it('status uses the historical target without changing metadata or creating a checkout', async () => {
   const f = await fixture('admission'); Object.assign(f.config.vercel, { projectId: 'prj_changed' });

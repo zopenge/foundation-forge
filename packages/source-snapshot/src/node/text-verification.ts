@@ -32,12 +32,6 @@ const planFile = (
   objects: ReadonlyMap<string, SnapshotObject>,
 ): FileVerificationPlan => {
   const details = parseSourceTextDetails(file.details);
-  if (details.formatVersion !== 2) {
-    throw new SourceSnapshotError('TEXT_FORMAT_UNSUPPORTED', {
-      path: file.path,
-      availableAssurance: 'object-integrity',
-    });
-  }
   const locators = [...details.segments].sort((a, b) => a.segmentIndex - b.segmentIndex);
   if (locators.length === 0 || locators.length !== (locators[0]?.segmentCount ?? 0)) {
     throw new SourceSnapshotError('TEXT_DETAILS_INVALID', { path: file.path, field: 'segments' });

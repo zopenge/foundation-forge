@@ -38,7 +38,9 @@ forge-repository-context read --root . --index tmp/repository-context \
 
 显式 `--scope` 是硬搜索边界，不会在该 scope 无命中时自动扩大到全 corpus。如果所有显式请求的 scope 在当前 corpus 中都不存在，返回 `status: "insufficient"`、`reason: "REQUESTED_SCOPE_MISSING"`，同时在 `primaryScopeCoverage.missing` 和 diagnostic 中保留缺失 scope；调用方应把它视为这些 scope 的终止性负证据，而不是为了重新确认其存在性继续做全局 fallback。普通 `NO_USEFUL_CANDIDATE` 仍只表示当前查询在有效 scope 内证据不足。
 
-`nextCursor` 表示后续条目；`hasMoreEvidence=true` 是同义提示。同一请求的续页固定证据规划或兼容展示序列，游标绑定策略、generation、查询、scope 和预算；策略变化后旧游标须重新从第一页获取。`complete=false` 与 `expand` 表示当前条目正文被裁短，`internallyTruncated=true` 在预算容许时给出汇总提示，二者可独立于分页存在。`requestedRange` 在新规划响应中表示所选来源范围；`deliveredRange` 是完整交付的行范围，按字节裁短且不能证明整行交付时为 `null`。极紧预算的旧式兼容响应可能省略附加字段，此时 `lineStart/lineEnd` 仍是请求范围，不能将 `complete=false` 的文本当作完整行交付。`expansion` 指向同一来源文件中更大的可读范围；`complete=false` 时按 `expand` 范围使用 `read`。`read` 支持单范围，也支持 `--ranges-json` 的有界批读。预算是输出上限，不要求填满。
+`nextCursor` 表示后续条目；`hasMoreEvidence=true` 是同义提示。调查按当前结果与预算固定使用完整证据规划，或在规划无法覆盖全部证据时使用有界正文裁剪；续页只接受当前策略的游标。游标绑定策略、generation、查询、scope 和预算；策略变化或旧版 v4 游标返回 `CURSOR_MISMATCH`，调用方须重新从第一页获取。
+
+`complete=false` 与 `expand` 表示当前条目正文被裁短，`internallyTruncated=true` 在预算容许时给出汇总提示，二者可独立于分页存在。`requestedRange` 在规划响应中表示所选来源范围；`deliveredRange` 是完整交付的行范围，按字节裁短且不能证明整行交付时为 `null`。极紧预算可能省略附加字段，此时 `lineStart/lineEnd` 仍是请求范围，不能将 `complete=false` 的文本当作完整行交付。`expansion` 指向同一来源文件中更大的可读范围；`complete=false` 时按 `expand` 范围使用 `read`。`read` 支持单范围，也支持 `--ranges-json` 的有界批读。预算是输出上限，不要求填满。
 
 ## 构建与 current 校验
 
@@ -94,7 +96,7 @@ const investigator = createRepositoryInvestigator({
 const result = await investigator.investigate({ query: 'where invalid input is rejected' });
 ```
 
-SDK 可在请求中传 `evidenceBudget: { maxBytes }` 获取 `evidenceUnits` 升级候选，再用公开的 `selectEvidence` 与调用方提供的完整输出计量器选择；未传时保留原有 evidence 行为。CLI 已装配实际 JSON 计量器。同一次 `investigate()` 可复用已经验证过的完整文件读取来满足其子范围 evidence；缓存不跨查询持久化。freshness verification 是独立成本，不能被这种复用跳过。
+SDK 调查结果始终提供 `evidenceUnits` 升级候选，再由公开的 `selectEvidence` 与调用方提供的完整输出计量器按预算选择；不需要额外的请求开关。无证据或 `includeEvidence=false` 时该数组为空。CLI 已装配实际 JSON 计量器。同一次 `investigate()` 可复用已经验证过的完整文件读取来满足其子范围 evidence 和升级候选；缓存不跨查询持久化。freshness verification 是独立成本，不能被这种复用跳过。
 
 ## 语言与所有权边界
 

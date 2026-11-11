@@ -7,15 +7,14 @@ it('accepts explicit unstarted abandonment only for an exact retirement run', ()
     .toMatchObject({ command: 'retire', runId, abandonUnstarted: true });
   for (const args of [['retire', '--abandon-unstarted'], ['publish', '--abandon-unstarted'], ['recover', '--abandon-unstarted'],
     ['retire', '--run-id', runId, '--abandon-unstarted', '--abandon-unstarted'],
-    ['retire', '--run-id', runId, '--abandon-unstarted', 'true'],
-    ['retire', '--run-id', runId, '--abandon-unstarted', '--confirm-origin', 'a'.repeat(64)]]) {
+    ['retire', '--run-id', runId, '--abandon-unstarted', 'true']]) {
     expect(() => parseArguments(args)).toThrowError(expect.objectContaining({ code: 'ARGUMENT_INVALID' }));
   }
 });
-it('requires explicit exact run and origin acknowledgement only for retirement', () => {
-  expect(parseArguments(['retire', '--run-id', runId, '--confirm-origin', 'a'.repeat(64)])).toMatchObject({ command: 'retire', runId, confirmOrigin: 'a'.repeat(64) });
-  for (const args of [['retire'], ['retire', '--run-id', '../file'], ['retire', '--run-id', runId, '--confirm-origin', 'yes'],
-    ['recover', '--run-id', runId], ['publish', '--confirm-origin', 'a'.repeat(64)], ['retire', '--run-id', runId, '--sha', 'a'.repeat(40)]]) {
+it('requires an explicit exact run only for retirement', () => {
+  expect(parseArguments(['retire', '--run-id', runId])).toMatchObject({ command: 'retire', runId });
+  for (const args of [['retire'], ['retire', '--run-id', '../file'],
+    ['recover', '--run-id', runId], ['retire', '--run-id', runId, '--sha', 'a'.repeat(40)]]) {
     expect(() => parseArguments(args)).toThrowError(expect.objectContaining({ code: 'ARGUMENT_INVALID' }));
   }
 });
@@ -28,6 +27,4 @@ it('rejects the abandonment option at the public SDK boundary before reading loc
   const invalid = { command: 'retire' as const, cwd: import.meta.dirname, runId, abandonUnstarted: true };
   Reflect.set(invalid, 'abandonUnstarted', 'yes');
   expect(await runRelease(invalid)).toMatchObject({ ok: false, error: { code: 'ARGUMENT_INVALID' } });
-  expect(await runRelease({ command: 'retire', cwd: import.meta.dirname, runId, abandonUnstarted: true, confirmOrigin: 'a'.repeat(64) }))
-    .toMatchObject({ ok: false, error: { code: 'ARGUMENT_INVALID' } });
 });

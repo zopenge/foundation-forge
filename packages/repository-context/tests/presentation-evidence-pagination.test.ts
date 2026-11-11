@@ -4,6 +4,7 @@ import type { InvestigationResult } from '../src/investigation/contracts.js';
 import type { EvidenceUnit } from '../src/investigation/evidence-contracts.js';
 import type { StoredRepositoryGeneration } from '../src/node/contracts.js';
 import { serializeInvestigationPage, serializeReadPage } from '../src/presentation/page.js';
+import { createCursorBinding, encodeCursor } from '../src/presentation/cursor.js';
 import { sourceRef } from './repository-fixtures.js';
 
 const paths = ['src/a.ts', 'src/b.ts', 'src/c.ts'];
@@ -30,11 +31,30 @@ const generation: StoredRepositoryGeneration = {
   extractorVersion: 'fixture', sortingVersion: 'fixture', corpus,
 };
 
+test.each(['standard', 'planned'])('拒绝旧 v4 %s 调查游标', (strategy) => {
+  const result: InvestigationResult = {
+    status: 'ok', candidates: [], relations: [], evidence: [evidence('src/a.ts', 1, 1, 'body')],
+    evidenceUnits: [unit('a', 'src/a.ts', 1, 1, 'body', 0)], sourceHints: [],
+    primaryScopeCoverage: { covered: [], missing: [] }, diagnostics: [],
+  };
+  const request = { corpusId: 'fixture', generationId: 'g1', query: 'a', scope: [],
+    view: 'evidence' as const, budget: { maxBytes: 4096, maxCandidates: 3, maxRelations: 8 } };
+  const oldBinding = createCursorBinding(generation.generationId, {
+    query: request.query, view: request.view, budget: request.budget,
+    evidencePolicy: 'evidence-plan-v4', strategy,
+  }, request.scope);
+
+  expect(() => serializeInvestigationPage(result, generation, {
+    ...request, cursor: encodeCursor(oldBinding, 0),
+  })).toThrowError(expect.objectContaining({ code: 'CURSOR_MISMATCH' }));
+});
+
 test('完整调查响应能装入总预算时，不因短辅助片段的平均份额而截断主证据', () => {
   const texts = [evidence('src/a.ts', 1, 1, 'a'.repeat(2_000)),
     evidence('src/b.ts', 1, 1, 'support')];
   const result: InvestigationResult = {
     status: 'ok', candidates: [], relations: [], evidence: texts, sourceHints: [],
+    evidenceUnits: texts.map((item, index) => unit(`c${index}`, item.path, item.lineStart, item.lineEnd, item.text, index)),
     primaryScopeCoverage: { covered: [], missing: [] }, diagnostics: [],
   };
   const request = { corpusId: 'fixture', generationId: 'g1', query: 'a', scope: [],
@@ -89,6 +109,7 @@ test.each(['\\'.repeat(2_000), '🙂'.repeat(1_000)])('正文未超限但完整 
   const budget = { maxBytes: 4096, maxCandidates: 3, maxRelations: 8 };
   const result: InvestigationResult = {
     status: 'ok', candidates: [], relations: [], evidence: [item], sourceHints: [],
+    evidenceUnits: [unit('a', item.path, item.lineStart, item.lineEnd, item.text, 0)],
     primaryScopeCoverage: { covered: [], missing: [] }, diagnostics: [],
   };
   expect(Buffer.byteLength(text, 'utf8')).toBeLessThanOrEqual(budget.maxBytes);

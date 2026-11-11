@@ -14,10 +14,10 @@ import { discoverPackageTestFiles, runWorkspaceQuickTests } from './run-workspac
 
 export const selectQuickPlan = ({ state, fingerprint, packages, scriptFiles }) => {
   if (!state?.files || Array.isArray(state.files) || typeof state.files !== 'object') return { kind: 'full-required' };
-  const selection = state.selectionEnvironmentDigest && fingerprint.selectionEnvironmentDigest;
-  if (selection && state.selectionEnvironmentDigest !== fingerprint.selectionEnvironmentDigest) return { kind: 'full-required' };
-  const mode = selectCheckMode(selection ? { ...state, environmentDigest: state.selectionEnvironmentDigest } : state,
-    selection ? { ...fingerprint, environmentDigest: fingerprint.selectionEnvironmentDigest } : fingerprint, packages);
+  if (typeof state.selectionEnvironmentDigest !== 'string' || state.selectionEnvironmentDigest.length === 0
+    || state.selectionEnvironmentDigest !== fingerprint.selectionEnvironmentDigest) return { kind: 'full-required' };
+  const mode = selectCheckMode({ ...state, environmentDigest: state.selectionEnvironmentDigest },
+    { ...fingerprint, environmentDigest: fingerprint.selectionEnvironmentDigest }, packages);
   if (mode.kind === 'full') return { kind: 'full-required' };
   const changed = Object.keys(fingerprint.files).filter(path => state.files[path] !== fingerprint.files[path]);
   const packageNames = mode.kind === 'leaf' ? [mode.packageName] : mode.kind === 'packages' ? mode.packageNames : [];

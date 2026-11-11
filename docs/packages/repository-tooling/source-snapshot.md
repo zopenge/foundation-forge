@@ -29,9 +29,11 @@
 
 `compareSnapshotFiles()` 按路径和字节完整性比较新增、修改、删除。重命名保持确定性地表示为旧路径删除和新路径新增，不做语义 rename 推断。
 
-`planRepositorySnapshot()` 先完成 inventory、consumer policy 分类、secret gate、文本 decoding、packing 和 manifest 生成。出现 review、secret、内容错误或 submodule blocker 时返回 `BLOCKED`，不得发布。submodule 默认使用 `submoduleHeadPolicy: 'require-gitlink'` 的严格语义；只有消费者明确配置 `submoduleHeadPolicy: 'allow-checked-out'` 时，已初始化但 HEAD 与父 gitlink 不一致的 submodule 才允许进入快照。此模式仍以实际 checkout HEAD 参与 snapshot identity，并在不一致时把父引用写入 manifest 的 `parentGitlink`，不会静默丢失漂移来源；未初始化 submodule 或缺失 gitlink 仍然阻断。
+`prepareRepositorySnapshot()` 先完成 inventory、consumer policy 分类、secret gate、文本 decoding、packing 和 manifest 生成。出现 review、secret、内容错误或 submodule blocker 时返回 `BLOCKED`，不得发布。submodule 默认使用 `submoduleHeadPolicy: 'require-gitlink'` 的严格语义；只有消费者明确配置 `submoduleHeadPolicy: 'allow-checked-out'` 时，已初始化但 HEAD 与父 gitlink 不一致的 submodule 才允许进入快照。此模式仍以实际 checkout HEAD 参与 snapshot identity，并在不一致时把父引用写入 manifest 的 `parentGitlink`，不会静默丢失漂移来源；未初始化 submodule 或缺失 gitlink 仍然阻断。
 
-`exportRepositorySnapshot()` 保留为纯内存 bundle 的兼容 API；Node CLI 默认使用 prepared-spool 路径，在逐文件读取、secret 检查和 freeze 记录后把唯一正文落入临时 spool，再以有界 object 批次发布。两条路径都在 publication 前再次校验 frozen input；prepared 路径完成或失败后必须清理临时 spool。
+Node CLI 与仓库采集 API 使用 prepared-spool 路径，在逐文件读取、secret 检查和 freeze 记录后把唯一正文落入临时 spool，再以有界 object 批次发布。调用方在 `publishPreparedSourceSnapshot()` 前必须调用 `verifyRepositorySnapshotFreeze()` 再次校验 frozen input，并在完成或失败后通过 `dispose()` 清理临时 spool。纯内存 repository plan/export 入口已经删除；持有有界输入的调用方仍可组合 runtime-neutral packing 与直接 publication API。
+
+源码文本只写入和接受 v2；`textFormatVersion` 省略时使用 2，显式传入 1 或其他值会被拒绝。旧的无版本 details 不再解析为 v1，manifest、catalog、coverage、provenance 与状态记录各自的 schemaVersion 仍独立验证。publication 结果只提供 `objectsReused`，CLI 同步使用该字段；旧别名 `reusedObjects` 已删除。
 
 发布顺序为：content-addressed objects → snapshot metadata → 本地完整性验证 → current entry 最后切换。发布结果分别报告 `bytesWritten` 与 `objectsReused`；v2 alias 增删不会改变共享 content-block 的对象身份。相同 snapshot 再次导出返回 `NO_CHANGES`；A→B→A 时，若历史 A 的 canonical manifest、objects 与文本验证仍通过，只重新激活 entry，不重写 A 的不可变 SNAPSHOT/READ-INDEX/INDEX/CHANGES。
 
@@ -39,7 +41,7 @@
 
 READ-INDEX v1 的 `assurance` 是历史格式能力声明：`normalized-text-verified` 表示 v2 格式能够进行规范化文本校验，不证明生成索引时读取或验证过正文。只有实际执行 Reader/verify 并保存其结果，才能声明相应范围的本次验证；索引不会生成 observed-verification receipt。
 
-完整索引、路径视图和 preferred/reference profile 在一次调用内复用文件与对象查找表。视图仍检查全部源记录的结构与引用，但仅为选中路径投影展示记录；profile 两部分共用一次预处理。行数统计和 Markdown 渲染使用同一个逐行生成器，不为统计建立完整渲染字符串。旧 JSON 字段、排序和 Markdown 输出保持兼容；重复 manifest 路径现在明确返回 `DUPLICATE_PATH`，不再静默选取第一条记录。
+完整索引、路径视图和 preferred/reference profile 在一次调用内复用文件与对象查找表。视图仍检查全部源记录的结构与引用，但仅为选中路径投影展示记录；profile 两部分共用一次预处理。行数统计和 Markdown 渲染使用同一个逐行生成器，不为统计建立完整渲染字符串。重复 manifest 路径明确返回 `DUPLICATE_PATH`，不静默选取第一条记录。
 
 Reader 在复制对象字节前核对路径集合、声明大小、实际大小与累计预算，随后保留防变更复制和正文完整性校验。实际字节或累计声明超限优先返回 `TEXT_READ_LIMIT_EXCEEDED`，而不是先分配大副本再返回完整性错误。此限制控制本次读取的额外分配，不能撤销调用方已经分配的输入。Node 读取入口先检查声明预算，再顺序有界读取对象；文件在 stat 后改变长度时拒绝本次读取并关闭句柄，不按增长后的长度扩大分配。
 

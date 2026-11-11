@@ -57,11 +57,11 @@ export interface PrebuiltEffectResolution {
   readonly observedAt: string;
 }
 export interface ManagedState {
-  readonly schemaVersion: 2 | 3; readonly slotId: string; readonly runId: string;
+  readonly schemaVersion: 3; readonly slotId: string; readonly runId: string;
   readonly source: FrozenSource; readonly command: ReleaseCommand;
   readonly coordinator: RecordedIdentity;
-  readonly host?: RetirementHost;
-  readonly history?: readonly ManagedHistoryReference[];
+  readonly host: RetirementHost;
+  readonly history: readonly ManagedHistoryReference[];
   stage: ReleaseStage; status: 'running' | 'closed' | 'unknown';
   processes: ManagedCommand[];
   effects: ReleaseReport['effects'];

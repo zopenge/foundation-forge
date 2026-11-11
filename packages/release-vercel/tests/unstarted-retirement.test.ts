@@ -121,7 +121,7 @@ it('validates a same-boot archive from its complete original failure snapshot an
   expect(parseRetirementRecord(value)).toEqual(value);
   expect(value.final?.cessation).toBe('recorded-empty-unstarted-scope');
 });
-it('retains the old subsequent-boot archive rule when no new cessation tag exists', () => {
+it('requires subsequent boot evidence for ordinary retirement without an abandonment tag', () => {
   const value = archive();
   if (!value.final) throw Error('fixture final missing');
   Reflect.deleteProperty(value.final, 'cessation');
@@ -129,7 +129,7 @@ it('retains the old subsequent-boot archive rule when no new cessation tag exist
   Reflect.set(value.final.host, 'uptimeSeconds', 1);
   expect(parseRetirementRecord(sealRetirementRecord(value)).final?.host.uptimeSeconds).toBe(1);
 });
-it.each(['unknown-tag', 'operator-origin', 'host-mismatch', 'snapshot-host-mismatch', 'wrong-receipt', 'bound-root', 'wrong-run', 'wrong-slot'])(
+it.each(['unknown-tag', 'host-mismatch', 'snapshot-host-mismatch', 'wrong-receipt', 'bound-root', 'wrong-run', 'wrong-slot'])(
   'rejects a checksum-consistent but ineligible abandonment archive: %s', kind => {
     const snapshot = fixture();
     if (kind === 'wrong-receipt') mutate(snapshot, 'publish', 'report.runId', '60000000-0000-4000-8000-000000000001');
@@ -141,7 +141,6 @@ it.each(['unknown-tag', 'operator-origin', 'host-mismatch', 'snapshot-host-misma
     }
     if (kind === 'wrong-run') Reflect.set(value, 'runId', '60000000-0000-4000-8000-000000000001');
     if (kind === 'wrong-slot') Reflect.set(value, 'slotId', '60000000-0000-4000-8000-000000000001');
-    if (kind === 'operator-origin') Reflect.set(value, 'origin', 'operator-confirmed-origin');
     if (kind === 'host-mismatch') Reflect.set(value.final.host, 'hostId', 'e'.repeat(64));
     if (kind === 'snapshot-host-mismatch') {
       Reflect.set(value.host, 'hostId', 'e'.repeat(64)); Reflect.set(value.final.host, 'hostId', 'e'.repeat(64));

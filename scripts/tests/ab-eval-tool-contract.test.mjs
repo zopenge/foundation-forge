@@ -63,7 +63,7 @@ const withMcpFixture=async({pages,trace},fn)=>{
   })();
   const {root,cwd}=await probeFixtureReady;
   // 前一探针已确认真实 child close，随后才写入下一次独立输入。
-  await writeMcpServer(root,pages);
+  if(pages!==undefined)await writeMcpServer(root,pages);
   trace?.('probe-fixture-ready');
   await fn({serverPath:resolve(root,'mcp.mjs'),cwd});
 };
@@ -231,7 +231,7 @@ for(const protocolFailure of [false,true])test(
     }))));
 
 test('MCP tool probe closes the real child after a request deadline',
-  {timeout:15000},t=>withMcpTimeline(t,trace=>withMcpFixture({pages:fullPages,trace},({cwd})=>
+  {timeout:15000},t=>withMcpTimeline(t,trace=>withMcpFixture({trace},({cwd})=>
     withObservedChildren({trace},async observed=>{
       trace('probe-start');
       await assert.rejects(()=>probeMcpTools({server:'fixture',timeoutMs:50,

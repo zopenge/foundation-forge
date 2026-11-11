@@ -30,7 +30,6 @@ export async function captureManagedHistory(paths: ManagedPaths): Promise<Manage
 }
 export async function assertManagedHistory(paths: ManagedPaths, state: ManagedState): Promise<void> {
   await assertMetadataPaths(paths);
-  if (state.schemaVersion === 2) return;
   if (!state.history) throw new ReleaseError('SLOT_STATE', { reason: 'HISTORY_BINDING_MISSING' });
   for (const entry of state.history) {
     const path = resolve(paths.slotRoot, entry.path); await assertPathChain(paths.slotRoot, path);

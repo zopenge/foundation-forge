@@ -36,6 +36,13 @@ const manifestFor = async (path: string, bytes: Uint8Array, group = 'code') => {
   return { staged, packed, manifest, file: required(manifest.files[0], 'manifest file') };
 };
 
+test('rejects explicit text format v1 packing', async () => {
+  const staged = await stageSourceTextFile({ path: 'src/value.ts', group: 'code', bytes: utf8('value\n') });
+  const options = { ...packV2 };
+  Object.defineProperty(options, 'textFormatVersion', { value: 1 });
+  await expect(buildSourceTextPackage([staged], options)).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+});
+
 test.each([
   ['lf', '一\n二\n', '一\n二\n'],
   ['crlf', '一\r\n二\r\n', '一\n二\n'],
@@ -110,27 +117,35 @@ test('v2 supports empty files and multiple pieces of one oversized source line',
   );
 });
 
-test('legacy text details remain explicit v1 and unknown versions fail closed', async () => {
-  const staged = await stageSourceTextFile({ path: 'src/legacy.ts', group: 'code', bytes: utf8('legacy\n') });
+test('default packing emits authenticated text format v2', async () => {
+  const staged = await stageSourceTextFile({ path: 'src/default.ts', group: 'code', bytes: utf8('value\n') });
   const packed = await buildSourceTextPackage([staged], {
     targetObjectBytes: 4096, maxObjectBytes: 8192, maxObjectCount: 10, maxObjectBytesTotal: 100_000,
   });
   const manifest = await createTextSnapshotManifest({
-    projectId: 'legacy-fixture', policyVersion: '1', publishedAt: 1,
+    projectId: 'default-fixture', policyVersion: '1', publishedAt: 1,
     repositories: [], textPackage: packed,
   });
-  const legacy = parseSourceTextDetails(required(manifest.files[0], 'manifest file').details);
-  expect(legacy).toMatchObject({ kind: 'source-text', formatVersion: 1, group: 'code', lineCount: 1 });
+  const details = parseSourceTextDetails(required(manifest.files[0], 'manifest file').details);
+  expect(details).toMatchObject({ kind: 'source-text', formatVersion: 2, group: 'code', lineCount: 1 });
+  expect(details.normalizedSha256).toBe(sha256(utf8('value\n')));
+});
 
+test.each([1, 99])('rejects unsupported text details version %s', formatVersion => {
   expect(() => parseSourceTextDetails({
     kind: 'source-text',
-    formatVersion: 99,
+    formatVersion,
     group: 'code',
     encoding: 'utf8',
     bom: null,
     lineCount: 1,
     segments: [],
   })).toThrowError(expect.objectContaining({ code: 'TEXT_FORMAT_UNSUPPORTED' }));
+});
+
+test('rejects unversioned source text details', () => {
+  expect(() => parseSourceTextDetails({ group: 'code', encoding: 'utf8', bom: null, lineCount: 1, segments: [{}] }))
+    .toThrowError(expect.objectContaining({ code: 'TEXT_DETAILS_INVALID' }));
 });
 
 test('v2 preserves UTF-16BE BOM and normalized UTF-8 integrity', async () => {

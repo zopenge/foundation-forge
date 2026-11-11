@@ -9,7 +9,7 @@ The runtime-neutral root entry provides:
 - deterministic immutable snapshot manifests and file-change comparison;
 - consumer-defined source classification and grouping;
 - UTF-8/UTF-16 decoding and high-confidence secret detection;
-- versioned source-text packing with normalized UTF-8 integrity, path-independent same-group exact content blocks, content-addressed objects, and separate logical/body/container byte metrics;
+- v2 source-text packing with normalized UTF-8 integrity, path-independent same-group exact content blocks, content-addressed objects, and separate logical/body/container byte metrics;
 - published-artifact read indexes, exact byte locators, authenticated text reconstruction, and consumer-supplied read profiles;
 - detached neutral relation validation for caller-collected `imports`/`exports`/`references`;
 - detached evidence validation that checks schema, snapshot binding and caller-provided artifact hashes without executing evidence;
@@ -44,6 +44,8 @@ forge-source-snapshot unpack --target-root <store> --owner-id <owner> --output <
 
 The configuration supplies project identity, source/target/state paths, classification policy, packing budgets, managed-store publication budgets, grouping, storage layout and retention settings. CLI `plan`/`export` use the Node prepared-spool pipeline so repository size does not require all decoded source and packed object bodies to remain resident in the V8 heap. The runtime-neutral in-memory packing API remains available for callers that already own bounded inputs. The package does not embed repository-specific names or storage-provider settings.
 
+Source text supports only format v2. Omitting `textFormatVersion` selects 2; version 1 and unversioned text details are rejected. Repository callers use `prepareRepositorySnapshot`, verify its frozen input with `verifyRepositorySnapshotFreeze`, publish through `publishPreparedSourceSnapshot`, and call `dispose()` in `finally`. The in-memory repository `planRepositorySnapshot` and `exportRepositorySnapshot` APIs have been removed. Publication and CLI results use `objectsReused`; the `reusedObjects` alias has been removed.
+
 ## Reading catalogs, coverage and provenance
 
 The root entry exports `buildSnapshotReadCatalog`, `resolveSnapshotCatalog`, `verifySnapshotReadCatalog`, `readSnapshotCatalogText`, the coverage builder/resolver/verifier, and the provenance builder/verifier. The Node entry additionally exports `buildSnapshotCoverageFromPlan`, `buildSnapshotProvenanceFromPlan` and `prepareSnapshotWithProvenance`.
@@ -55,7 +57,7 @@ await verifySnapshotReadCatalog(manifest, catalog);
 const pinnedDigest = catalog.root.sha256;
 ```
 
-The caller supplies `manifest` and optional `profile`. Publish the returned artifacts to an explicitly managed reading root after pinning the source snapshot. Store the verified root digest through a trusted channel. The catalog root is at most 64 KiB and each shard is at most 256 KiB. Limits include UTF-8 framing; an unsplittable oversized record is rejected rather than truncated. Existing source objects and legacy indexes remain unchanged.
+The caller supplies `manifest` and optional `profile`. Publish the returned artifacts to an explicitly managed reading root after pinning the source snapshot. Store the verified root digest through a trusted channel. The catalog root is at most 64 KiB and each shard is at most 256 KiB. Limits include UTF-8 framing; an unsplittable oversized record is rejected rather than truncated. Catalog generation does not rewrite source objects or read indexes.
 
 For a cold read, load `CATALOG.json` and call `resolveSnapshotCatalog(root, pinnedDigest, { kind: "path", path }, suppliedShards)`. A `needs-artifact` result identifies the next shard to obtain. Once found, fetch only the declared source objects and call `readSnapshotCatalogText(root, pinnedDigest, path, suppliedShards, objectBytes, limits)`. This API does not accept or load the full manifest. Its `maxTotalBytes` includes the verified catalog/shard bytes plus required source-object bytes. The result explicitly reports `sourceBinding: "caller-pinned-catalog"`.
 
@@ -63,7 +65,7 @@ An internally consistent hash does not establish trustworthy provenance: the ini
 
 Coverage is observation-only. Physical inclusion and preferred/reference reading priority are independent; reference files may retain complete text. Excluded or metadata-only entries cannot be promised on-demand text. Manifest-only historical snapshots keep unknown discovery and capture facts unknown. Provenance producer labels are caller declarations, not signatures, and `bodyVerification: "not-performed"` never becomes a body-verification receipt.
 
-`prepareSnapshotWithProvenance` derives the catalog, coverage and source-state sidecar from one frozen capture. It does not promise a cross-repository atomic instant. Consumers must still enforce the publication freeze check, ownership/lock protocol, and source pins, then verify and switch their own reading entry. Release a source pin only after its last reading view is removed. The existing CLI commands remain compatible; these APIs provide the explicit reading-layer integration.
+`prepareSnapshotWithProvenance` derives the catalog, coverage and source-state sidecar from one frozen capture. It does not promise a cross-repository atomic instant. Consumers must still enforce the publication freeze check, ownership/lock protocol, and source pins, then verify and switch their own reading entry. Release a source pin only after its last reading view is removed. These APIs provide the explicit reading-layer integration.
 
 ## Safety boundary
 

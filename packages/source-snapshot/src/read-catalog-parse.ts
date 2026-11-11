@@ -17,14 +17,14 @@ export const parseCatalogRoot = (value: unknown): CatalogRoot => {
 const parseAlias = (value: unknown): CatalogAlias => {
   const data = catalogRecord(value);
   return { path: catalogPath(data.path), objectPath: catalogPath(data.objectPath), sourceSha256: catalogDigest(data.sourceSha256),
-    ...(data.normalizedSha256 === undefined ? {} : { normalizedSha256: catalogDigest(data.normalizedSha256) }) };
+    normalizedSha256: catalogDigest(data.normalizedSha256) };
 };
 const parseFile = (value: unknown): CatalogFile => {
   const data = catalogRecord(value);
-  const formatVersion = data.formatVersion === 1 ? 1 : data.formatVersion === 2 ? 2 : catalogInvalid('catalog-format');
+  const formatVersion = data.formatVersion === 2 ? 2 : catalogInvalid('catalog-format');
   const priority = data.priority === 'preferred' ? 'preferred' : data.priority === 'reference' ? 'reference' : data.priority === 'unclassified' ? 'unclassified' : catalogInvalid('catalog-priority');
   const capabilities = array(data.verificationCapabilities).map(v => catalogString(v, 'capability'));
-  const expected = data.formatVersion === 2 ? ['object-sha256', 'normalized-text-sha256'] : ['object-sha256'];
+  const expected = ['object-sha256', 'normalized-text-sha256'];
   if (JSON.stringify(capabilities) !== JSON.stringify(expected)) catalogInvalid('catalog-capabilities');
   const objectRequirements = array(data.objectRequirements).map(value => {
     const item = catalogRecord(value); return { path: catalogPath(item.path), sha256: catalogDigest(item.sha256), byteLength: catalogCount(item.byteLength, 'object.byteLength') };
@@ -43,11 +43,11 @@ const parseFile = (value: unknown): CatalogFile => {
       locator.segmentIndex < 1 || locator.segmentIndex > locator.segmentCount || locator.startLine > locator.endLine || locator.endLine > sourceLineCount) catalogInvalid('catalog-locator');
     return locator;
   });
-  if ((data.formatVersion === 1 && locators.length !== 0) || (data.formatVersion === 2 && locators.length === 0)) catalogInvalid('catalog-locators');
+  if (locators.length === 0) catalogInvalid('catalog-locators');
   return { path: catalogPath(data.path), sourceSha256: catalogDigest(data.sourceSha256), sourceByteLength: catalogCount(data.sourceByteLength, 'sourceByteLength'),
     sourceLineCount, group: catalogString(data.group, 'group'), formatVersion, priority,
     verificationCapabilities: capabilities, objectRequirements, locators,
-    ...(data.formatVersion === 2 ? { normalizedSha256: catalogDigest(data.normalizedSha256), normalizedByteLength: catalogCount(data.normalizedByteLength, 'normalizedByteLength') } : {}) };
+    normalizedSha256: catalogDigest(data.normalizedSha256), normalizedByteLength: catalogCount(data.normalizedByteLength, 'normalizedByteLength') };
 };
 export const parseCatalogNode = (value: unknown, scope: CatalogScope, prefix: string): CatalogNode => {
   const data = catalogRecord(value);

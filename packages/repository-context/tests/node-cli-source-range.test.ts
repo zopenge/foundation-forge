@@ -40,8 +40,7 @@ test('公开调查 SDK 的恢复窗口 SourceRef 与实际十行正文保持一�
     corpusId: fixture.generation.corpusId, generationId: fixture.generation.generationId });
   const investigator = createRepositoryInvestigator({ corpus: fixture.generation.corpus,
     readRanges: (ranges) => readRanges(reader, ranges), route: 'investigate', preferredScopes: [fixture.path] });
-  const result = await investigator.investigate({ query: 'executeContextQuery', scope: [fixture.path],
-    evidenceBudget: { maxBytes: 4096 } });
+  const result = await investigator.investigate({ query: 'executeContextQuery', scope: [fixture.path] });
   const recovery = result.sourceHints.filter((hint) => hint.text.includes('executeContextQuery'));
   expect(recovery).toHaveLength(2);
   for (const hint of recovery) {

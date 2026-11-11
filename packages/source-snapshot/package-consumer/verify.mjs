@@ -11,9 +11,9 @@ import {
   reconstructSourceText, scanSourceSecrets, stageSourceTextFile,
 } from '@openge/forge-source-snapshot';
 import {
-  collectSourceInventory, exportRepositorySnapshot, inspectSourceSnapshotRetention,
-  planRepositorySnapshot, pruneSourceSnapshots, runSourceSnapshotCli,
-  verifyPublishedSourceSnapshot,
+  collectSourceInventory, prepareRepositorySnapshot, inspectSourceSnapshotRetention,
+  publishPreparedSourceSnapshot, pruneSourceSnapshots, runSourceSnapshotCli,
+  verifyPublishedSourceSnapshot, verifyRepositorySnapshotFreeze,
 } from '@openge/forge-source-snapshot/node';
 
 await import('./core-v2.mjs');
@@ -57,12 +57,21 @@ try {
     pack: { targetObjectBytes: 4096, maxObjectBytes: 8192, maxObjectCount: 20, maxObjectBytesTotal: 100_000 },
     groupForPath: path => path.endsWith('.ts') ? 'code' : 'root',
   };
-  const planned = await planRepositorySnapshot(options); assert.equal(planned.status, 'READY');
   const exportOptions = { ...options, targetRoot: target, lockPath: join(state, 'publish.lock'), ownerId: 'tarball-owner' };
-  const first = await exportRepositorySnapshot(exportOptions); assert.equal(first.status, 'LOCAL_VERIFIED');
+  const publish = async input => {
+    const prepared = await prepareRepositorySnapshot({ ...input, workRoot: state });
+    try {
+      assert.equal(prepared.plan.status, 'READY');
+      assert.ok(prepared.plan.manifest);
+      assert.equal((await verifyRepositorySnapshotFreeze(input, prepared.plan.freeze)).ok, true);
+      return await publishPreparedSourceSnapshot({ manifest: prepared.plan.manifest, objects: prepared.objects }, input);
+    } finally { await prepared.dispose(); }
+  };
+  const first = await publish(exportOptions); assert.equal(first.status, 'LOCAL_VERIFIED');
   const verified = await verifyPublishedSourceSnapshot({ targetRoot: target, ownerId: 'tarball-owner' });
   assert.equal(verified.status, 'LOCAL_VERIFIED');
-  const second = await exportRepositorySnapshot({ ...exportOptions, publishedAt: now + 1 }); assert.equal(second.status, 'NO_CHANGES');
+  const second = await publish({ ...exportOptions, publishedAt: now + 1 }); assert.equal(second.status, 'NO_CHANGES');
+  assert.equal(second.objectsReused, first.objectCount); assert.equal(second.bytesWritten, 0);
   const status = await inspectSourceSnapshotRetention({ targetRoot: target, ownerId: 'tarball-owner', now }); assert.equal(status.snapshotCount, 1);
   const preview = await pruneSourceSnapshots({ targetRoot: target, ownerId: 'tarball-owner', lockPath: join(state, 'publish.lock'), now, dryRun: true }); assert.equal(preview.status, 'PRUNE_PREVIEW');
 

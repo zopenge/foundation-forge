@@ -60,7 +60,7 @@ export interface InvestigationResult {
   readonly candidates: readonly InvestigationCandidate[];
   readonly relations: readonly InvestigationRelation[];
   readonly evidence: readonly InvestigationEvidence[];
-  readonly evidenceUnits?: readonly EvidenceUnit[];
+  readonly evidenceUnits: readonly EvidenceUnit[];
   readonly sourceHints: readonly InvestigationEvidence[];
   readonly primaryScopeCoverage: ScopeCoverage;
   readonly truncated?: boolean;
@@ -70,7 +70,6 @@ export interface InvestigationResult {
 export interface InvestigationRequest {
   readonly query: string;
   readonly scope?: readonly string[];
-  readonly evidenceBudget?: Readonly<{ maxBytes: number }>;
 }
 
 export interface RepositoryInvestigator {

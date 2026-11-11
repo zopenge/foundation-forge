@@ -17,7 +17,7 @@ export interface RetirementRecord {
   readonly schemaVersion: 1; readonly kind: 'interrupted-run-retirement';
   readonly runId: string; readonly slotId: string;
   readonly snapshot: RetirementSnapshot; readonly snapshotSha256: string;
-  readonly origin: 'operator-confirmed-origin' | 'recorded-run-host';
+  readonly origin: 'recorded-run-host';
   readonly host: RetirementHost; readonly preparedAt: string;
   readonly checksum: string;
   readonly final?: { readonly host: RetirementHost; readonly retiredAt: string; readonly observation: ReleaseRecoveryObservation;
@@ -44,18 +44,22 @@ export function parseRetirementRecord(value: unknown): RetirementRecord {
   const item = record(value), snapshot = record(item.snapshot), identities = record(snapshot.identities), final = item.final === undefined ? undefined : record(item.final);
   if (typeof item.checksum !== 'string' || item.checksum !== retirementDigest({ ...item, checksum: undefined })) throw new ReleaseError('SLOT_STATE', { reason: 'RETIREMENT_CHECKSUM' });
   if (item.schemaVersion !== 1 || item.kind !== 'interrupted-run-retirement' || typeof item.runId !== 'string' || !/^[a-f0-9-]{36}$/u.test(item.runId)
-    || typeof item.slotId !== 'string' || !/^[a-f0-9-]{36}$/u.test(item.slotId) || !['operator-confirmed-origin', 'recorded-run-host'].includes(String(item.origin))
+    || typeof item.slotId !== 'string' || !/^[a-f0-9-]{36}$/u.test(item.slotId) || item.origin !== 'recorded-run-host'
     || !validRetirementHost(item.host) || typeof item.preparedAt !== 'string' || !Number.isFinite(Date.parse(item.preparedAt))
     || !['state', 'lock', 'anchor', 'owner'].every(key => typeof snapshot[key] === 'string' && sameIdentity(record(identities[key]), record(identities[key])))
     || !['check', 'publish'].every(key => snapshot[key] === null || typeof snapshot[key] === 'string')
     || item.snapshotSha256 !== retirementDigest(snapshot)) throw new ReleaseError('SLOT_STATE', { reason: 'RETIREMENT_RECORD' });
   const evidence = value as RetirementRecord;
+  let original: Record<string, unknown>;
+  try { original = record(JSON.parse(evidence.snapshot.state)); }
+  catch { throw new ReleaseError('SLOT_STATE', { reason: 'RETIREMENT_STATE_BINDING' }); }
+  if (original.schemaVersion !== 3 || !Array.isArray(original.history) || !validRetirementHost(original.host)
+    || retirementDigest(original.host) !== retirementDigest(evidence.host)) throw new ReleaseError('SLOT_STATE', { reason: 'RETIREMENT_STATE_BINDING' });
   const unstarted = final?.cessation === 'recorded-empty-unstarted-scope';
   let cessation = false;
   if (final && validRetirementHost(final.host)) {
     if (final.cessation === undefined) cessation = hasSubsequentBoot(evidence.host, final.host);
     else if (unstarted && evidence.origin === 'recorded-run-host' && isUnstartedRetirementSnapshot(evidence.snapshot)) {
-      const original = record(JSON.parse(evidence.snapshot.state));
       cessation = original.runId === evidence.runId && original.slotId === evidence.slotId
         && retirementDigest(original.host) === retirementDigest(evidence.host)
         && final.host.hostId === evidence.host.hostId && final.host.platform === evidence.host.platform;

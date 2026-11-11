@@ -1,7 +1,6 @@
 import type { SourceSnapshotPolicyInput } from '../content-contracts.js';
 import type { SnapshotCoverageOptions, SnapshotCoverageReport, CoverageDecision, CoverageBoundary, CoverageState } from '../snapshot-coverage-contracts.js';
 import type { PreparedRepositorySnapshotPlan } from './prepared-pipeline.js';
-import type { RepositorySnapshotPlan } from './contracts.js';
 import { SourceSnapshotError } from '../errors.js';
 import { buildSnapshotCoverage } from '../snapshot-coverage-build.js';
 import { coverageInvalid, coverageLimit } from '../snapshot-coverage-input.js';
@@ -13,11 +12,11 @@ export interface CoverageCaptureOptions {
   readonly display?: Omit<SnapshotCoverageOptions, 'candidateCount' | 'decisions' | 'boundaries'>;
 }
 /** 接受已产生的冻结记录；不访问 sourceRoot，不重新发现或执行仓库内容。 */
-export const buildSnapshotCoverageFromPlan = async (input: PreparedRepositorySnapshotPlan | RepositorySnapshotPlan, options: CoverageCaptureOptions): Promise<SnapshotCoverageReport> => {
+export const buildSnapshotCoverageFromPlan = async (input: PreparedRepositorySnapshotPlan, options: CoverageCaptureOptions): Promise<SnapshotCoverageReport> => {
   if (input.inventory.entries.length > (options.display?.maxEntries ?? 200000)) coverageLimit('coverage-candidates');
   const plan = structuredClone({ inventory: input.inventory, decisions: input.decisions, includedPaths: input.includedPaths,
     secretFindings: input.secretFindings, contentIssues: input.contentIssues, freeze: input.freeze, status: input.status, publishAllowed: input.publishAllowed,
-    manifest: 'manifest' in input ? input.manifest : input.bundle?.manifest ?? null });
+    manifest: input.manifest });
   const capturedOptions = structuredClone(options); const policy = defineSourceSnapshotPolicy(capturedOptions.policy);
   if (await calculateInventoryFingerprint(plan.inventory) !== plan.freeze.inventoryFingerprint) throw new SourceSnapshotError('SOURCE_CHANGED');
   if ((plan.status === 'READY') !== plan.publishAllowed || (plan.manifest !== null) !== plan.publishAllowed) coverageInvalid('plan-state');

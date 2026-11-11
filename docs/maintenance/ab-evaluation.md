@@ -118,14 +118,11 @@ pnpm ab:eval run --run-dir tmp/eval-run-002 --observe-transport on
 
 诊断同时检查 HTTP 状态和传输终态，HTTP 502 不依赖 `UPSTREAM_TRANSPORT_FAILED` 才能被发现。请求数超出收据回合数时，分别报告含额外 usage 的 `TRANSPORT_USAGE_REQUEST_OVERAGE` 与不含额外 usage 的 `TRANSPORT_REQUEST_OVERAGE_NO_USAGE`。只有每个回合的输入、输出数值都能唯一且按序匹配请求时，才提供 `TRANSPORT_NUMERIC_TURN_CANDIDATES` 数值候选及同请求体摘要对；候选不代表已证实的回合身份或计费结论，未匹配请求不会被强行并入收据。
 
-## H8 冻结任务迁移
+## H8 冻结任务包
 
-此节的旧导出器是原工作区的一次性历史迁移入口，必须显式传入 `--legacy-workspace`（程序调用为 `legacyWorkspace: true`）才读取原 `.tmp/` 档案；新输出写入 `tmp/`，不搬迁档案或自动回退查找。旧脚本、fixture 和已安装消费者属于迁移源输入，缺失时不能从干净 checkout 重建。标准检查、包运行时及已冻结任务包均不调用该历史导出入口。
-
-旧 H8 的包导出器位于 `packages/repository-context/evaluation/export-h8-pack.mjs`。它核对 run063 候选 tarball 与 CLI 哈希、八项 fixture 的冻结树哈希、公开/隐藏验证器哈希和任务清单；自动收集 MCP 模块的相对导入闭包及候选 CLI 的运行依赖，生成不含本机绝对路径的完整任务包。导出器只在原工作区需要，之后可把包目录复制到另一台机器。`slice` 从冻结包按 pair ID 选择新轮次，不编辑脚本或旧包。新导出的 A/C 工具合同均不开放 `todowrite`；也只开放自动运行公开测试的 `formal_task_replace_text`，不开放额外的 `formal_task_run_public_test`。`scripts/ab-eval/formal-task-filtered-stdio.mjs` 通过固定的 MCP 投影层同时收窄实际 `tools/list` 和可调用工具，模型禁用预检必须核对这一实际集合。每次成功编辑后的公开测试、每臂最终公开与隐藏验证、全部质量断言仍执行。A 的源码导航工具与 C 的 `investigate`、`read`、`continue` 分别保留。此变化仅影响新包，既有冻结包和收据保持原样；工具合同变化后的结果不能直接与旧包按同一实验条件合并。
+H8 评估从完整、自含且通过哈希验证的冻结任务包开始。历史工作区导出入口及其模板已移除；仓库工具不读取原 `.tmp/` 档案。`slice` 从提供的冻结包按 pair ID 选择新轮次，不编辑原包。`scripts/ab-eval/formal-task-filtered-stdio.mjs` 通过固定的 MCP 投影层同时收窄实际 `tools/list` 和可调用工具，模型禁用预检必须核对这一实际集合。每次成功编辑后的公开测试、每臂最终公开与隐藏验证、全部质量断言仍执行；工具合同不同的结果不能按同一实验条件合并。
 
 ```text
-node packages/repository-context/evaluation/export-h8-pack.mjs --out tmp/h8-pack --client-version 1.18.30 --legacy-workspace
 pnpm ab:eval slice --manifest tmp/h8-pack/pack.json --pairs v85-full-01 --id h8-pilot-01 --out tmp/h8-pilot-01
 pnpm ab:eval prepare --manifest tmp/h8-pilot-01/pack.json --run-dir tmp/h8-pilot-run-01 --local tmp/ab-eval-local.json
 pnpm ab:eval doctor --run-dir tmp/h8-pilot-run-01

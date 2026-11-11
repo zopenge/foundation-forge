@@ -8,7 +8,7 @@ export const readFastCheckResources = async repositoryRoot => {
 
 /** 只修改本次协调器的任务配置；资源失败和冲突参数不能启动构建。 */
 export async function resolveCheckOptions(args, { env, resources }) {
-  if (new Set(args).size !== args.length || args.some(arg => !['--quick', '--full', '--serial', '--fast'].includes(arg))
+  if (args.length === 0 || new Set(args).size !== args.length || args.some(arg => !['--quick', '--full', '--serial', '--fast'].includes(arg))
     || args.includes('--quick') && args.includes('--full') || args.includes('--serial') && !args.includes('--full')
     || args.includes('--fast') && (!args.includes('--full') || args.includes('--serial')))
     throw new Error('CHECK_ARGUMENT_INVALID');

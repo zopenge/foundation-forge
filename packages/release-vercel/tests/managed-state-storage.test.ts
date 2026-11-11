@@ -4,6 +4,7 @@ import { afterEach, expect, it } from 'vitest';
 import { managedSessionFixture } from './helpers/managed-session-fixture.js';
 import { assertManagedPaths } from '../src/node/managed-paths.js';
 import { fileIdentity } from '../src/node/managed-io.js';
+import { createManagedSession } from '../src/node/managed-process.js';
 import type { ManagedReceipt } from '../src/node/release-context.js';
 
 // 存储组件直接准备独立真实目录、身份、原始锁和原子store；不声明Git来源或发布成功。
@@ -11,6 +12,27 @@ import type { ManagedReceipt } from '../src/node/release-context.js';
 const fixtures: Awaited<ReturnType<typeof managedSessionFixture>>[] = [];
 afterEach(async () => { for (const f of fixtures.splice(0)) await f.dispose(); });
 const fixture = async () => { const f = await managedSessionFixture(); fixtures.push(f); return f; };
+
+it('rejects an old run state without rewriting its bytes or releasing its lock', async () => {
+  const f = await fixture(), session = await createManagedSession(f.slot, 'check');
+  const old = JSON.stringify({ ...session.state, schemaVersion: 2 });
+  await writeFile(f.slot.paths.statePath, old);
+  const lock = await readFile(f.slot.paths.lockPath);
+  await expect(f.slot.store.read()).rejects.toMatchObject({ code: 'SLOT_STATE', details: { reason: 'STATE' } });
+  expect(await readFile(f.slot.paths.statePath, 'utf8')).toBe(old);
+  expect(await readFile(f.slot.paths.lockPath)).toEqual(lock);
+});
+
+it.each([['host', 'HOST_OBSERVATION'], ['history', 'HISTORY_BINDING_MISSING']] as const)(
+  'rejects a current run state missing its %s binding', async (field, reason) => {
+    const f = await fixture(), session = await createManagedSession(f.slot, 'check');
+    const incomplete = Object.fromEntries(Object.entries(session.state).filter(([key]) => key !== field));
+    const bytes = JSON.stringify(incomplete); await writeFile(f.slot.paths.statePath, bytes);
+    const lock = await readFile(f.slot.paths.lockPath);
+    await expect(f.slot.store.read()).rejects.toMatchObject({ code: 'SLOT_STATE', details: { reason } });
+    expect(await readFile(f.slot.paths.statePath, 'utf8')).toBe(bytes);
+    expect(await readFile(f.slot.paths.lockPath)).toEqual(lock);
+  });
 
 it('preserves exact filesystem identifiers without JavaScript number rounding', async () => {
   const f = await fixture(), actual = await lstat(f.cwd, { bigint: true });

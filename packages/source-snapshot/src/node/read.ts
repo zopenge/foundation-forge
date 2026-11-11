@@ -51,7 +51,6 @@ export const readPublishedSourceSnapshotText = async (
   const manifest = await loadAuthorizedManifest(options);
   const context = createSnapshotReadContext(manifest);
   const details = parseSourceTextDetails(requireSnapshotReadFile(context, options.path).details);
-  if (details.formatVersion !== 2) throw new SourceSnapshotError('TEXT_FORMAT_UNSUPPORTED', { path: options.path, availableAssurance: 'object-integrity' });
   if (details.normalizedByteLength > limits.maxFileBytes) failSnapshotReadLimit('maxFileBytes');
   const requirements = collectReadContextRequirements(context, [options.path]);
   assertSnapshotObjectBudget(requirements, limits);

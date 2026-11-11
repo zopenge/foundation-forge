@@ -3,7 +3,9 @@ import { sourceTestTemporaryDirectory } from '../temporary-directory.js';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import {
-  exportRepositorySnapshot,
+  prepareRepositorySnapshot,
+  publishPreparedSourceSnapshot,
+  verifyRepositorySnapshotFreeze,
   readPublishedSourceSnapshotText,
   runSourceSnapshotCli,
   unpackPublishedSourceSnapshot,
@@ -30,14 +32,21 @@ async function publishedFixture() {
     targetRoot: target,
     lockPath: join(state, 'publish.lock'),
     ownerId: 'reader-owner',
-  };  const result = await exportRepositorySnapshot(options);
-  if (result.status === 'BLOCKED') throw new Error('fixture export blocked');
+  };
+  const prepared = await prepareRepositorySnapshot({ ...options, workRoot: state });
+  let snapshotId: string;
+  try {
+    if (prepared.plan.manifest === null) throw new Error('fixture export blocked');
+    expect((await verifyRepositorySnapshotFreeze(options, prepared.plan.freeze)).ok).toBe(true);
+    const result = await publishPreparedSourceSnapshot({ manifest: prepared.plan.manifest, objects: prepared.objects }, options);
+    snapshotId = result.snapshotId;
+  } finally { await prepared.dispose(); }
   await removeRepository(source);
   return {
     base,
     target,
     ownerId: options.ownerId,
-    snapshotId: result.publication.snapshotId,
+    snapshotId,
     cleanup: () => rm(base, { recursive: true, force: true }),
   };
 }

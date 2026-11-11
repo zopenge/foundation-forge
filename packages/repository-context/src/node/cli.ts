@@ -212,7 +212,6 @@ export const runRepositoryContextCli = async (
       });
       const result = await investigator.investigate({
         query,
-        ...(view === 'evidence' ? { evidenceBudget: { maxBytes } } : {}),
         ...(scopes.length > 0 ? { scope: scopes } : {}),
       });
       const page = serializeInvestigationPage(result, effectiveGeneration, {

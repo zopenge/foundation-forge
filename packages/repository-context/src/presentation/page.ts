@@ -54,9 +54,9 @@ const ensureBudget = (value: unknown, maxBytes: number): string | null => {
   return Buffer.byteLength(stdout, 'utf8') + 1 <= maxBytes ? stdout : null;
 };
 
-const cursorRequest = (request: InvestigationPageRequest, strategy: 'standard' | 'planned' = 'standard') => ({
+const cursorRequest = (request: InvestigationPageRequest, strategy: 'entries' | 'planned' | 'bounded') => ({
   query: request.query, view: request.view, budget: request.budget,
-  evidencePolicy: 'evidence-plan-v4', strategy,
+  evidencePolicy: 'evidence-plan-v5', strategy,
 });
 
 const candidateSources = (result: InvestigationResult, generation: StoredRepositoryGeneration): SourceRef[] => result.candidates
@@ -83,22 +83,9 @@ export const serializeInvestigationPage = (
   generation: StoredRepositoryGeneration,
   request: InvestigationPageRequest,
 ): SerializedPage => {
-  const binding = createCursorBinding(generation.generationId, cursorRequest(request), request.scope);
-  const plannedBinding = createCursorBinding(generation.generationId,
-    cursorRequest(request, 'planned'), request.scope);
-  const hasPlannedEvidence = request.view === 'evidence' && (result.evidenceUnits?.length ?? 0) > 0;
-  let plannedCursor = false;
-  let offset: number;
-  if (hasPlannedEvidence && request.cursor !== null) {
-    try {
-      offset = decodeCursor(request.cursor, plannedBinding);
-      plannedCursor = true;
-    } catch {
-      offset = decodeCursor(request.cursor, binding);
-    }
-  } else {
-    offset = decodeCursor(request.cursor, binding);
-  }
+  const binding = createCursorBinding(generation.generationId,
+    cursorRequest(request, request.view === 'evidence' ? 'bounded' : 'entries'), request.scope);
+  let offset = request.view === 'evidence' ? 0 : decodeCursor(request.cursor, binding);
   const base = {
     schemaVersion: 1, status: result.status, corpusId: generation.corpusId, generationId: generation.generationId,
     corpusState: generation.corpus.corpusState, coverage: generation.corpus.coverage, view: request.view,
@@ -148,8 +135,10 @@ export const serializeInvestigationPage = (
     }
     throw Object.assign(new Error('wire budget too small'), { code: 'BUDGET_TOO_SMALL', details: { maxBytes: request.budget.maxBytes } });
   }
-  if (result.evidenceUnits && result.evidenceUnits.length > 0) {
-    const hints: EvidenceUnit[] = result.sourceHints.filter((item) => !result.evidenceUnits?.some((unit) => (
+  if (result.evidenceUnits.length > 0) {
+    const plannedBinding = createCursorBinding(generation.generationId,
+      cursorRequest(request, 'planned'), request.scope);
+    const hints: EvidenceUnit[] = result.sourceHints.filter((item) => !result.evidenceUnits.some((unit) => (
       unit.kind === 'excerpt'
       &&
       unit.source.path === item.path && unit.source.sourceSha256 === item.source.sourceSha256
@@ -233,15 +222,13 @@ export const serializeInvestigationPage = (
       delivered.push(...page.units);
       nextOffset = page.nextOffset;
     }
-    const legacyEvidence = [...result.evidence, ...result.sourceHints];
-    const completePlan = nextOffset === groupIds.length && legacyEvidence.every((item) =>
+    const requiredEvidence = [...result.evidence, ...result.sourceHints];
+    const completePlan = nextOffset === groupIds.length && requiredEvidence.every((item) =>
       delivered.some((unit) => sameSource(unit.source, item.source)
         && unit.source.lineStart <= item.lineStart && unit.source.lineEnd >= item.lineEnd
         && unit.text.includes(item.text)));
-    if (plannedCursor && !completePlan) throw Object.assign(new Error('cursor mismatch'), {
-      code: 'CURSOR_MISMATCH', details: {},
-    });
-    if (completePlan && !(!plannedCursor && request.cursor !== null)) {
+    if (completePlan) {
+      offset = decodeCursor(request.cursor, plannedBinding);
       if (offset > groupIds.length || !pages.has(offset)) throw Object.assign(new Error('cursor mismatch'), {
         code: 'CURSOR_MISMATCH', details: {},
       });
@@ -250,6 +237,7 @@ export const serializeInvestigationPage = (
       return pageResult(page.stdout, page.value.truncated, page.value.nextCursor);
     }
   }
+  offset = decodeCursor(request.cursor, binding);
   const allEvidence = [...result.evidence, ...result.sourceHints].filter((item, index, all) => (
     all.findIndex((candidate) => candidate.path === item.path && candidate.lineStart === item.lineStart
       && candidate.lineEnd === item.lineEnd && candidate.text === item.text) === index

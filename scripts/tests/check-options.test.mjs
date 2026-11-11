@@ -14,7 +14,6 @@ const parse = async (args, env, readResources = resources) => {
 
 test('normal quick, full and serial modes retain their scope without probing fast resources', async () => {
   for (const [args, expected, workers] of [
-    [[], { quick: false, full: false }, '2'],
     [['--quick'], { quick: true, full: false }, '2'],
     [['--full'], { quick: false, full: true }, '2'],
     [['--full', '--serial'], { quick: false, full: true }, '1'],
@@ -39,7 +38,7 @@ test('fast mode never overrides an explicit lower worker limit', async () => {
 });
 
 test('invalid or conflicting CLI modes cannot start a fast full check', async () => {
-  for (const args of [['--fast'], ['--quick', '--fast'], ['--full', '--fast', '--serial'],
+  for (const args of [[], ['--fast'], ['--quick', '--fast'], ['--full', '--fast', '--serial'],
     ['--full', '--quick'], ['--full', '--full'], ['--serial'], ['--full', '--unknown']]) {
     const env = {};
     await assert.rejects(parse(args, env), /CHECK_ARGUMENT_INVALID/u);
@@ -61,4 +60,10 @@ test('the real fast CLI refuses a lower declared budget before starting checks',
     cwd: resolve(import.meta.dirname, '../..'), env: { ...process.env, FORGE_CHECK_TEST_WORKERS: '2' },
     windowsHide: true, timeout: 5000,
   }), error => error.code === 1 && /FAST_CHECK_BUDGET_CONFLICT/u.test(error.stderr));
+});
+
+test('无参数真实入口拒绝启动任何检查阶段', async () => {
+  await assert.rejects(promisify(execFile)(process.execPath, ['scripts/check-runner.mjs'], {
+    cwd: resolve(import.meta.dirname, '../..'), windowsHide: true, timeout: 5000,
+  }), error => error.code === 1 && /CHECK_ARGUMENT_INVALID/u.test(error.stderr) && error.stdout === '');
 });

@@ -7,18 +7,18 @@ import type { SnapshotReadContext } from './read-context.js';
 import { compareStrings } from './validation.js';
 import { readIndexLines } from './read-index-render.js';
 
-export type SnapshotReadAssurance = 'normalized-text-verified' | 'object-integrity';
+export type SnapshotReadAssurance = 'normalized-text-verified';
 export interface SnapshotReadIndexFile {
   readonly path: string;
   readonly sourceSha256: string;
   readonly sourceByteLength: number;
   readonly sourceLineCount: number;
   readonly group: string;
-  readonly formatVersion: 1 | 2;
+  readonly formatVersion: 2;
   /** 历史格式能力声明；只有 Reader 返回值才证明本次正文验证已经执行。 */
   readonly assurance: SnapshotReadAssurance;
-  readonly normalizedSha256?: string;
-  readonly normalizedByteLength?: number;
+  readonly normalizedSha256: string;
+  readonly normalizedByteLength: number;
   readonly objectRequirements: readonly SnapshotObject[];
   readonly locators: readonly SourceTextLocatorV2[];
 }
@@ -67,14 +67,6 @@ const indexFile = (context: SnapshotReadContext, path: string, validated?: Sourc
   const file = requireSnapshotReadFile(context, path);
   const details = validated ?? readContextSourceDetails(context, file);
   const requirements = freezeRequirements(collectReadContextRequirements(context, [path]));
-  if (details.formatVersion === 1) {
-    return Object.freeze({
-      path, sourceSha256: file.sha256, sourceByteLength: file.byteLength, sourceLineCount: details.lineCount,
-      group: details.group, formatVersion: 1 as const, assurance: 'object-integrity' as const,
-      objectRequirements: requirements, locators: Object.freeze([]),
-    });
-  }
-
   return Object.freeze({
     path,
     sourceSha256: file.sha256,
@@ -138,7 +130,6 @@ const projectReadView = (
   for (const path of [...new Set(input.paths)].sort(compareStrings)) {
     const file = byPath.get(path);
     if (file === undefined) missing.push(path);
-    else if (file.assurance !== 'normalized-text-verified') unsupported.push(path);
     else { found.push(path); files.push(file); }
   }
   return Object.freeze({

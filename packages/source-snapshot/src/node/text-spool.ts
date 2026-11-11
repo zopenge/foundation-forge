@@ -4,7 +4,6 @@ import { calculateBytesIntegrity } from '@openge/forge-artifact-integrity';
 import { validatePortableRelativePath } from '@openge/forge-path-safety';
 import type { SnapshotFile, SnapshotObject } from '../contracts.js';
 import type {
-  SourceTextFormatVersion,
   SourceTextLocatorV2,
   SourceTextPackageMetrics,
   SourceTextPackOptions,
@@ -72,20 +71,6 @@ const spoolPathFor = (root: string, logicalPath: string): string => join(root, .
 const uniqueObjectPaths = (locators: readonly SourceTextLocatorV2[]): readonly string[] =>
   Object.freeze([...new Set(locators.map(locator => locator.objectPath))].sort(compareStrings));
 
-const legacyDetails = (file: StoredFile, locators: readonly SourceTextLocatorV2[]): NonNullable<SnapshotFile['details']> => ({
-  group: file.group,
-  encoding: file.encoding,
-  bom: file.bom,
-  lineCount: file.lineCount,
-  segments: locators.map(locator => ({
-    objectPath: locator.objectPath,
-    objectSha256: locator.objectSha256,
-    startLine: locator.startLine,
-    endLine: locator.endLine,
-    segmentIndex: locator.segmentIndex,
-    segmentCount: locator.segmentCount,
-  })),
-});
 const v2Details = (file: StoredFile, locators: readonly SourceTextLocatorV2[]): NonNullable<SnapshotFile['details']> => ({
   kind: 'source-text' as const,
   formatVersion: 2 as const,
@@ -114,13 +99,12 @@ const v2Details = (file: StoredFile, locators: readonly SourceTextLocatorV2[]): 
 const makeSnapshotFile = (
   file: StoredFile,
   locators: readonly SourceTextLocatorV2[],
-  formatVersion: SourceTextFormatVersion,
 ): SnapshotFile => Object.freeze({
   path: file.path,
   sha256: file.sha256,
   byteLength: file.byteLength,
   objectPaths: uniqueObjectPaths(locators),
-  details: formatVersion === 2 ? v2Details(file, locators) : legacyDetails(file, locators),
+  details: v2Details(file, locators),
 });
 
 const contentSpoolPath = async (root: string, contentKey: string): Promise<string> => {
@@ -135,7 +119,7 @@ export interface CreateSourceTextSpoolBuilderOptions {
 export const createSourceTextSpoolBuilder = async (
   options: CreateSourceTextSpoolBuilderOptions,
 ): Promise<SourceTextSpoolBuilder> => {
-  const formatVersion = validateSourceTextPackOptions(options.pack);
+  validateSourceTextPackOptions(options.pack);
   const spoolRoot = options.spoolRoot;
   await mkdir(spoolRoot, { recursive: true });
   if ((await readdir(spoolRoot)).length > 0) throw new SourceSnapshotError('OUTPUT_NOT_EMPTY', { path: spoolRoot });
@@ -210,7 +194,7 @@ export const createSourceTextSpoolBuilder = async (
     if (foldedPaths.has(folded)) throw new SourceSnapshotError('CASE_COLLISION', { path: file.path });
     seenPaths.add(file.path); foldedPaths.add(folded);
 
-    const contentKey = sourceTextContentKey(file, formatVersion);
+    const contentKey = sourceTextContentKey(file);
     const stored: StoredFile = Object.freeze({
       path: file.path, group: file.group, sha256: file.sha256, byteLength: file.byteLength,
       encoding: file.encoding, bom: file.bom, lineCount: file.lineCount,
@@ -250,7 +234,7 @@ export const createSourceTextSpoolBuilder = async (
       await flushObject(target);
       target = newCurrent(segment.file.group);
     }
-    const rendered = renderSourceTextObjectSection(sourceTextObjectInputForSegment(segment, formatVersion));
+    const rendered = renderSourceTextObjectSection(sourceTextObjectInputForSegment(segment));
     const separatorBytes = target.parts.length > 0 ? 1 : 0;
     const candidateBytes = target.byteLength + separatorBytes + rendered.byteLength;
     if (target.parts.length > 0 && candidateBytes > options.pack.targetObjectBytes) {
@@ -315,7 +299,7 @@ export const createSourceTextSpoolBuilder = async (
           throw new SourceSnapshotError('COVERAGE_INVALID', { path: file.path });
         }
         const ordered = Object.freeze([...locators].sort((a, b) => a.segmentIndex - b.segmentIndex));
-        return makeSnapshotFile(file, ordered, formatVersion);
+        return makeSnapshotFile(file, ordered);
       })
       .sort((a, b) => compareStrings(a.path, b.path));
     completed = Object.freeze({

@@ -1,5 +1,4 @@
 import { SourceSnapshotError } from '../errors.js';
-import type { RepositorySnapshotPlan } from './contracts.js';
 import type { PreparedRepositorySnapshotPlan } from './prepared-pipeline.js';
 import type { ProvenanceProducer } from '../snapshot-provenance-contracts.js';
 import type { CoverageCaptureOptions } from './snapshot-coverage.js';
@@ -15,7 +14,7 @@ export interface ProvenanceCaptureOptions extends Omit<CoverageCaptureOptions, '
 }
 /** 只投影已冻结记录；旧 manifest 没有的历史状态不能通过本入口猜测。 */
 export const buildSnapshotProvenanceFromPlan = async (
-  input: PreparedRepositorySnapshotPlan | RepositorySnapshotPlan, options: ProvenanceCaptureOptions,
+  input: PreparedRepositorySnapshotPlan, options: ProvenanceCaptureOptions,
   evidence: 'supplied-records' | 'same-operation' = 'supplied-records',
 ) => {
   const capturedOptions = structuredClone(options);
@@ -24,7 +23,7 @@ export const buildSnapshotProvenanceFromPlan = async (
   const plan = structuredClone({ status: input.status, publishAllowed: input.publishAllowed, inventory: input.inventory,
     decisions: input.decisions, includedPaths: input.includedPaths, reviewEntries: input.reviewEntries,
     secretFindings: input.secretFindings, contentIssues: input.contentIssues, freeze: input.freeze,
-    manifest: 'manifest' in input ? input.manifest : input.bundle?.manifest ?? null });
+    manifest: input.manifest });
   const manifest = plan.manifest ?? provenanceMismatch('published-manifest-required');
   const coverage = await buildSnapshotCoverageFromPlan(plan, { policy: capturedOptions.policy, policyVersion: capturedOptions.policyVersion,
     producer: capturedOptions.exporter?.id ?? 'unspecified-producer', ...(capturedOptions.display ? { display: capturedOptions.display } : {}) });

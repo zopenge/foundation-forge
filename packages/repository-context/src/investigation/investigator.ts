@@ -314,10 +314,10 @@ export const createRepositoryInvestigator = (options: RepositoryInvestigatorOpti
     .map((entity) => [entity.source.path, entity.id]));
 
   return {
-    investigate: async ({ query, scope, evidenceBudget }): Promise<InvestigationResult> => {
+    investigate: async ({ query, scope }): Promise<InvestigationResult> => {
       if (query.trim().length === 0) {
         return {
-          status: 'error', reason: 'INVALID_ARGUMENT', candidates: [], relations: [], evidence: [], sourceHints: [],
+          status: 'error', reason: 'INVALID_ARGUMENT', candidates: [], relations: [], evidence: [], evidenceUnits: [], sourceHints: [],
           primaryScopeCoverage: coverage([], preferredScopes),
           diagnostics: [{ code: 'INVALID_ARGUMENT', details: { field: 'query' } }],
         };
@@ -347,6 +347,7 @@ export const createRepositoryInvestigator = (options: RepositoryInvestigatorOpti
           candidates: [],
           relations: [],
           evidence: [],
+          evidenceUnits: [],
           sourceHints: [],
           primaryScopeCoverage: requestedScopeCoverage,
           diagnostics: [{ code: 'REQUESTED_SCOPE_MISSING', details: { scopes: [...requestedScopes] } }],
@@ -461,7 +462,7 @@ export const createRepositoryInvestigator = (options: RepositoryInvestigatorOpti
       if ((found.status === 'no-match' || found.entities.length === 0) && sourceHints.length === 0
         && entities.length === 0) {
         return {
-          status: 'insufficient', reason: 'NO_USEFUL_CANDIDATE', candidates: [], relations: [], evidence: [], sourceHints: [],
+          status: 'insufficient', reason: 'NO_USEFUL_CANDIDATE', candidates: [], relations: [], evidence: [], evidenceUnits: [], sourceHints: [],
           primaryScopeCoverage: coverage([], preferredScopes), diagnostics: [],
         };
       }
@@ -479,9 +480,9 @@ export const createRepositoryInvestigator = (options: RepositoryInvestigatorOpti
         };
       }) : [];
       const read = ranges.length > 0 ? await queryReadRanges(ranges) : { texts: [] };
-      const evidenceUnits = includeEvidence && evidenceBudget !== undefined ? await buildEvidenceUnits({
+      const evidenceUnits = includeEvidence ? await buildEvidenceUnits({
         corpus: options.corpus, candidates: evidenceEntities, readRanges: queryReadRanges,
-      }) : undefined;
+      }) : [];
       const covered = [...entities, ...sourceHints.map((item) => ({ source: item.source }))];
       return {
         status: found.status === 'ambiguous' ? 'ambiguous' : 'ok',
@@ -492,7 +493,7 @@ export const createRepositoryInvestigator = (options: RepositoryInvestigatorOpti
           return { ...item, wholeFile: fileSource !== undefined
             && item.lineStart === fileSource.lineStart && item.lineEnd === fileSource.lineEnd };
         }),
-        ...(evidenceUnits === undefined ? {} : { evidenceUnits }),
+        evidenceUnits,
         sourceHints,
         primaryScopeCoverage: coverage(covered, preferredScopes),
         truncated: found.truncated === true || rankedEntities.length > maxCandidates,

@@ -22,7 +22,7 @@ export interface CatalogFile extends Omit<SnapshotReadIndexFile, 'assurance'> {
 }
 export interface CatalogAlias {
   readonly path: string; readonly objectPath: string; readonly sourceSha256: string;
-  readonly normalizedSha256?: string;
+  readonly normalizedSha256: string;
 }
 export interface CatalogEntry { readonly key: string; readonly record: CatalogFile | CatalogAlias }
 export interface CatalogNode {

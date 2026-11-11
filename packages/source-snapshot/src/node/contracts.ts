@@ -1,5 +1,5 @@
 import type { SnapshotPin } from '../contracts.js';
-import type { SourceClassificationDecision, SourceSecretFinding, SourceSecretRule, SourceSnapshotBundle, SourceSnapshotPolicyInput, SourceTextPackOptions } from '../content-contracts.js';
+import type { SourceClassificationDecision, SourceSecretRule, SourceSnapshotPolicyInput, SourceTextPackOptions } from '../content-contracts.js';
 
 export interface SourceInventoryRepository {
   readonly path: string;
@@ -76,7 +76,6 @@ export interface SourceSnapshotPublicationResult {
   readonly objectCount: number;
   readonly sourceFileCount: number;
   readonly writtenObjects: number;
-  readonly reusedObjects: number;
   readonly objectsReused: number;
   readonly bytesWritten: number;
   readonly activation?: 'reused';
@@ -182,23 +181,7 @@ export interface RepositorySnapshotPlanOptions {
 export interface RepositorySnapshotDecision { readonly path: string; readonly decision: SourceClassificationDecision; }
 export interface RepositorySnapshotFreezeFile { readonly path: string; readonly sha256: string; }
 export interface RepositorySnapshotFreeze { readonly inventoryFingerprint: string; readonly files: readonly RepositorySnapshotFreezeFile[]; }
-export interface RepositorySnapshotPlan {
-  readonly status: 'READY' | 'BLOCKED';
-  readonly publishAllowed: boolean;
-  readonly inventory: SourceInventory;
-  readonly decisions: readonly RepositorySnapshotDecision[];
-  readonly includedPaths: readonly string[];
-  readonly reviewEntries: readonly RepositorySnapshotDecision[];
-  readonly secretFindings: readonly SourceSecretFinding[];
-  readonly contentIssues: readonly { readonly path: string; readonly code: string }[];
-  readonly bundle: SourceSnapshotBundle | null;
-  readonly freeze: RepositorySnapshotFreeze;
-}
 export interface RepositorySnapshotFreezeVerification { readonly ok: boolean; readonly inventoryChanged: boolean; readonly changedPaths: readonly string[]; }
-export type ExportRepositorySnapshotOptions = RepositorySnapshotPlanOptions & Omit<PublishSourceSnapshotOptions, 'sourceRoot'>;
-export interface RepositorySnapshotBlockedExport { readonly status: 'BLOCKED'; readonly plan: RepositorySnapshotPlan; }
-export interface RepositorySnapshotPublishedExport { readonly status: 'LOCAL_VERIFIED' | 'NO_CHANGES'; readonly plan: RepositorySnapshotPlan; readonly publication: SourceSnapshotPublicationResult; }
-export type RepositorySnapshotExportResult = RepositorySnapshotBlockedExport | RepositorySnapshotPublishedExport;
 
 export interface SourceSnapshotCliConfig {
   readonly projectId: string;

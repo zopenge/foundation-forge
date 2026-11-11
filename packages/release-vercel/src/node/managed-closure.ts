@@ -11,7 +11,7 @@ export function hasNoStartWitness(command: ManagedCommand): boolean {
     && witness.binding.split(':')[1] === command.id;
 }
 
-/** 历史轮询见证保留可读；只有同一实例和绑定的 OS 关闭事实可以复用。 */
+/** 只有同一实例和绑定的 OS 关闭事实可以复用。 */
 export function hasVerifiedManagedClosure(command: ManagedCommand): boolean {
   if (command.kind === 'checkout-observation') return command.status === 'closed'
     && /^[a-f0-9]{64}$/u.test(command.terminalSha256 ?? '') && hasObservationStopWitness(command)

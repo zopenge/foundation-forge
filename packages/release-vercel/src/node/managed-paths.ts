@@ -106,7 +106,7 @@ export async function openManagedSlot(source: FrozenSource, execution: Execution
       || !sameIdentity(record(owner.slotIdentity), paths.slotIdentity)) throw new ReleaseError('SLOT_FOREIGN');
     slotId = owner.slotId;
     if (anchored && existingAnchor.slotId !== slotId) throw new ReleaseError('SLOT_STATE', { reason: 'ANCHOR_SLOT_ID' });
-    const allowed = ['ownership.json', 'run.lock', 'recover.lock', 'state.json', 'checkout', 'latest-check.json', 'latest-publish.json', 'command-gate.json', 'command-result.json', 'retirement.json', 'retirement-work', 'retired', 'history', 'terminal.json', '.terminal.json.next'];
+    const allowed = ['ownership.json', 'run.lock', 'recover.lock', 'state.json', 'checkout', 'latest-check.json', 'latest-publish.json', 'retirement.json', 'retirement-work', 'retired', 'history', 'terminal.json', '.terminal.json.next'];
     if ((await readdir(paths.slotRoot)).some(name => !allowed.includes(name))) throw new ReleaseError('SLOT_FOREIGN', { reason: 'UNKNOWN_ENTRY' });
   }
   await assertManagedPaths(paths);

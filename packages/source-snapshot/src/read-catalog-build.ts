@@ -30,15 +30,16 @@ export const buildSnapshotReadCatalog = async (input: SnapshotManifest, options:
   const pathEntries: CatalogEntry[] = []; const aliasEntries: CatalogEntry[] = [];
   for (const file of index.files) {
     const key = await catalogHash(file.path);
-    const { assurance: legacyDeclaration, ...source } = file;
+    const { assurance: capabilityDeclaration, ...source } = file;
+    if (capabilityDeclaration !== 'normalized-text-verified') catalogInvalid('index-capability');
     const record: CatalogFile = Object.freeze({ ...source,
-      verificationCapabilities: Object.freeze(legacyDeclaration === 'normalized-text-verified' ? ['object-sha256', 'normalized-text-sha256'] : ['object-sha256']),
+      verificationCapabilities: Object.freeze(['object-sha256', 'normalized-text-sha256']),
       priority: preferred.has(file.path) ? 'preferred' : reference.has(file.path) ? 'reference' : 'unclassified' });
     pathEntries.push({ key, record });
     for (const object of file.objectRequirements) {
       const objectKey = objectKeys.get(object.path); if (!objectKey) catalogInvalid('object-key');
       aliasEntries.push({ key: `${objectKey}${key}`, record: { objectPath: object.path, path: file.path,
-        sourceSha256: file.sourceSha256, ...(file.normalizedSha256 ? { normalizedSha256: file.normalizedSha256 } : {}) } });
+        sourceSha256: file.sourceSha256, normalizedSha256: file.normalizedSha256 } });
     }
   }
   const builder = new CatalogArtifactBuilder(limits);

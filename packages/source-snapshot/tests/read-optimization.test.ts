@@ -69,7 +69,7 @@ test.each(['object-limit', 'total-limit', 'actual-limit', 'duplicate', 'unexpect
   expect(copies).not.toHaveBeenCalled();
 });
 
-test('preserves legacy assurance declarations without fabricating verification receipts', async () => {
+test('reports index capabilities without fabricating verification receipts', async () => {
   const { manifest } = await fixture();
   const index = buildSnapshotReadIndex(manifest);
   expect(index.files[0]?.assurance).toBe('normalized-text-verified');

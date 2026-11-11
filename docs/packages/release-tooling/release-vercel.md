@@ -30,7 +30,7 @@ pnpm exec forge-vercel-release recover
 pnpm exec forge-vercel-release retire --run-id <运行UUID>
 ```
 
-参数支持 `--cwd DIR`、`--config FILE`；`--sha SHA` 仅适用于 status/verify，`--run-id UUID` 与 `--confirm-origin SHA256` 仅适用于 retire。stdout 是 JSON，成功退出 0、运行失败或封存证据待补退出 1、参数错误退出 2。项目可映射为 release:check、release、release:status、release:verify。prepare/check/acceptance 接收受保护的 `FORGE_RELEASE_COMMAND=check|publish|verify` 与 `FORGE_RELEASE_SHA`；验收另接收 URL、deployment ID。宿主同名值不能覆盖。这些值只说明操作意图，不授予业务权限；业务断言、幂等远端准备和业务恢复由消费方承担。
+参数支持 `--cwd DIR`、`--config FILE`；`--sha SHA` 仅适用于 status/verify，`--run-id UUID` 与 `--abandon-unstarted` 仅适用于 retire。stdout 是 JSON，成功退出 0、运行失败或封存证据待补退出 1、参数错误退出 2。项目可映射为 release:check、release、release:status、release:verify。prepare/check/acceptance 接收受保护的 `FORGE_RELEASE_COMMAND=check|publish|verify` 与 `FORGE_RELEASE_SHA`；验收另接收 URL、deployment ID。宿主同名值不能覆盖。这些值只说明操作意图，不授予业务权限；业务断言、幂等远端准备和业务恢复由消费方承担。
 
 ## 受管提交模式
 
@@ -124,7 +124,7 @@ const report = await runRelease({
 });
 ```
 
-runRelease 支持 command、cwd、configPath、workspace 专用 config 对象、sha、signal、transport、onLoginOutput，以及 retire 专用 runId、confirmOrigin。managed 必须用已提交文件。transport 替换 API/buildInfo 及可选的 prebuilt promote 外部边界，必须响应取消、关闭自有资源，且不得重试提升写入；onLoginOutput 显示脱敏认证指引。公开签名不携带第三方实现类型。
+runRelease 支持 command、cwd、configPath、workspace 专用 config 对象、sha、signal、transport、onLoginOutput，以及 retire 专用 runId、abandonUnstarted。managed 必须用已提交文件。transport 替换 API/buildInfo 及可选的 prebuilt promote 外部边界，必须响应取消、关闭自有资源，且不得重试提升写入；onLoginOutput 显示脱敏认证指引。公开签名不携带第三方实现类型。
 
 ## 恢复与资源所有权
 
@@ -134,7 +134,7 @@ runRelease 支持 command、cwd、configPath、workspace 专用 config 对象、
 
 每次主状态替换前，终态回执先封存旧文件和已 fsync 暂存文件的精确身份及摘要；协调者在 rename 两侧退出均可读取原有停止事实，同字节复制仍被拒绝。恢复先归档原记录，再在排他声明内清理与封印匹配的未提交暂存文件；未知暂存文件继续阻断，原始状态和远端副作用不改写。
 
-旧 schema 2 轮询 closure 可读，但属于弱证据，不能自动升级、复用为成功或依据 PID 消失删锁。旧 command-gate/result 文件不执行、不自动清理；新运行不再创建它们。持久 OS 证据绑定已结束实例，可复用而不重新探测后来复用的 PID。每条记录的 nonce 仅存在受控 journal，不输出到 CLI 报告。
+运行状态只接受带有原宿主与历史清单绑定的当前 schema 3；旧 schema 2 状态直接拒绝，不自动转换。配置、报告、收据、锚点和独立证明各自沿用当前 schema。无作用域的轮询 closure 不能标记为已关闭命令，旧 command-gate/result 文件按未知槽内容拒绝，不执行或自动清理。持久 OS 证据绑定已结束实例，可复用而不重新探测后来复用的 PID。每条记录的 nonce 仅存在受控 journal，不输出到 CLI 报告。
 
 原生依赖 Koffi 精确固定 3.3.3。本仓与 tarball 消费安装禁用其构建脚本，其他 pnpm 消费者也应设置 `allowBuilds.koffi: false`。缺少预编译制品、原生能力或 Job 绑定失败在业务 argv 前拒绝，不下载、不编译、不提权、不回退。归属层不是安全沙箱，受信任命令不得通过 WMI、系统服务等外部所有者代办；workspace 不启用新 scope。
 
@@ -154,7 +154,7 @@ recover 不要求 Vercel 登录，不安装、不检查、不验收、不推送�
 
 `retire --run-id <UUID>` 只处理精确受管运行的资源归属，不执行安装、测试、推送、部署或验收，不把旧命令和旧报告改写为成功。`recover` 发现无法补齐的 closure 缺口后给出该入口；`recovery.reportExists` 明确区分文件存在事实与预期保存路径。
 
-新运行在任何受管命令放行前保存宿主指纹和开机观察。旧记录没有宿主来源时，第一次调用返回 `ORIGIN_CONFIRMATION_REQUIRED` 和绑定原始文件及当前宿主的 `retirement.originConfirmation`。维护者必须确认该精确运行确实来自当前宿主，原槽未复制、克隆、迁移或还原，才能携带 `--confirm-origin <返回的 SHA256>` 再执行。此依据明确记为 `operator-confirmed-origin`，不能称为机器补证，也不能覆盖已有宿主不匹配或文件变化。
+运行在任何受管命令放行前保存宿主指纹和开机观察。退役只使用运行原先记录的宿主，缺失或不匹配时直接拒绝；不接受人工来源证言替代宿主记录。封存来源固定为 `recorded-run-host`，原文件字节和身份仍须保持。
 
 命令保存检查点；实际宿主重启后再执行同一 retire 命令。Windows 仅在同一宿主的系统 uptime 比检查点至少下降 60 秒时接受新开机周期，Linux 要求 kernel boot_id 改变；PID 消失、睡眠和墙钟变化都不是该证明。基线过短、重启后等待太久、宿主身份读取失败时继续阻断，不静默刷新基线，不自动重启电脑。Windows 读取 MachineGuid，Linux 读取 machine-id 和 kernel boot-id；报告仅保存宿主摘要。
 

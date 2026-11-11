@@ -76,10 +76,10 @@ test('rechecks evaluation tooling without invalidating unchanged package outputs
 test('rechecks unpublished package evaluation scripts as tooling inputs', () => {
   const unpublished = packages.map((item) => ({ ...item,
     manifest: { files: ['dist', 'README.md'] } }));
-  const script = 'packages/leaf/evaluation/export-h8-pack.mjs';
+  const script = 'packages/leaf/evaluation/export-pack.mjs';
   assert.deepEqual(selectCheckMode(baseline, current({
     [script]: 'changed',
-    'scripts/tests/ab-eval-h8-export.test.mjs': 'changed',
+    'scripts/tests/ab-eval-export.test.mjs': 'changed',
     'docs/maintenance/ab-evaluation.md': 'changed',
   }), unpublished), { kind: 'script-tests' });
   assert.deepEqual(selectCheckMode(baseline, current({
