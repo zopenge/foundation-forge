@@ -2,6 +2,8 @@
 
 发布恢复锚点、workspace 收据和需要保留的 prebuilt 输入使用 `state/forge-vercel-release/`，示例受管槽使用 `state/release-slot/`；过程性临时文件使用 `tmp/`。开始前提交对应 ignore 规则。此次位置切换不自动迁移旧状态，也不查询旧临时根；升级前须用原工具版本在原宿主完成或退役活动运行。原路径和文件身份属于恢复证明，移动活动槽或复制 journal 不能保持该证明。
 
+部署 CLI 的私有配置与缓存独立生成在执行 checkout 的 `tmp/forge-vercel-release/`，命令结束后按目录身份回收；临时根缺失时由标准流程创建。清理该 scratch 不删除 `state/` 中的待验上传输入、发布报告或恢复证据。
+
 这个包提供固定提交的 Git integration 发布，以及显式的预构建制品交付。它依赖 Node.js >=22.14.0 和 Git；默认交付需要已配置的 Vercel Git integration，prebuilt 交付使用既有、未连接 Git 的项目。根入口只导出契约和错误码，浏览器可安全加载；所有 I/O 都从 `./node` 进入，该入口声明 `browser: null`。
 
 内部 Git 命令用单次调用配置让自动维护和垃圾回收保持在前台，仍受命令时限和受管进程归属检查约束，不改写仓库或宿主 Git 设置。命令退出后若仍有其他后代，继续保留未知关闭状态，不能因随后强制清理为空就升级为正常完成。

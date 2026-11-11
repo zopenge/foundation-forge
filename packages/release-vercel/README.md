@@ -4,6 +4,8 @@ Explicit Git integration or prebuilt releases with bounded checks, fixed commit 
 
 Release recovery metadata and retained prebuilt inputs use `state/forge-vercel-release/`; the recommended managed slot is `state/release-slot/`. Commit ignore rules for both before starting a release. Temporary test/build material uses `tmp/`. This changes the previous metadata location: finish or retire an active run with its original tool version and original host before upgrading. Recorded paths and filesystem identities are part of recovery proof; moving an active slot or copying its journal does not preserve that proof. There is no automatic legacy-directory lookup or state migration.
 
+Private deployment CLI configuration and caches are generated under `tmp/forge-vercel-release/` in the execution checkout and disposed after the command. Missing temporary directories are created on demand. Removing this scratch does not remove the retained upload inputs or release recovery metadata under `state/`.
+
 Internal Git commands keep automatic maintenance and garbage collection in the foreground through invocation-local settings. That work remains inside the command deadline and managed process scope; repository and global Git settings are not rewritten.
 
 Frozen-source checks and committed-config reads preserve Git execution failures, command timeouts, cancellation, and unknown process closure diagnostics. These errors stop the release without being relabeled as source changes or an uncommitted config. A config path is reported as missing only after Git exits normally and confirms its absence; actual changes to the frozen source still fail with `SOURCE_CHANGED`.

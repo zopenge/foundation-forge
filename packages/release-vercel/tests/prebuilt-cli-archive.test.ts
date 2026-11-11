@@ -28,9 +28,9 @@ it.for(['native', 'posix-umask'] as const)('transmits relative links through the
       await chmod(resolve(f.output, 'functions/main.func'), 0o775);
     }
     const artifact = await freezePrebuiltArtifact(f.root, f.config, f.sha, context.signal, async () => {});
-    cliContext = await createPrebuiltCliContext(artifact.uploadRoot, 'team_fixture', context.signal);
+    cliContext = await createPrebuiltCliContext(f.root, 'team_fixture', context.signal);
     const privateConfig = cliContext.directory;
-    expect(dirname(privateConfig)).toBe(dirname(artifact.uploadRoot));
+    expect(dirname(privateConfig)).toBe(resolve(f.root, 'tmp/forge-vercel-release'));
     if (process.platform !== 'win32') {
       expect((await stat(privateConfig)).mode & 0o777).toBe(0o700);
       expect((await stat(resolve(privateConfig, 'config.json'))).mode & 0o777).toBe(0o600);
