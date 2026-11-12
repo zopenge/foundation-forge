@@ -1,5 +1,21 @@
 # @openge/forge-repository-context
 
+## 2.0.0
+
+### Major Changes
+
+- 7572183: 调查 SDK 统一返回必有的 `evidenceUnits`，删除 `evidenceBudget` 请求开关。调用方直接使用 `selectEvidence` 和自己的完整输出计量器按预算选择证据；禁用正文读取或无证据时返回空数组。
+  
+  删除证据规划游标失败后接纳另一展示策略游标的逻辑。调查按当前结果和预算固定使用完整规划或有界正文裁剪，续页仅接受对应策略；旧版 v4 evidence policy 游标明确返回 `CURSOR_MISMATCH`，须重新获取第一页。保留巨大单行、UTF-8、范围覆盖与完整输出字节预算约束。
+
+### Patch Changes
+
+- 329d6bb: 将发布恢复锚点、workspace 收据与需要保留的预构建输入移至持久目录 `state/forge-vercel-release/`，与 `tmp/` 临时过程材料分离。升级前须通过原工具版本在原宿主完成或退役活动运行；不自动查找、复制或降级复用旧目录中的恢复状态，移动路径和文件身份不能保持原恢复证明。
+  
+  仓库上下文发现默认忽略新的 `tmp/` 临时目录，避免将生成过程材料重新收集为源码。
+- Updated dependencies [7572183]
+  - @openge/forge-source-snapshot@0.3.0
+
 ## 1.1.2
 
 ### Patch Changes

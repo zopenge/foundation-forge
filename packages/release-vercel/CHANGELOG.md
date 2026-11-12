@@ -1,5 +1,20 @@
 # @openge/forge-release-vercel
 
+## 0.9.0
+
+### Minor Changes
+
+- 7572183: 移除旧 schema 2 运行状态的读取与历史校验豁免，仅接受同时绑定原宿主和历史清单的 schema 3 运行状态。配置、报告、收据、锚点与独立停止证明仍沿用各自当前的 schema，不随运行状态版本变化。
+  
+  删除 `confirmOrigin` / `--confirm-origin` 及人工确认旧运行来源的退役路径，退役仅使用运行开始时记录的原宿主证据；不再接纳旧 command-gate/result 文件。当前 schema 3 的恢复、后续开机退役、未启动尝试的显式弃置、停止证明及幂等收尾保持。
+- 329d6bb: 将发布恢复锚点、workspace 收据与需要保留的预构建输入移至持久目录 `state/forge-vercel-release/`，与 `tmp/` 临时过程材料分离。升级前须通过原工具版本在原宿主完成或退役活动运行；不自动查找、复制或降级复用旧目录中的恢复状态，移动路径和文件身份不能保持原恢复证明。
+  
+  仓库上下文发现默认忽略新的 `tmp/` 临时目录，避免将生成过程材料重新收集为源码。
+
+### Patch Changes
+
+- 67d7e9e: 部署 CLI 的私有配置和缓存使用执行 checkout 内的 `tmp/forge-vercel-release/`，不再随保留上传输入落入持久状态目录。临时根缺失时现场创建，并在创建与回收时核对路径链和目录身份；清理 scratch 不删除持久制品或发布恢复证据。
+
 ## 0.8.1
 
 ### Patch Changes

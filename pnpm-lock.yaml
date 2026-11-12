@@ -218,7 +218,7 @@ importers:
         specifier: workspace:0.1.1
         version: link:../generated-artifacts
       '@openge/forge-source-snapshot':
-        specifier: workspace:0.2.2
+        specifier: workspace:0.3.0
         version: link:../source-snapshot
       typescript:
         specifier: 6.0.3
@@ -258,7 +258,7 @@ importers:
         specifier: workspace:0.1.1
         version: link:../path-safety
       '@openge/forge-repository-files':
-        specifier: workspace:0.1.0
+        specifier: workspace:0.1.1
         version: link:../repository-files
 
   packages/text-integrity:
