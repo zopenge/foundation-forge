@@ -1,5 +1,12 @@
 # @openge/forge-source-snapshot
 
+## 0.3.1
+
+### Patch Changes
+
+- Updated dependencies [5ea4f7f]
+  - @openge/forge-generated-artifacts@0.2.0
+
 ## 0.3.0
 
 ### Minor Changes

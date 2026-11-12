@@ -1,6 +1,6 @@
 {
   "name": "@openge/forge-generated-artifacts",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Explicit generated artifact plans, deterministic comparison, and safe Node.js publication",
   "type": "module",
   "main": "./dist/index.js",
