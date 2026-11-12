@@ -19,13 +19,14 @@ Pages、OCI registry、运行服务不能伪装成对象 PUT 或 CAS。只有一
 `ArtifactOperationIntent` 包含：
 
 - `requestId`：1–128 位 ASCII 标识，首位为字母或数字，其后允许点、横线、下划线；同一持久 journal 的稳定键。
-- `sourceCommit`：完整小写 Git SHA，40 或 64 位。
+- `content: { manifestSha256 }`：实际内容清单字节的 64 位小写 SHA-256；不要求 Git 仓库。
+- 可选 `provenance: { gitRevision }`：真实的 40 或 64 位小写 Git revision；无 Git 来源时省略。
 - `target`：显式 provider、namespace、HTTP(S) origin；不允许 URL 凭据、查询参数或路径。
 - `capability`：`artifact-upload`、`deployment-create`、`deployment-ready` 或 `activation`，每个记录只描述一个明确事实。
 - `configurationSha256`：配置及适配版本的 64 位小写 SHA-256。
 - `inputs`：1–1024 个名称唯一的 `{ name, sha256, byteLength }`。名称最多 256 位，允许 ASCII 字母、数字、点、横线、下划线和斜线；长度为非负安全整数，总和也必须为安全整数。
 
-`bindArtifactOperation` 对 target、配置、来源及按名称排序的输入生成确定性 fingerprint，并冻结快照。执行时重新核对 fingerprint、target、capability 和适配配置；恢复时还须与 journal 中的完整 binding 相同。`requestId` 不应含凭据或业务敏感数据。
+`bindArtifactOperation` 对 target、配置、内容身份、可选 provenance 及按名称排序的输入生成确定性 fingerprint，并冻结快照。执行时重新核对 fingerprint、target、capability 和适配配置；恢复时还须与 journal 中的完整 binding 相同。`requestId` 不应含凭据或业务敏感数据。清单格式及真实字节绑定见[内容身份契约](artifact-content.md)。
 
 指纹只绑定声明，不证明 Git 清洁、构建来源、发布权限或远端实际字节。消费者使用源码快照、构建证明、`artifact-integrity` 或原有 `publishArtifactFiles` 验证输入。适配器必须从可信远端接口验证不可变身份、目标、来源和摘要，不能只信自填 metadata、标签字符串或 fingerprint 回显。后端无法证明时返回 `unknown`。
 
@@ -45,9 +46,13 @@ CAS 只协调同一个 requestId。不同 requestId、不同 journal 或绕过 j
 
 恢复入口只要求 `ArtifactOperationObserver`：target、capability、原操作的 configurationSha256、observe 和 close，无须实现 execute。完整 Transport 扩展此只读契约。换宿主或观察凭据时，可显式建立新的只读观察适配；仍核对原 binding，并真实验证同一远端资源，不能把配置摘要回显当成来源证明或借恢复更改执行配置。
 
+一次调用只观察一次，允许正常返回 pending。后续 HTTP 请求或进程使用同一 binding/journal 和新的 observer 继续观察，稳定 reference 与原子 CAS 约束不变。只读指不产生远端发布副作用，不限定 HTTP 方法；查询协议可以使用 POST。调度、业务进度与持久应用状态由消费者维护。
+
 ## 回执与错误
 
 `ArtifactOperationReceipt` 的独立维度：
+
+其中 `record.schemaVersion = 2`；旧记录拒绝读取，不自动迁移或重放。外层 receipt 没有独立 schema 字段。
 
 | 字段 | 含义 |
 | --- | --- |
@@ -85,7 +90,7 @@ const adapter = await createCommandArtifactOperation({
   observationKey: 'static-observer-v1',
   observation: explicitRemoteObserver,
 });
-const binding = await bindArtifactOperation({ requestId, sourceCommit, target,
+const binding = await bindArtifactOperation({ requestId, content, provenance, target,
   capability: adapter.capability, configurationSha256: adapter.configurationSha256,
   inputs: verifiedInputDescriptors });
 const receipt = await performArtifactOperation(adapter, binding, durableJournal, {
@@ -95,7 +100,7 @@ const receipt = await performArtifactOperation(adapter, binding, durableJournal,
 
 runner 必须由消费者显式配置真实 owned scope Provider；不支持时拒绝，不降级为普通 PID 观察。绝对可执行文件和 cwd、参数、按键排序的替换环境、输出策略与 observationKey 均进入配置指纹。参数/环境实际值不进入回执；低熵秘密的摘要仍应按敏感信息保护，不公开持久 journal。
 
-输出上限为每流 1–16 MiB，超限采用 fail，不允许截断后判成功。实际命令接收三个公开关联环境变量：`FORGE_ARTIFACT_REQUEST_ID`、`FORGE_ARTIFACT_FINGERPRINT`、`FORGE_ARTIFACT_SOURCE_COMMIT`。命令本身必须使用私有目录和显式配置，不能回写真实用户的工具配置；替换环境及受管作用域不构成文件系统安全沙箱。
+输出上限为每流 1–16 MiB，超限采用 fail，不允许截断后判成功。实际命令接收 `FORGE_ARTIFACT_REQUEST_ID`、`FORGE_ARTIFACT_FINGERPRINT`、`FORGE_ARTIFACT_CONTENT_MANIFEST_SHA256`，仅在提供 provenance 时接收 `FORGE_ARTIFACT_GIT_REVISION`。新旧关联键都禁止调用方自行传入，包括大小写变体；不再注入 `FORGE_ARTIFACT_SOURCE_COMMIT`。命令本身必须使用私有目录和显式配置，不能回写真实用户的工具配置；替换环境及受管作用域不构成文件系统安全沙箱。
 
 退出 0、无诊断/截断且 fingerprint 对应的作用域以 normal/closed/empty 关闭，才能产生 accepted。CLI 失败一律保留 unknown，不能据退出码猜测厂商已拒绝。显式 observation adapter 实现真实回读与 close，observationKey 随其验证语义或配置变化。适配器会关闭观察资源，且不向上返回捕获输出。
 
@@ -116,3 +121,5 @@ runner 必须由消费者显式配置真实 owned scope Provider；不支持时�
 [Pages Direct Upload](https://developers.cloudflare.com/pages/get-started/direct-upload/)、[Wrangler Pages 命令](https://developers.cloudflare.com/workers/wrangler/commands/pages/)、[OCI Distribution Specification](https://github.com/opencontainers/distribution-spec/blob/main/spec.md) 和 [crane digest](https://github.com/google/go-containerregistry/blob/main/cmd/crane/doc/crane_digest.md) 分别定义部署、CLI 与 blob/manifest 语义；本包不声称覆盖这些协议的全部实现。
 
 `package-consumer` 的两类 fixture 从真实 tarball 安装公开包。目录场景由 COS Provider 包拥有；多制品场景由 Core 包拥有，调用真正的 Node CLI 和显式 owned scope Provider，并回读 blob、manifest、静态字节和运行状态。类型 fixture 仅从消费目录解析打包后的公开声明；TypeScript 编译器使用仓库现有工具。所有运行资源由测试创建，处于 ignored `tmp/` 下并按生命周期关闭/清理。
+
+Core 另以真实 workerd 引擎和 SQLite Durable Object journal 验证跨进程恢复、pending 单次观察、CAS 竞争及严格非 Node 运行环境；具体兼容开关和证据边界见[内容身份契约](artifact-content.md)。这些资源由正式 fixture 生成，不依赖历史临时输入。

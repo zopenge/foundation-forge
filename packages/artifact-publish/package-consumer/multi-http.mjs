@@ -57,15 +57,17 @@ export async function startMultiFixture() {
         const value = releases.get(route.slice(8)); res.writeHead(value ? 200 : 404); return res.end(value?.bytes ? Buffer.from(value.bytes, 'base64') : undefined);
       }
       assert.equal(req.headers.authorization, 'Bearer fixture-only');
-      const id = req.headers['x-request-id'], fingerprint = req.headers['x-fingerprint'], sourceCommit = req.headers['x-source-commit'];
-      assert.match(id, /^[a-z]+-1$/u); assert.match(fingerprint, /^[a-f0-9]{64}$/u); assert.equal(sourceCommit, 'a'.repeat(40));
+      const id = req.headers['x-request-id'], fingerprint = req.headers['x-fingerprint'], manifestSha256 = req.headers['x-content-manifest-sha256'];
+      assert.match(id, /^[a-z]+-1$/u); assert.match(fingerprint, /^[a-f0-9]{64}$/u); assert.match(manifestSha256, /^[a-f0-9]{64}$/u);
       const claimed = journals.get(id);
       assert.equal(claimed?.writeState, 'unknown');
       assert.equal(claimed.binding.fingerprint, fingerprint);
-      const base = { id, fingerprint, sourceCommit, namespace: 'synthetic', state: 'succeeded' };
+      assert.equal(claimed.binding.content.manifestSha256, manifestSha256);
+      assert.equal(claimed.schemaVersion, 2);
+      const base = { id, fingerprint, content: { manifestSha256 }, namespace: 'synthetic', state: 'succeeded' };
       mutations++;
       if (req.method === 'POST' && route === '/deployments') {
-        assert.equal(digest(body), claimed.binding.inputs[0].sha256);
+        assert.equal(digest(body), claimed.binding.inputs.find(value => value.name === 'static').sha256);
         releases.set(id, { ...base, kind: 'static', bytes: body.toString('base64') });
         if (req.headers['x-lose-response'] === 'yes') return res.destroy();
         return json(201, { id });

@@ -28,11 +28,12 @@ export type ReceiptDraft = Omit<{
 
 export const createReceipt = (target: ArtifactPublicationTarget, plan: ArtifactActivationPlan,
   options: ArtifactPublicationOptions, operation: 'publish' | 'activate'): ReceiptDraft => ({
-  schemaVersion: 1,
+  schemaVersion: 2,
   operation,
   outcome: 'failed',
   target,
-  sourceCommit: plan.sourceCommit,
+  content: plan.content,
+  ...(plan.provenance ? { provenance: plan.provenance } : {}),
   immutablePrefix: plan.immutablePrefix,
   concurrencyControl: options.concurrencyControl,
   objects: plan.objects.map(objectReceipt),

@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { activateArtifactRelease, bindArtifactOperation, observeArtifactOperation, performArtifactOperation } from '@openge/forge-artifact-publish';
 
 // 目录消费者沿用真实 COS 协议，操作日志只包围明确的 current 激活事实。
-export async function verifyDurableActivation({ fixture, transport, plan, options }) {
+export async function verifyDurableActivation({ fixture, transport, plan, manifest, options }) {
   let saved;
   const journal = {
     async load() { return saved; },
@@ -15,9 +15,10 @@ export async function verifyDurableActivation({ fixture, transport, plan, option
   const probe = transport();
   const target = probe.target;
   await probe.close({ timeoutMilliseconds: 2_000 });
-  const binding = await bindArtifactOperation({ requestId: 'catalog-v1', sourceCommit: plan.sourceCommit,
+  const binding = await bindArtifactOperation({ requestId: 'catalog-v1', content: plan.content,
     target, capability: 'activation', configurationSha256: 'c'.repeat(64),
-    inputs: [{ name: plan.pointer.key, sha256: plan.pointer.sha256, byteLength: plan.pointer.byteLength }] });
+    inputs: [{ name: plan.pointer.key, sha256: plan.pointer.sha256, byteLength: plan.pointer.byteLength },
+      { name: 'content-manifest.json', sha256: manifest.content.manifestSha256, byteLength: manifest.bytes.byteLength }] });
   const adapter = loseResponse => {
     const reader = transport();
     let publicationClosure = { status: 'closed', activeRequests: 0 };
@@ -32,7 +33,7 @@ export async function verifyDurableActivation({ fixture, transport, plan, option
       },
       async observe(selected, reference, context) {
         assert.equal(reference ?? plan.pointer.key, plan.pointer.key);
-        assert.equal(selected.sourceCommit, plan.sourceCommit);
+        assert.deepEqual(selected.content, plan.content);
         await reader.prepare(context);
         const remote = await reader.readObject({ key: plan.pointer.key, maxBytes: plan.pointer.byteLength }, context);
         assert.equal(createHash('sha256').update(remote.bytes).digest('hex'), plan.pointer.sha256);

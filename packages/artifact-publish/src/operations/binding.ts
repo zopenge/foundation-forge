@@ -1,4 +1,5 @@
 import { calculateBytesIntegrity } from '@openge/forge-artifact-integrity';
+import { snapshotArtifactIdentity } from '../content-identity.js';
 import { snapshotTarget } from '../validation.js';
 import type { ArtifactOperationBinding, ArtifactOperationIntent } from './contracts.js';
 import { ArtifactOperationError } from './errors.js';
@@ -11,13 +12,13 @@ export const operationReference = (value: unknown): value is string => typeof va
 
 export async function bindArtifactOperation(input: ArtifactOperationIntent): Promise<ArtifactOperationBinding> {
   if (!input || typeof input.requestId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(input.requestId)
-    || typeof input.sourceCommit !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(input.sourceCommit)
     || !operationCapabilities.includes(input.capability) || !sha256(input.configurationSha256)
     || !Array.isArray(input.inputs) || input.inputs.length < 1 || input.inputs.length > 1_024) {
     throw new ArtifactOperationError('INVALID_BINDING');
   }
   let target;
-  try { target = Object.freeze(snapshotTarget(input.target)); }
+  let identity;
+  try { target = Object.freeze(snapshotTarget(input.target)); identity = snapshotArtifactIdentity(input); }
   catch { throw new ArtifactOperationError('INVALID_BINDING'); }
   const names = new Set<string>();
   let totalBytes = 0;
@@ -31,7 +32,7 @@ export async function bindArtifactOperation(input: ArtifactOperationIntent): Pro
     if (!Number.isSafeInteger(totalBytes)) throw new ArtifactOperationError('INVALID_BINDING');
     return Object.freeze({ name: value.name, sha256: value.sha256, byteLength: value.byteLength });
   }).sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
-  const intent = { requestId: input.requestId, sourceCommit: input.sourceCommit, target,
+  const intent = { requestId: input.requestId, ...identity, target,
     capability: input.capability, configurationSha256: input.configurationSha256, inputs: Object.freeze(inputs) };
   const fingerprint = (await calculateBytesIntegrity(new TextEncoder().encode(JSON.stringify(intent)))).sha256;
   return Object.freeze({ ...intent, fingerprint });

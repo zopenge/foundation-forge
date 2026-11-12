@@ -17,7 +17,7 @@ export const plan = () => {
     object('releases/a/one.bin', 'one'), object('releases/a/two.bin', 'two'),
   ];
   return {
-    sourceCommit: 'a'.repeat(40),
+    content: { manifestSha256: 'a'.repeat(64) },
     immutablePrefix: 'releases/a/',
     objects,
     pointer: { ...object('current.json', '{"release":"a"}'), contentType: 'application/json', cacheControl: 'no-store' },

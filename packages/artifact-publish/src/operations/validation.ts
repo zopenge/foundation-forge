@@ -24,13 +24,13 @@ export function requireOperationTarget(transport: ArtifactOperationObserver, bin
 export const observationStates = ['absent', 'pending', 'succeeded', 'failed', 'unknown'] as const;
 
 export async function snapshotOperationRecord(value: ArtifactOperationRecord, binding: ArtifactOperationBinding): Promise<ArtifactOperationRecord> {
-  if (!value || value.schemaVersion !== 1 || !Number.isSafeInteger(value.revision) || value.revision < 1
+  if (!value || value.schemaVersion !== 2 || !Number.isSafeInteger(value.revision) || value.revision < 1
     || value.revision >= Number.MAX_SAFE_INTEGER || !['unknown', 'accepted', 'rejected'].includes(value.writeState)
     || !observationStates.includes(value.observation) || (value.reference !== undefined && !operationReference(value.reference))
     || (value.attemptFailure !== undefined && !operationCode(value.attemptFailure))) throw new ArtifactOperationError('INVALID_JOURNAL');
   const savedBinding = await snapshotOperationBinding(value.binding);
   if (savedBinding.fingerprint !== binding.fingerprint) throw new ArtifactOperationError('BINDING_MISMATCH');
-  return Object.freeze({ schemaVersion: 1, revision: value.revision, binding: savedBinding,
+  return Object.freeze({ schemaVersion: 2, revision: value.revision, binding: savedBinding,
     writeState: value.writeState, observation: value.observation,
     ...(value.reference !== undefined ? { reference: value.reference } : {}),
     ...(value.attemptFailure !== undefined ? { attemptFailure: value.attemptFailure } : {}) });

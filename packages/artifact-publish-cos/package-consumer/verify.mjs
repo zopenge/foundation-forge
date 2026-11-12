@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import process from 'node:process';
-import { activateArtifactRelease } from '@openge/forge-artifact-publish';
+import { activateArtifactRelease, createArtifactContentManifest } from '@openge/forge-artifact-publish';
 import { publishArtifactFiles } from '@openge/forge-artifact-publish/node';
 import { createCosArtifactTransport } from '@openge/forge-artifact-publish-cos';
 import { startCosFixture } from './cos-fixture.mjs';
@@ -29,8 +29,12 @@ try {
   const object = artifact('versions/v1/实际 file%25.bin', 'immutable bytes');
   const { bytes, ...descriptor } = object;
   await writeFile(join(root, 'input.bin'), bytes);
-  const plan = { sourceCommit: 'b'.repeat(40), immutablePrefix: 'versions/v1/', objects: [descriptor],
-    pointer: artifact('current.json', '{"version":"v1"}', 'no-cache') };
+  const pointer = artifact('current.json', '{"version":"v1"}', 'no-cache');
+  const manifest = await createArtifactContentManifest({ schemaVersion: 1, files: [descriptor, pointer].map(file => ({
+    path: file.key, role: 'asset', byteLength: file.byteLength, sha256: file.sha256,
+    responseHeaders: { 'content-type': file.contentType, 'cache-control': file.cacheControl },
+  })) });
+  const plan = { content: manifest.content, immutablePrefix: 'versions/v1/', objects: [descriptor], pointer };
   const receipt = await publishArtifactFiles(transport(), root,
     { ...plan, objects: [{ ...descriptor, path: 'input.bin' }] }, options);
   assert.equal(receipt.outcome, 'succeeded');
@@ -46,7 +50,7 @@ try {
   assert.equal(rollback.outcome, 'succeeded');
   assert.deepEqual(fixture.requests.filter(value => value.method === 'PUT').map(value => value.key), ['current.json']);
 
-  await verifyDurableActivation({ fixture, transport, plan, options });
+  await verifyDurableActivation({ fixture, transport, plan, manifest, options });
 
   fixture.requests.length = 0;
   const stalled = fixture.stall(object.key);

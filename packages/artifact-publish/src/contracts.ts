@@ -1,3 +1,5 @@
+import type { ArtifactIdentity } from './content-identity.js';
+
 export interface ArtifactObjectDescriptor {
   readonly key: string;
   readonly byteLength: number;
@@ -10,8 +12,7 @@ export interface ArtifactBytes extends ArtifactObjectDescriptor {
   readonly bytes: Uint8Array;
 }
 
-export interface ArtifactActivationPlan {
-  readonly sourceCommit: string;
+export interface ArtifactActivationPlan extends ArtifactIdentity {
   readonly immutablePrefix: string;
   readonly objects: readonly ArtifactObjectDescriptor[];
   readonly pointer: ArtifactBytes;
@@ -91,12 +92,11 @@ export interface ArtifactObjectReceipt extends ArtifactObjectDescriptor {
   readonly verificationState: ArtifactVerificationState;
 }
 
-export interface ArtifactPublicationReceipt {
-  readonly schemaVersion: 1;
+export interface ArtifactPublicationReceipt extends ArtifactIdentity {
+  readonly schemaVersion: 2;
   readonly operation: 'publish' | 'activate';
   readonly outcome: 'succeeded' | 'failed';
   readonly target: ArtifactPublicationTarget;
-  readonly sourceCommit: string;
   readonly immutablePrefix: string;
   readonly concurrencyControl: ArtifactSerializationControl;
   readonly objects: readonly ArtifactObjectReceipt[];

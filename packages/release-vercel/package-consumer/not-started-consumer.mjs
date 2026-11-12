@@ -11,7 +11,18 @@ export async function verifyNotStartedConsumer({ cwd, binary, sha, execute }) {
   { cwd, encoding: 'utf8', shell: false, windowsHide: true, timeout: 180_000 });
   // 保留 Node 对测试模块注入的实验警告，不能静默屏蔽。
   if (worker.stderr) process.stderr.write(worker.stderr);
-  assert.equal(worker.status, 0, worker.error?.message ?? worker.stdout);
+  let stopped;
+  if (worker.status !== 0) {
+    // 外层时限失败也回读本 fixture 的末次持久阶段，不把超时猜作机器性能问题。
+    try {
+      const state = JSON.parse(await readFile(resolve(cwd, 'state/release-slot/state.json'), 'utf8'));
+      const command = state.processes?.at(-1);
+      stopped = { stage: state.stage, status: state.status, commands: state.processes?.length,
+        last: command && { name: command.name, status: command.status, observationComplete: command.observationComplete,
+          observations: command.observations?.length, plannedObservations: command.plan?.length } };
+    } catch (error) { stopped = { diagnosticCode: error.code ?? 'STATE_UNREADABLE' }; }
+  }
+  assert.equal(worker.status, 0, (worker.error?.message ?? worker.stdout) + JSON.stringify(stopped ?? {}));
   const report = JSON.parse(worker.stdout);
   assert.equal(report.candidateSha, sha); assert.equal(report.effects.developmentPush, 'not-attempted');
   assert.equal(report.effects.releasePush, 'not-attempted');

@@ -4,6 +4,7 @@ import type {
   ArtifactPublicationTarget,
 } from './contracts.js';
 import { ArtifactPublicationError } from './errors.js';
+import { snapshotArtifactIdentity } from './content-identity.js';
 
 const positiveInteger = (value: unknown): value is number => Number.isSafeInteger(value) && Number(value) > 0;
 const hasControl = (value: string) => [...value].some(character => {
@@ -88,11 +89,11 @@ export function snapshotPlan(input: ArtifactActivationPlan, options: ArtifactPub
   plan: ArtifactActivationPlan;
   uploads: readonly ArtifactBytes[] | undefined;
 } {
-  if (!input || typeof input.sourceCommit !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(input.sourceCommit)
-    || typeof input.immutablePrefix !== 'string' || !input.immutablePrefix.endsWith('/')
+  if (!input || typeof input.immutablePrefix !== 'string' || !input.immutablePrefix.endsWith('/')
     || !Array.isArray(input.objects) || input.objects.length === 0 || input.objects.length > 10_000) {
     throw new ArtifactPublicationError('INVALID_PLAN');
   }
+  const identity = snapshotArtifactIdentity(input);
   const prefix = `${objectKey(input.immutablePrefix.slice(0, -1))}/`;
   const objects = input.objects.map(value => descriptor(value, options.maxObjectBytes));
   const pointer = descriptor(input.pointer, options.maxPointerBytes);
@@ -110,7 +111,7 @@ export function snapshotPlan(input: ArtifactActivationPlan, options: ArtifactPub
   }
   return {
     plan: {
-      sourceCommit: input.sourceCommit, immutablePrefix: prefix, objects,
+      ...identity, immutablePrefix: prefix, objects,
       pointer: snapshotBytes(input.pointer, pointer),
     },
     uploads: operation === 'publish' ? input.objects.map((value, index) => {
