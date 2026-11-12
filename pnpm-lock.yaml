@@ -123,6 +123,9 @@ importers:
       '@openge/forge-path-safety':
         specifier: workspace:0.1.1
         version: link:../path-safety
+      koffi:
+        specifier: 3.3.3
+        version: 3.3.3
 
   packages/json-lines: {}
 

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import process from 'node:process';
 import { defineGeneratedArtifactPlan, compareGeneratedArtifactSnapshot } from '@openge/forge-generated-artifacts';
 import { inspectGeneratedArtifacts, publishGeneratedArtifacts } from '@openge/forge-generated-artifacts/node';
+import { verifyDurableFilesystem } from './durable.mjs';
 
 const plan = defineGeneratedArtifactPlan({ artifacts: [{ path: 'nested/output', content: 'hi' }], retiredPaths: ['old'] });
 assert.equal(compareGeneratedArtifactSnapshot(plan, [{ path: 'nested/output', content: new Uint8Array([104, 105]) }]).ok, true);
@@ -24,3 +25,4 @@ const browser = spawnSync(process.execPath, ['--conditions=browser', '--input-ty
   await assert.rejects(import('@openge/forge-generated-artifacts/node'), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });
 `], { cwd: process.cwd(), encoding: 'utf8', windowsHide: true });
 assert.equal(browser.status, 0, browser.stdout + browser.stderr);
+await verifyDurableFilesystem();

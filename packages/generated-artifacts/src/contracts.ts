@@ -38,6 +38,9 @@ export const generatedArtifactErrorCodes = {
   writeFailed: 'GENERATED_ARTIFACT_WRITE_FAILED',
   removeFailed: 'GENERATED_ARTIFACT_REMOVE_FAILED',
   invalidOptions: 'GENERATED_ARTIFACT_INVALID_OPTIONS',
+  durabilityUnsupported: 'GENERATED_ARTIFACT_DURABILITY_UNSUPPORTED',
+  durabilityUnknown: 'GENERATED_ARTIFACT_DURABILITY_UNKNOWN',
+  destinationOccupied: 'GENERATED_ARTIFACT_DESTINATION_OCCUPIED',
 } as const;
 export type GeneratedArtifactErrorCode = typeof generatedArtifactErrorCodes[keyof typeof generatedArtifactErrorCodes];
 export interface GeneratedArtifactDiagnostic {
