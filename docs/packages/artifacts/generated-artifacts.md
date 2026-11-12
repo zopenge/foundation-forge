@@ -96,7 +96,7 @@ Linux 使用目录描述符 `fsync`。Windows 使用 `CreateFileW` 的 `GENERIC_
 
 Windows 的 [CreateFileW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew) 描述目录句柄与缓存标志，[FlushFileBuffers](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-flushfilebuffers) 定义写入句柄的缓冲刷新，[File Caching](https://learn.microsoft.com/en-us/windows/win32/fileio/file-caching) 说明元数据也须刷新。[MS-FSA §2.1.5.7](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-fsa/0de7dc40-9627-437e-a4df-c4696cdc3d02) 定义稳定存储及目录结构同步，[产品说明 note 80](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-fsa/4e3695bd-7574-4f24-a223-b4679c065b63) 将目录结构保证限定为 NTFS。本适配对本地 NTFS 的保证由这些 Win32 操作与文件系统语义组合得出；不将目录 API 示例列表当作禁止，也不以原生调用返回成功或普通进程重启代替物理掉电实验。
 
-调用方须控制根、祖先目录和相关文件的写入/重命名权限，协调其他写入者。适配会拒绝可见 symlink/junction，Windows 还核对实际打开的目录；它不是针对恶意并发路径替换的沙箱。根及根以上的既有目录链由调用方保证已持久建立；本 API 不向授权根以外创建目录或同步整个卷。跨卷、网络文件系统、自动重试、权限修复和系统设置更改均不包含在内。
+调用方须控制根、祖先目录和相关文件的写入/重命名权限，协调其他写入者。适配会拒绝可见 symlink/junction，Windows 还核对实际打开的目录；它不是针对恶意并发路径替换的沙箱。根及根以上的既有目录链由调用方保证已持久建立；`ensureDirectory(rootDirectory)` 只重新确认根内容中的目录项，不承诺根本身在其父目录中的名称绑定。不能将上次 unknown 创建后仍存在的子目录直接提升为持久根；应回到原已稳定的授权锚点，传入完整相对目录链逐层确认。外部新状态树同样须显式选择持久父锚，不能以逃逸后的 realpath 替代原可信根。本 API 不向授权根以外创建目录或同步整个卷。跨卷、网络文件系统、自动重试、权限修复和系统设置更改均不包含在内。
 
 ### 失败与恢复
 
