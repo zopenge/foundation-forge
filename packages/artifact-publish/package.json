@@ -1,6 +1,6 @@
 {
   "name": "@openge/forge-artifact-publish",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Provider-neutral immutable object publication and verified pointer activation",
   "type": "module",
   "main": "./dist/index.js",
