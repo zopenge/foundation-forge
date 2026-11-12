@@ -1,4 +1,5 @@
 import type { ArtifactPublicationTarget, ArtifactRequestContext, ArtifactTransportClosure } from '../contracts.js';
+import type { ArtifactIdentity } from '../content-identity.js';
 
 export type ArtifactOperationCapability = 'artifact-upload' | 'deployment-create' | 'deployment-ready' | 'activation';
 export interface ArtifactOperationInput {
@@ -6,9 +7,8 @@ export interface ArtifactOperationInput {
   readonly sha256: string;
   readonly byteLength: number;
 }
-export interface ArtifactOperationIntent {
+export interface ArtifactOperationIntent extends ArtifactIdentity {
   readonly requestId: string;
-  readonly sourceCommit: string;
   readonly target: ArtifactPublicationTarget;
   readonly capability: ArtifactOperationCapability;
   readonly configurationSha256: string;
@@ -27,7 +27,7 @@ export interface ArtifactOperationObservation {
   readonly reference?: string;
 }
 export interface ArtifactOperationRecord {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 2;
   readonly revision: number;
   readonly binding: ArtifactOperationBinding;
   readonly writeState: 'unknown' | 'accepted' | 'rejected';

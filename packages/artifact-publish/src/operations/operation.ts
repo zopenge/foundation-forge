@@ -65,7 +65,7 @@ async function runOperation(source: OperationSource, input: ArtifactOperationBin
     };
 
     if (source.mode === 'perform') {
-      const claim: ArtifactOperationRecord = Object.freeze({ schemaVersion: 1, revision: 1, binding,
+      const claim: ArtifactOperationRecord = Object.freeze({ schemaVersion: 2, revision: 1, binding,
         writeState: 'unknown', observation: 'unknown' });
       await persist(claim, 0);
       fallback = 'PROVIDER_FAILED';

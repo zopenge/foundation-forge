@@ -4,8 +4,8 @@ Provider-neutral publication of immutable objects, byte verification, and last-s
 
 ## Entries
 
-- `@openge/forge-artifact-publish`: `publishArtifactRelease`, `activateArtifactRelease`, contracts, and `ArtifactPublicationError`. No Node-only imports.
-- `@openge/forge-artifact-publish/node`: `publishArtifactFiles` and file-plan types. Node.js 22.14+; excluded from browser resolution.
+- `@openge/forge-artifact-publish`: object publication, content manifests, durable operation binding/execution/observation, contracts, and structured errors. No Node-only imports.
+- `@openge/forge-artifact-publish/node`: `publishArtifactFiles`, `createCommandArtifactOperation`, and Node-specific types. Node.js 22.14+; excluded from browser resolution.
 
 An explicit Provider supplies storage; Core never selects one or reads credentials from the environment.
 
@@ -15,7 +15,8 @@ An explicit Provider supplies storage; Core never selects one or reads credentia
 import { publishArtifactRelease } from '@openge/forge-artifact-publish';
 
 const receipt = await publishArtifactRelease(transport, {
-  sourceCommit, // Full lowercase Git SHA, 40 or 64 hex characters.
+  content: { manifestSha256 }, // SHA-256 of the actual content manifest bytes.
+  // provenance: { gitRevision }, // Optional actual Git revision, never fabricated.
   immutablePrefix: `versions/${releaseId}/`,
   objects: [{
     key: `versions/${releaseId}/bundle.bin`, bytes, byteLength: bytes.byteLength,
@@ -40,7 +41,9 @@ The caller must serialize every writer for the pointer, including activation/rol
 
 Local bytes are snapshotted and validated before storage writes. Existing objects are reused only when actual remote bytes, SHA-256, length, Content-Type, and Cache-Control match. After every object verifies, the pointer is replaced and read back. A successful receipt also requires confirmed resource closure.
 
-`activateArtifactRelease(transport, plan, options)` takes the same plan with object descriptors instead of bytes. It verifies existing objects and replaces only the pointer. It does not upload missing objects. Pointer contents, signatures, trust policy, version ordering, and source provenance remain the caller's responsibility; the receipt records the supplied commit without proving it.
+`activateArtifactRelease(transport, plan, options)` takes the same plan with object descriptors instead of bytes. It verifies existing objects and replaces only the pointer. It does not upload missing objects. Pointer contents, signatures, trust policy, version ordering, and source provenance remain the caller's responsibility; the receipt records declared content identity and optional provenance without authenticating their origin.
+
+`createArtifactContentManifest({ schemaVersion: 1, files })` creates canonical UTF-8 manifest bytes and their SHA-256 content identity. Entries bind paths, lengths, digests, asset response headers and control files. The caller must verify actual payload bytes. See the [content identity contract](../../docs/packages/artifacts/artifact-content.md) for canonicalization, limits and migration.
 
 ## Files and ownership
 
@@ -62,7 +65,7 @@ See the [maintenance guide](../../docs/packages/artifacts/artifact-publish.md) f
 
 `bindArtifactOperation`, `performArtifactOperation`, and `observeArtifactOperation`
 also support a single backend operation independently of object storage. They bind
-the request ID, target, source commit, capability, configuration digest, and sorted
+the request ID, target, content identity, optional Git provenance, capability, configuration digest, and sorted
 artifact descriptors into a SHA-256 fingerprint. Supported facts are
 `artifact-upload`, `deployment-create`, `deployment-ready`, and `activation`.
 They are separate facts; an accepted upload never implies a ready deployment or
@@ -84,16 +87,22 @@ import {
 } from '@openge/forge-artifact-publish';
 
 const binding = await bindArtifactOperation({
-  requestId: 'release-42-static', sourceCommit,
+  requestId: 'release-42-static', content: preparedManifest.content,
   target: adapter.target, capability: adapter.capability,
   configurationSha256: adapter.configurationSha256,
-  inputs: [{ name: 'static-tree', sha256: treeDigest, byteLength: treeBytes }],
+  inputs: [
+    { name: 'static-tree', sha256: treeDigest, byteLength: treeBytes },
+    { name: 'content-manifest.json', sha256: preparedManifest.content.manifestSha256,
+      byteLength: preparedManifest.bytes.byteLength },
+  ],
 });
 const limits = { timeoutMilliseconds: 300_000, closeTimeoutMilliseconds: 5_000 };
 const receipt = await performArtifactOperation(adapter, binding, journal, limits);
 // A later process uses the same binding and journal, with a fresh adapter:
 const recovered = await observeArtifactOperation(freshAdapter, binding, journal, limits);
 ```
+
+Each call observes once and can return `pending`. Later requests use a fresh observer with the same binding, durable journal and stable remote reference. Scheduling and application progress remain consumer-owned.
 
 An adapter must independently verify remote target, identity, source and artifact
 bytes/digests before returning `succeeded`; echoing a caller-supplied fingerprint
@@ -109,7 +118,9 @@ version key. It uses an owned process scope bound to the operation fingerprint.
 Exit zero with confirmed normal scope closure means `accepted`; remote readiness
 still requires observation. Unsupported scopes fail without a fallback. Commands
 receive `FORGE_ARTIFACT_REQUEST_ID`, `FORGE_ARTIFACT_FINGERPRINT`, and
-`FORGE_ARTIFACT_SOURCE_COMMIT`. Parameters, environment values, command output and
+`FORGE_ARTIFACT_CONTENT_MANIFEST_SHA256`, plus `FORGE_ARTIFACT_GIT_REVISION` only when supplied.
+Callers cannot provide these association keys or the retired `FORGE_ARTIFACT_SOURCE_COMMIT`
+in their replacement environment, regardless of casing. Parameters, environment values, command output and
 raw exception causes are excluded from receipts. Keep secrets out of recorded
 identifiers, targets, references and descriptors.
 
@@ -118,6 +129,8 @@ identifiers, targets, references and descriptors.
 separately. `journalState: 'unknown'` means the receipt contains an attempted
 record whose persistence is unconfirmed. Recovery preserves `attemptFailure`.
 There are no automatic retries, redeployments, rollback, or business registration.
+
+Operation records and object publication receipts use schema version 2. Legacy Git-only inputs and old operation records are rejected; unknown attempts are never automatically migrated or replayed.
 
 The [operation and migration guide](../../docs/packages/artifacts/artifact-operations.md)
 defines provider obligations, error semantics, examples and acceptance boundaries.

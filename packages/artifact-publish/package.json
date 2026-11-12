@@ -6,10 +6,22 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
-    "./node": { "types": "./dist/node.d.ts", "browser": null, "import": "./dist/node.js" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "browser": null,
+      "import": "./dist/node.js"
+    }
   },
-  "files": ["dist", "README.md", "LICENSE", "NOTICE"],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "lint": "eslint . --max-warnings 0",
@@ -18,19 +30,29 @@
     "test:coverage": "vitest run --coverage"
   },
   "sideEffects": false,
-  "engines": { "node": ">=22.14.0" },
+  "engines": {
+    "node": ">=22.14.0"
+  },
   "license": "Apache-2.0",
-  "publishConfig": { "access": "public" },
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/zopenge/foundation-forge.git",
     "directory": "packages/artifact-publish"
   },
   "homepage": "https://github.com/zopenge/foundation-forge#readme",
-  "bugs": { "url": "https://github.com/zopenge/foundation-forge/issues" },
+  "bugs": {
+    "url": "https://github.com/zopenge/foundation-forge/issues"
+  },
   "dependencies": {
     "@openge/forge-artifact-integrity": "workspace:0.1.0",
     "@openge/forge-command-runner": "workspace:0.2.0",
     "@openge/forge-path-safety": "workspace:0.1.1"
+  },
+  "devDependencies": {
+    "esbuild": "0.27.0",
+    "workerd": "1.20261112.1"
   }
 }

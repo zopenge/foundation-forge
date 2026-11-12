@@ -29,7 +29,7 @@ const normal = (spec: CommandSpec): CommandResult => ({ identity: { pid: 1, star
   ownedScope: { status: 'closed', reason: 'normal', empty: true, rootIdentity: { pid: 1, startToken: 'fixture' },
     scopeId: 'scope-1', binding: spec.ownedScope?.binding ?? '', observedAt: '2026-01-01T00:00:00Z' } });
 
-async function setup(client: CommandRunner) {
+async function setup(client: CommandRunner, gitRevision?: string) {
   const adapter = await createCommandArtifactOperation({ target, capability: 'deployment-create', command,
     maxOutputBytesPerStream: 1024, observationKey: 'static-v1', runner: client,
     observation: {
@@ -37,7 +37,8 @@ async function setup(client: CommandRunner) {
       async close() { return { status: 'closed', activeRequests: 0 }; },
     } });
   const binding = await bindArtifactOperation({ requestId: 'command-1', target, capability: 'deployment-create',
-    configurationSha256: adapter.configurationSha256, sourceCommit: 'a'.repeat(40),
+    configurationSha256: adapter.configurationSha256, content: { manifestSha256: 'b'.repeat(64) },
+    ...(gitRevision ? { provenance: { gitRevision } } : {}),
     inputs: [{ name: 'static', sha256: 'b'.repeat(64), byteLength: 1 }] });
   return { adapter, binding };
 }
@@ -49,6 +50,9 @@ describe('explicit command operation adapter', () => {
       expect(spec.environment?.mode).toBe('replace');
       expect(spec.environment?.values?.EXPLICIT_SECRET).toBe('never-in-receipt');
       expect(spec.environment?.values?.FORGE_ARTIFACT_REQUEST_ID).toBe('command-1');
+      expect(spec.environment?.values?.FORGE_ARTIFACT_CONTENT_MANIFEST_SHA256).toBe('b'.repeat(64));
+      expect(spec.environment?.values).not.toHaveProperty('FORGE_ARTIFACT_SOURCE_COMMIT');
+      expect(spec.environment?.values).not.toHaveProperty('FORGE_ARTIFACT_GIT_REVISION');
       expect(spec.ownedScope?.binding).toMatch(/^[a-f0-9]{64}$/u);
       expect(spec.signal).toBeInstanceOf(AbortSignal);
     }));
@@ -58,6 +62,23 @@ describe('explicit command operation adapter', () => {
     expect(receipt.closure.status).toBe('closed');
     expect(JSON.stringify(receipt)).not.toContain('never-in-receipt');
   });
+
+  it('passes real optional Git provenance separately from content identity', async () => {
+    const { adapter, binding } = await setup(runner(normal, spec => {
+      expect(spec.environment?.values?.FORGE_ARTIFACT_GIT_REVISION).toBe('a'.repeat(40));
+      expect(spec.environment?.values?.FORGE_ARTIFACT_CONTENT_MANIFEST_SHA256).toBe('b'.repeat(64));
+    }), 'a'.repeat(40));
+    expect((await performArtifactOperation(adapter, binding, store(), options)).outcome).toBe('pending');
+  });
+
+  it.each(['FORGE_ARTIFACT_GIT_REVISION', 'forge_artifact_source_commit', 'FORGE_ARTIFACT_CONTENT_MANIFEST_SHA256'])(
+    'rejects a caller-supplied reserved association variable: %s', async key => {
+    await expect(createCommandArtifactOperation({ target, capability: 'deployment-create',
+      command: { ...command, environment: { [key]: 'forged' } }, maxOutputBytesPerStream: 1024,
+      observationKey: 'v1', runner: runner(normal), observation: {
+        async observe() { throw Error('unreachable'); }, async close() { return { status: 'closed', activeRequests: 0 }; },
+      } })).rejects.toMatchObject({ code: 'INVALID_BINDING' });
+    });
 
   it.each(['exit', 'output-overflow', 'timeout', 'scope'])('does not promote a %s failure to rejection or remote success', async kind => {
     const { adapter, binding } = await setup(runner(spec => {
@@ -100,7 +121,7 @@ describe('explicit command operation adapter', () => {
     const adapter = await createCommandArtifactOperation({ target, capability: 'deployment-create', command,
       maxOutputBytesPerStream: 1024, observationKey: 'v1', runner: client,
       observation: { async observe() { throw Error('unreachable'); }, async close() { closed++; return { status: 'closed', activeRequests: 0 }; } } });
-    const binding = await bindArtifactOperation({ requestId: 'cancel-1', target, capability: 'deployment-create', sourceCommit: 'a'.repeat(40),
+    const binding = await bindArtifactOperation({ requestId: 'cancel-1', target, capability: 'deployment-create', content: { manifestSha256: 'b'.repeat(64) },
       configurationSha256: adapter.configurationSha256, inputs: [{ name: 'static', sha256: 'b'.repeat(64), byteLength: 1 }] });
     const controller = new AbortController();
     const operation = performArtifactOperation(adapter, binding, store(), { ...options, closeTimeoutMilliseconds: 20, signal: controller.signal });

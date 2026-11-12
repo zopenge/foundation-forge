@@ -9,7 +9,8 @@ describe('immutable artifact publication', () => {
 
     await expect(publishArtifactRelease(transport, input, options)).resolves.toMatchObject({
       outcome: 'succeeded',
-      sourceCommit: 'a'.repeat(40),
+      schemaVersion: 2,
+      content: { manifestSha256: 'a'.repeat(64) },
       target: transport.target,
       pointer: { key: 'current.json', writeState: 'accepted', verificationState: 'succeeded' },
       closure: { status: 'closed', activeRequests: 0 },
@@ -40,7 +41,7 @@ describe('immutable artifact publication', () => {
   });
 
   it.each([
-    ['short source commit', (input: ReturnType<typeof plan>) => { input.sourceCommit = 'main'; }],
+    ['invalid content identity', (input: ReturnType<typeof plan>) => { input.content.manifestSha256 = 'main'; }],
     ['escaping prefix', (input: ReturnType<typeof plan>) => { input.immutablePrefix = '../'; }],
     ['outside object', (input: ReturnType<typeof plan>) => { input.objects[0].key = 'other/one.bin'; }],
     ['pointer inside immutable prefix', (input: ReturnType<typeof plan>) => { input.pointer.key = 'releases/a/current.json'; }],

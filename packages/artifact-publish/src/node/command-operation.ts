@@ -33,6 +33,7 @@ export async function createCommandArtifactOperation(input: CommandArtifactOpera
     || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(input.observationKey)
     || !Number.isSafeInteger(input.maxOutputBytesPerStream) || input.maxOutputBytesPerStream < 1
     || input.maxOutputBytesPerStream > 16_777_216 || !input.command.environment
+    || Object.keys(input.command.environment).some(key => /^FORGE_ARTIFACT_(?:REQUEST_ID|FINGERPRINT|SOURCE_COMMIT|CONTENT_MANIFEST_SHA256|GIT_REVISION)$/iu.test(key))
     || typeof input.runner?.start !== 'function' || typeof input.observation?.observe !== 'function'
     || typeof input.observation?.close !== 'function') throw new ArtifactOperationError('INVALID_BINDING');
   let spec;
@@ -67,7 +68,8 @@ export async function createCommandArtifactOperation(input: CommandArtifactOpera
       running = runner.start({ ...spec, environment: { mode: 'replace', values: {
         ...spec.environment?.values,
         FORGE_ARTIFACT_REQUEST_ID: binding.requestId, FORGE_ARTIFACT_FINGERPRINT: binding.fingerprint,
-        FORGE_ARTIFACT_SOURCE_COMMIT: binding.sourceCommit,
+        FORGE_ARTIFACT_CONTENT_MANIFEST_SHA256: binding.content.manifestSha256,
+        ...(binding.provenance ? { FORGE_ARTIFACT_GIT_REVISION: binding.provenance.gitRevision } : {}),
       } }, timeoutMs: context.timeoutMilliseconds, signal: context.signal,
       ownedScope: { start: 'automatic', binding: binding.fingerprint } });
       // start() 的身份 Promise 也由此适配器接住，避免失败路径上的未处理拒绝。

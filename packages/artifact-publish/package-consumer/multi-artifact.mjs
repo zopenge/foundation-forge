@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath, URL } from 'node:url';
-import { bindArtifactOperation, observeArtifactOperation, performArtifactOperation } from '@openge/forge-artifact-publish';
+import { bindArtifactOperation, createArtifactContentManifest, observeArtifactOperation, performArtifactOperation } from '@openge/forge-artifact-publish';
 import { createCommandArtifactOperation } from '@openge/forge-artifact-publish/node';
 import { createNodeCommandRunner } from '@openge/forge-command-runner/node';
 import { createLinuxOwnedProcessScopeProvider, createPosixProcessIdentityReader,
@@ -12,11 +12,11 @@ import { createLinuxOwnedProcessScopeProvider, createPosixProcessIdentityReader,
 import { createClient, digest, startMultiFixture } from './multi-http.mjs';
 
 // 此验证明确选择已支持的测试宿主，产品代码不自动选择 Provider。
-function scopedRunner() {
+function scopedRunner(onExit) {
   assert.ok(['win32', 'linux'].includes(process.platform) && process.arch === 'x64');
   const windows = process.platform === 'win32';
   const reader = windows ? createWindowsNativeProcessIdentityReader() : createPosixProcessIdentityReader();
-  return createNodeCommandRunner({ platform: windows ? 'win32' : 'posix',
+  const runner = createNodeCommandRunner({ platform: windows ? 'win32' : 'posix',
     ownedScopeProvider: windows ? createWindowsOwnedProcessScopeProvider() : createLinuxOwnedProcessScopeProvider(),
     processControl: {
       async listProcesses({ pids, signal }) { const value = await reader.readIdentity({ pid: pids[0], signal }); return value.status === 'FOUND' ? [value.identity] : []; },
@@ -25,13 +25,19 @@ function scopedRunner() {
       async terminateProcessTree() { throw Error('owned operation must not use tree cleanup'); },
     }, terminationPolicy: { mode: 'force' }, terminationTimeoutMs: 5_000,
     identityAcquisition: { timeoutMs: 10_000, pollIntervalMs: 20 } });
+  const observer = event => { if (event.type === 'exited') onExit(event.result); };
+  return { start: spec => runner.start(spec, observer), run: spec => runner.run(spec, observer) };
 }
 
 export async function verifyMultiArtifact() {
   const root = await mkdtemp(join(process.cwd(), 'multi-'));
   const fixture = await startMultiFixture(), journalClient = createClient(fixture.endpoint);
   const limits = { timeoutMilliseconds: 30_000, closeTimeoutMilliseconds: 5_000 };
-  const runner = scopedRunner();
+  const commandFacts = [];
+  // 此处仅捕获自有、无真实凭据的 fixture 命令，用于区分未派发与真正丢响应。
+  const runner = scopedRunner(result => commandFacts.push({ exitCode: result.exitCode,
+    terminationReason: result.terminationReason, diagnostics: result.diagnostics.map(value => value.code),
+    scope: result.ownedScope?.reason, stderr: Buffer.from(result.stderr ?? []).toString('utf8').slice(0, 2048) }));
   const target = { provider: 'http-fixture', namespace: 'synthetic', endpoint: fixture.endpoint };
   const journal = {
     async load(id, context) { const result = await journalClient.call('/journal/' + id, { signal: context.signal }); assert.equal(result.status, 200); return JSON.parse(result.bytes) ?? undefined; },
@@ -46,16 +52,21 @@ export async function verifyMultiArtifact() {
   const commandPath = fileURLToPath(new URL('./multi-command.mjs', import.meta.url));
   async function prepare(kind, bytes, inputs, lose = false) {
     const path = join(root, kind + '.bin'); await writeFile(path, bytes);
+    const content = await createArtifactContentManifest({ schemaVersion: 1, files: inputs.map(input => ({
+      path: input.name, role: 'asset', byteLength: input.byteLength, sha256: input.sha256,
+      responseHeaders: { 'content-type': 'application/octet-stream', 'cache-control': 'no-cache' },
+    })) });
+    const manifestPath = join(root, kind + '-content.json'); await writeFile(manifestPath, content.bytes);
     const observer = createClient(fixture.endpoint);
     const adapter = await createCommandArtifactOperation({ target, capability: 'deployment-create', runner,
-      command: { command: process.execPath, cwd: root, args: [commandPath, fixture.endpoint, kind, path, digest(bytes), lose ? 'lose' : 'normal'], environment },
+      command: { command: process.execPath, cwd: root, args: [commandPath, fixture.endpoint, kind, path, digest(bytes), lose ? 'lose' : 'normal', manifestPath], environment },
       maxOutputBytesPerStream: 65_536, observationKey: kind + '-protocol-v1',
       observation: {
         async observe(binding, reference, context) {
           const response = await observer.call('/releases/' + binding.requestId, { signal: context.signal });
           assert.equal(response.status, 200); const value = JSON.parse(response.bytes);
           if (!value) return { state: 'absent', fingerprint: binding.fingerprint };
-          assert.equal(value.sourceCommit, binding.sourceCommit); assert.equal(value.fingerprint, binding.fingerprint);
+          assert.deepEqual(value.content, binding.content); assert.equal(value.fingerprint, binding.fingerprint);
           assert.equal(value.namespace, binding.target.namespace); assert.equal(value.kind, kind); assert.equal(value.id, reference ?? binding.requestId);
           if (kind !== 'runtime') {
             const expected = kind === 'image' ? Buffer.from(JSON.parse(bytes).manifest, 'base64') : bytes;
@@ -71,8 +82,9 @@ export async function verifyMultiArtifact() {
           return { state: value.state, fingerprint: binding.fingerprint, reference: value.id };
         }, close: () => observer.close(),
       } });
-    const binding = await bindArtifactOperation({ requestId: kind + '-1', sourceCommit: 'a'.repeat(40), target,
-      capability: 'deployment-create', configurationSha256: adapter.configurationSha256, inputs });
+    const binding = await bindArtifactOperation({ requestId: kind + '-1', content: content.content, target,
+      capability: 'deployment-create', configurationSha256: adapter.configurationSha256,
+      inputs: [...inputs, { name: 'content-manifest.json', sha256: content.content.manifestSha256, byteLength: content.bytes.byteLength }] });
     return { adapter, binding };
   }
   try {
@@ -81,6 +93,8 @@ export async function verifyMultiArtifact() {
     const first = await prepare('static', html, staticInput, true);
     await assert.rejects(performArtifactOperation(first.adapter, first.binding, journal, limits), { code: 'PROVIDER_FAILED' });
     const count = fixture.mutations();
+    assert.equal(fixture.faults.length, 0, fixture.faults.map(error => String(error)).join('\n'));
+    assert.equal(count, 1, JSON.stringify(commandFacts));
     const recovery = await prepare('static', html, staticInput, true);
     const staticReceipt = await observeArtifactOperation(recovery.adapter, recovery.binding, journal, limits);
     assert.equal(staticReceipt.outcome, 'succeeded'); assert.equal(staticReceipt.record.writeState, 'unknown');

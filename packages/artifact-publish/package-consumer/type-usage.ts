@@ -7,7 +7,7 @@ import type { CommandArtifactOperationOptions } from '@openge/forge-artifact-pub
 declare const transport: ArtifactOperationTransport;
 declare const journal: ArtifactOperationJournal;
 declare const command: CommandArtifactOperationOptions;
-const binding = await bindArtifactOperation({ requestId: 'typed-1', sourceCommit: 'a'.repeat(40),
+const binding = await bindArtifactOperation({ requestId: 'typed-1', content: { manifestSha256: 'b'.repeat(64) },
   target: transport.target, capability: transport.capability, configurationSha256: transport.configurationSha256,
   inputs: [{ name: 'payload', byteLength: 1, sha256: 'b'.repeat(64) }] });
 const options = { timeoutMilliseconds: 1000, closeTimeoutMilliseconds: 100 };

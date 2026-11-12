@@ -6,9 +6,10 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath, URL } from 'node:url';
-import { activateArtifactRelease, publishArtifactRelease } from '@openge/forge-artifact-publish';
+import { activateArtifactRelease, createArtifactContentManifest, publishArtifactRelease } from '@openge/forge-artifact-publish';
 import { publishArtifactFiles } from '@openge/forge-artifact-publish/node';
 import { verifyMultiArtifact } from './multi-artifact.mjs';
+import { verifyWorkerd } from './workerd.mjs';
 
 const artifact = (key, text) => {
   const bytes = Buffer.from(text);
@@ -42,10 +43,17 @@ const options = { concurrency: 2, timeoutMilliseconds: 5_000, closeTimeoutMillis
   maxObjectBytes: 1_024, maxTotalBytes: 4_096, maxPointerBytes: 512,
   concurrencyControl: { mode: 'external-serialization', scope: 'consumer' } };
 const object = artifact('versions/v1/object', 'actual artifact bytes');
-const plan = { sourceCommit: 'a'.repeat(40), immutablePrefix: 'versions/v1/', objects: [object],
-  pointer: { ...artifact('current.json', '{"version":"v1"}'), cacheControl: 'no-cache' } };
+const pointer = { ...artifact('current.json', '{"version":"v1"}'), cacheControl: 'no-cache' };
+const prepared = await createArtifactContentManifest({ schemaVersion: 1, files: [object, pointer].map(file => ({
+  path: file.key, role: 'asset', byteLength: file.byteLength, sha256: file.sha256,
+  responseHeaders: { 'content-type': file.contentType, 'cache-control': file.cacheControl },
+})) });
+const plan = { content: prepared.content, immutablePrefix: 'versions/v1/', objects: [object], pointer };
 const receipt = await publishArtifactRelease(transport(), plan, options);
 assert.equal(receipt.outcome, 'succeeded');
+assert.equal(receipt.schemaVersion, 2);
+assert.deepEqual(receipt.content, prepared.content);
+assert.equal('sourceCommit' in receipt, false);
 assert.deepEqual(receipt.closure, { status: 'closed', activeRequests: 0 });
 assert.ok(events.indexOf(`read:${object.key}`) < events.indexOf('pointer:current.json'));
 assert.equal(JSON.stringify(receipt).includes('actual artifact bytes'), false);
@@ -84,6 +92,7 @@ const browser = spawnSync(process.execPath, ['--conditions=browser', '--input-ty
 assert.equal(browser.status, 0, browser.stdout + browser.stderr);
 
 await verifyMultiArtifact();
+await verifyWorkerd();
 
 const types = spawnSync(process.execPath, [process.env.PACKAGE_CONSUMER_TYPESCRIPT,
   '--module', 'NodeNext', '--target', 'ES2023', '--lib', 'ES2023,DOM', '--strict', '--noEmit',

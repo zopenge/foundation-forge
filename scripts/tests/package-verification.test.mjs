@@ -423,12 +423,14 @@ test('consumer smoke directories leave bounded path space and remain distinct fo
     const packageRoot = join(root, `source-${index}`);
     const consumerScript = join(packageRoot, 'package-consumer', 'verify.mjs');
     await mkdir(join(packageRoot, 'package-consumer'), { recursive: true });
+    await writeFile(join(packageRoot, 'toolchain.txt'), `tooling-${index}`);
     const receiptPath = join(root, `receipt-${index}.json`);
     receiptPaths.push(receiptPath);
     await writeFile(consumerScript, [
       "import assert from 'node:assert/strict';",
-      "import { writeFile } from 'node:fs/promises';",
-      "import { relative } from 'node:path';",
+      "import { readFile, writeFile } from 'node:fs/promises';",
+      "import { join, relative } from 'node:path';",
+      `assert.equal(await readFile(join(process.env.PACKAGE_CONSUMER_TOOLING_ROOT, 'toolchain.txt'), 'utf8'), 'tooling-${index}');`,
       'const path = relative(process.env.PACKAGE_CONSUMER_ROOT, process.cwd());',
       // 为 smoke 自行创建的 Git checkout 留出空间，不随 npm 包名增加路径深度。
       "assert.ok(path.length <= 32, 'consumer smoke directory exhausted the path budget: ' + path);",

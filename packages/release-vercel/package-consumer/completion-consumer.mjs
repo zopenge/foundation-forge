@@ -20,8 +20,11 @@ export async function verifyCompletionConsumer({ cwd, config, git, binary }) {
   git('add', '--', 'release.config.json', 'completion-job.mjs'); git('commit', '-m', 'completion consumer');
   const sha = git('rev-parse', 'HEAD');
   let marker, promoted, promotions = 0;
+  const requests = [];
   const transport = {
     api: async path => {
+      requests.push({ operation: 'api', path, at: Date.now() });
+      if (requests.length > 20) requests.shift();
       if (path.startsWith('/v9/projects/')) return { id: 'prj_fixture', accountId: 'team_fixture', link: null,
         ...(promoted ? { lastAliasRequest: { type: 'promote', jobStatus: 'succeeded', toDeploymentId: promoted } } : {}) };
       if (path.startsWith('/v13/deployments/')) {
@@ -33,6 +36,8 @@ export async function verifyCompletionConsumer({ cwd, config, git, binary }) {
     },
     buildInfo: async url => {
       const target = new URL(url);
+      requests.push({ operation: 'buildInfo', path: target.pathname, at: Date.now() });
+      if (requests.length > 20) requests.shift();
       if (!marker) throw new Error('candidate marker missing');
       if (target.pathname === '/.well-known/forge-prebuilt.json') return marker;
       if (target.hostname === 'fixture.example.invalid') await writeFile(proof, JSON.stringify({ ...marker, deploymentId: promoted, productionUrl: 'https://fixture.example.invalid' }));
@@ -40,8 +45,17 @@ export async function verifyCompletionConsumer({ cwd, config, git, binary }) {
     },
     promote: async id => { if (id !== 'dpl_candidate') throw new Error('promotion target'); promotions++; promoted = id; },
   };
+  const progress = async () => {
+    try {
+      const state = JSON.parse(await readFile(resolve(cwd, 'state/release-slot/state.json'), 'utf8'));
+      return { stage: state.stage, status: state.status, commands: state.processes?.length,
+        last: state.processes?.slice(-2).map(command => ({ name: command.name, status: command.status,
+          identified: !!command.identity, observed: command.observationComplete })) };
+    } catch (error) { return { diagnosticCode: error.code ?? 'STATE_UNREADABLE' }; }
+  };
   const server = await serveCompletionTransport(transport);
   const run = mode => new Promise((accept, reject) => {
+    const started = Date.now();
     const child = spawn(process.execPath, [resolve(import.meta.dirname, 'completion-worker.mjs'),
       import.meta.resolve('@openge/forge-release-vercel/node'), cwd, server.endpoint, counter, mode, binary],
     { cwd, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], signal: globalThis.AbortSignal.timeout(240_000) });
@@ -52,14 +66,16 @@ export async function verifyCompletionConsumer({ cwd, config, git, binary }) {
     child.once('error', error => { failure = error; });
     child.once('close', code => {
       if (failure) { reject(failure); return; }
-      try { accept({ code, report: JSON.parse(stdout) }); } catch (error) { reject(new Error(`completion worker: ${stderr}`, { cause: error })); }
+      try { accept({ code, report: JSON.parse(stdout), elapsedMs: Date.now() - started, stderr }); }
+      catch (error) { reject(new Error(`completion worker: ${stderr}`, { cause: error })); }
     });
   });
   try {
     const published = await run('publish');
     if (published.code !== 1 || published.report.error?.code !== 'COMPLETION_FAILED' || published.report.completion?.status !== 'failed'
       || !published.report.prebuilt?.promotionVerified || published.report.processes?.status !== 'closed')
-      throw new Error(`tarball completion failure contract: ${JSON.stringify(published.report.error)}`);
+      throw new Error(`tarball completion failure contract: ${JSON.stringify({ error: published.report.error,
+        elapsedMs: published.elapsedMs, stderr: published.stderr, requests, progress: await progress() })}`);
     const receiptPath = resolve(cwd, 'state/release-slot/latest-publish.json'), receipt = await readFile(receiptPath);
     await writeFile(control, 'ok');
     const resumed = await run('cli-verify-retry'), completed = resumed.report;
@@ -67,7 +83,8 @@ export async function verifyCompletionConsumer({ cwd, config, git, binary }) {
       || completed.completion?.attempts.length !== 2 || JSON.stringify(completed.completion.attempts[0]) !== JSON.stringify(published.report.completion.attempts[0])
       || !(await readFile(receiptPath)).equals(receipt) || promotions !== 1 || Number(await readFile(counter, 'utf8')) !== 1)
       throw new Error(`tarball CLI completion retry contract: ${JSON.stringify({ error: completed.error, stage: completed.stage,
-        steps: completed.steps.slice(-3), processes: completed.processes, completion: completed.completion?.status })}`);
+        steps: completed.steps.slice(-3), processes: completed.processes, completion: completed.completion?.status,
+        elapsedMs: resumed.elapsedMs, stderr: resumed.stderr, requests, progress: await progress() })}`);
     const jobs = (await readFile(observations, 'utf8')).trim().split('\n').map(value => JSON.parse(value));
     if (jobs.length !== 2 || jobs.some(job => job.context.sourceSha !== sha || job.context.productionUrl !== selected.vercel.productionUrl
       || job.context.deploymentId !== 'dpl_candidate' || job.context.artifactSha256 !== completed.prebuilt.artifactSha256))

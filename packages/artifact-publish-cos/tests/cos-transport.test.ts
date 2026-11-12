@@ -14,7 +14,7 @@ const bytesObject = (key: string, text: string) => ({
   cacheControl: 'public,max-age=31536000,immutable',
 });
 const releasePlan = () => ({
-  sourceCommit: 'a'.repeat(40), immutablePrefix: 'releases/a/',
+  content: { manifestSha256: 'a'.repeat(64) }, immutablePrefix: 'releases/a/',
   objects: [bytesObject('releases/a/一个 %.bin', 'one'), bytesObject('releases/a/two.bin', 'two')],
   pointer: { ...bytesObject('current.json', '{"release":"a"}'), contentType: 'application/json', cacheControl: 'no-store' },
 });

@@ -9,7 +9,7 @@ import type {
 
 const target = { provider: 'fixture', namespace: 'releases', endpoint: 'https://publish.invalid' };
 const options = { timeoutMilliseconds: 1_000, closeTimeoutMilliseconds: 100 };
-const input = { requestId: 'release-1', sourceCommit: 'a'.repeat(40), target,
+const input = { requestId: 'release-1', content: { manifestSha256: 'c'.repeat(64) }, target,
   capability: 'deployment-create' as const, configurationSha256: 'b'.repeat(64),
   inputs: [{ name: 'static', sha256: 'c'.repeat(64), byteLength: 4 }] };
 
@@ -49,7 +49,7 @@ describe('durable artifact operations', () => {
     } });
     const result = await performArtifactOperation(backend.port, binding, store.port, options);
     expect(result.outcome).toBe('succeeded');
-    expect(result.record).toMatchObject({ revision: 3, writeState: 'accepted', observation: 'succeeded', reference: 'dep-1' });
+    expect(result.record).toMatchObject({ schemaVersion: 2, revision: 3, writeState: 'accepted', observation: 'succeeded', reference: 'dep-1' });
     expect(result.closure).toEqual({ status: 'closed', activeRequests: 0 });
     const repeat = transport(binding);
     await expect(performArtifactOperation(repeat.port, binding, store.port, options)).rejects.toMatchObject({ code: 'RECOVERY_REQUIRED' });
@@ -81,7 +81,7 @@ describe('durable artifact operations', () => {
   it('rejects changed source, inputs, target or command configuration before mutation', async () => {
     const binding = await bindArtifactOperation(input), store = journal();
     await performArtifactOperation(transport(binding).port, binding, store.port, options);
-    for (const changed of [{ sourceCommit: 'd'.repeat(40) }, { configurationSha256: 'd'.repeat(64) },
+    for (const changed of [{ content: { manifestSha256: 'd'.repeat(64) } }, { configurationSha256: 'd'.repeat(64) },
       { inputs: [{ name: 'static', sha256: 'd'.repeat(64), byteLength: 4 }] }]) {
       const different = await bindArtifactOperation({ ...input, ...changed });
       const backend = transport(different);
@@ -100,6 +100,17 @@ describe('durable artifact operations', () => {
     const results = await Promise.allSettled([performArtifactOperation(create(), binding, store.port, options), performArtifactOperation(create(), binding, store.port, options)]);
     expect(writes).toBe(1);
     expect(results.filter(value => value.status === 'fulfilled')).toHaveLength(1);
+  });
+
+  it('rejects legacy schema records without observing or rewriting unknown effects', async () => {
+    const binding = await bindArtifactOperation(input), backend = transport(binding);
+    const legacy = { schemaVersion: 1, revision: 1, binding, writeState: 'unknown', observation: 'unknown' };
+    let rewritten = false;
+    await expect(Reflect.apply(observeArtifactOperation, undefined, [backend.port, binding, {
+      async load() { return legacy; }, async compareAndSet() { rewritten = true; return 'stored'; },
+    }, options])).rejects.toMatchObject({ code: 'INVALID_JOURNAL' });
+    expect(backend.calls).toEqual(['close']);
+    expect(rewritten).toBe(false);
   });
 
   it('never executes after an unknown or conflicting journal claim', async () => {

@@ -11,9 +11,9 @@
 
 非对象存储的部署创建与状态观察使用独立的[制品操作契约](artifact-operations.md)，不伪装成对象 PUT。
 
-`ArtifactObjectDescriptor` 包含 `key`、`byteLength`、`sha256`、`contentType`、`cacheControl`。SHA-256 是不带前缀的 64 位十六进制；收据规范化为小写。发布计划为每个对象追加 `Uint8Array bytes`；文件计划追加便携相对 `path`。所有计划还需完整小写 Git SHA（40 或 64 位）`sourceCommit`、以 `/` 结尾的 `immutablePrefix`、带字节的小型 `pointer`。
+`ArtifactObjectDescriptor` 包含 `key`、`byteLength`、`sha256`、`contentType`、`cacheControl`。SHA-256 是不带前缀的 64 位十六进制；收据规范化为小写。发布计划为每个对象追加 `Uint8Array bytes`；文件计划追加便携相对 `path`。所有计划还需 `content: { manifestSha256 }`、以 `/` 结尾的 `immutablePrefix`、带字节的小型 `pointer`；真实 Git 来源可通过可选 `provenance: { gitRevision }` 单独记录。
 
-对象键必须属于该不可变前缀，不能重复；指针必须位于前缀之外。字节、描述符和选项在异步推进前快照；所有本地字节先校验，再调用存储。`sourceCommit` 是调用方声明，库不查 Git、不证明构建来源或签名身份。
+对象键必须属于该不可变前缀，不能重复；指针必须位于前缀之外。字节、描述符和选项在异步推进前快照；所有本地字节先校验，再调用存储。内容身份及 provenance 都是调用方声明，库不查 Git、不证明构建来源或签名身份；规范清单及迁移见[内容身份契约](artifact-content.md)。
 
 ## 调用与阶段
 
@@ -75,7 +75,7 @@ const fromFiles = await publishArtifactFiles(fileTransport, absoluteRoot, filePl
 
 ## 收据与错误
 
-`ArtifactPublicationReceipt.schemaVersion = 1`，绑定 operation、target、sourceCommit、前缀、串行声明、所有精确描述符、pointer 和 closure。每个对象分别记录 `writeState`（`not-attempted` / `accepted` / `already-exists` / `unknown`）与 `verificationState`（`pending` / `succeeded` / `failed`）。失败时 `ArtifactPublicationError` 提供稳定 code、phase、可选 key/statusCode；已建立计划的失败附带 receipt，输入早期失败可能只有 closure。
+`ArtifactPublicationReceipt.schemaVersion = 2`，绑定 operation、target、content、可选 provenance、前缀、串行声明、所有精确描述符、pointer 和 closure。每个对象分别记录 `writeState`（`not-attempted` / `accepted` / `already-exists` / `unknown`）与 `verificationState`（`pending` / `succeeded` / `failed`）。失败时 `ArtifactPublicationError` 提供稳定 code、phase、可选 key/statusCode；已建立计划的失败附带 receipt，输入早期失败可能只有 closure。
 
 `unknown` 不能解读为没有写入。尤其指针请求发出后连接断开或取消，远端可能已更新；在同一外部串行下核实远端状态，再决定续作。库不自动回滚，也不猜测成功。`accepted` 仅说明写入应答已接受，仍须查看 verification 与总 outcome。
 

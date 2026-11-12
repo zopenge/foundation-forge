@@ -4,16 +4,19 @@ import { readFile } from 'node:fs/promises';
 import process from 'node:process';
 import { createClient, digest } from './multi-http.mjs';
 
-const [endpoint, kind, file, expectedSha, lose] = process.argv.slice(2);
+const [endpoint, kind, file, expectedSha, lose, manifestPath] = process.argv.slice(2);
 const client = createClient(endpoint);
 const headers = { authorization: 'Bearer ' + process.env.PUBLISH_SECRET,
   'x-request-id': process.env.FORGE_ARTIFACT_REQUEST_ID, 'x-fingerprint': process.env.FORGE_ARTIFACT_FINGERPRINT,
-  'x-source-commit': process.env.FORGE_ARTIFACT_SOURCE_COMMIT };
+  'x-content-manifest-sha256': process.env.FORGE_ARTIFACT_CONTENT_MANIFEST_SHA256 };
 const send = async (route, bytes, method = 'POST', extra = {}) => {
   const response = await client.call(route, { method, bytes, headers: { ...headers, ...extra } });
   assert.ok([201, 202].includes(response.status));
 };
 try {
+  assert.equal(digest(await readFile(manifestPath)), process.env.FORGE_ARTIFACT_CONTENT_MANIFEST_SHA256);
+  assert.equal(process.env.FORGE_ARTIFACT_SOURCE_COMMIT, undefined);
+  assert.equal(process.env.FORGE_ARTIFACT_GIT_REVISION, undefined);
   const bytes = await readFile(file);
   assert.equal(digest(bytes), expectedSha);
   if (kind === 'static') await send('/deployments', bytes, 'POST', lose === 'lose' ? { 'x-lose-response': 'yes' } : {});

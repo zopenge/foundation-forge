@@ -25,6 +25,7 @@ const count=f.existsSync(counter)?Number(f.readFileSync(counter,'utf8')):0;f.wri
 const name=count===0?'candidate':'candidate'+(count+1);
 process.stdout.write(JSON.stringify({status:'ok',deployment:{id:'dpl_'+name,url:'https://'+name+'.vercel.app',target:'production'}}));`;
 Execution.prototype.run = function (name, check, ...rest) {
+  let apiTrace;
   if (name === 'prebuilt-create') {
     const index = check.args?.indexOf('--global-config') ?? -1;
     if (index < 0) throw new Error('fixture creation argv missing');
@@ -32,10 +33,16 @@ Execution.prototype.run = function (name, check, ...rest) {
   } else if (name === 'vercel-api' && mode === 'cli-verify-retry') {
     const index = check.args?.indexOf('api') ?? -1, path = check.args?.[index + 1];
     if (index < 0 || !path) throw new Error('fixture API argv missing');
+    // 仅记录固定 fixture API 路径及时间，区分 CLI 准备与实际 loopback 请求，不记录参数/环境。
+    apiTrace = { path, at: Date.now() };
+    process.stderr.write(JSON.stringify({ fixtureApi: 'start', ...apiTrace }) + '\n');
     const script = `const {completionRpc}=await import(process.argv[1]);const result=await completionRpc(process.argv[2],'api',[process.argv[3]],AbortSignal.timeout(30000));if(!result.ok)throw Error(result.error.code);process.stdout.write(JSON.stringify(result.value));`;
     check = { ...check, command: process.execPath, args: ['--input-type=module', '-e', script, new URL('./completion-rpc.mjs', import.meta.url).href, endpoint, path] };
   }
-  return execute.call(this, name, check, ...rest);
+  const pending = execute.call(this, name, check, ...rest);
+  if (!apiTrace) return pending;
+  return pending.finally(() => process.stderr.write(JSON.stringify({ fixtureApi: 'settled', path: apiTrace.path,
+    elapsedMs: Date.now() - apiTrace.at }) + '\n'));
 };
 if (mode === 'crash-publish-receipt') {
   const open = filesystem.promises.open;
