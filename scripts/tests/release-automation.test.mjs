@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import test from 'node:test';
+import { ensureTestTemporaryDirectory } from '../test-temporary-directory.mjs';
 
 import {
   assertReleasePreflight,
@@ -34,7 +34,9 @@ const createResponse = ({ body = '', json, status = 200 }) => ({
 });
 
 test('derives repository and registry while keeping irreducible release policy centralized', async (context) => {
-  const root = await mkdtemp(join(tmpdir(), 'foundation-forge-release-policy-'));
+  const parent = await ensureTestTemporaryDirectory(resolve(import.meta.dirname, '../..'),
+    resolve(import.meta.dirname, '../../tmp/release-tests'));
+  const root = await mkdtemp(join(parent, 'release-policy-'));
   context.after(() => rm(root, { force: true, recursive: true }));
   await writeFile(join(root, 'package.json'), JSON.stringify({
     packageManager: 'pnpm@10.33.2',

@@ -22,7 +22,7 @@ export async function runWorkspaceRelease(options: RunReleaseOptions): Promise<R
   const startedAt = new Date().toISOString();
   const steps: ReleaseStep[] = [];
   const effects: ReleaseReport['effects'] = { developmentPush: 'not-attempted', releasePush: 'not-attempted' };
-  const directory = resolve(options.cwd, '.tmp/forge-vercel-release');
+  const directory = resolve(options.cwd, 'state/forge-vercel-release');
   const reportPath = resolve(directory, 'latest-publish.json');
   let candidateSha: string | undefined, configSha256: string | undefined, result: ReleaseDeployment | undefined;
   let failure: ReleaseDiagnostic | undefined, releaseLock: OwnedLock | undefined;

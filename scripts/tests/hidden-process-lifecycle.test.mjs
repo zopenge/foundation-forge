@@ -81,7 +81,7 @@ test('hidden workspace discovery returns real package metadata', { timeout: 15_0
 });
 
 test('hidden native supervision captures output, cancels and closes its own descendant', { timeout: 30_000 }, async t => {
-  const base = resolve(repositoryRoot, '.tmp/tests'); await mkdir(base, { recursive: true });
+  const base = resolve(repositoryRoot, 'tmp/tests'); await mkdir(base, { recursive: true });
   const root = await mkdtemp(resolve(base, 'hidden-lifecycle-'));
   t.after(async () => {
     const child = relative(base, root); assert.ok(child && !child.startsWith('..') && !isAbsolute(child));

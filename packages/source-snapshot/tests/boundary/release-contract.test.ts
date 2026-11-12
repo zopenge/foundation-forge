@@ -1,13 +1,13 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { sourceTestTemporaryDirectory } from '../temporary-directory.js';
 import { afterEach, expect, test } from 'vitest';
 import { runSourceSnapshotCli } from '../../src/node.js';
 import { addCommittedFile, createRepository } from '../node-fixtures.js';
 
 const roots: string[] = [];
 const makeRoot = async (): Promise<string> => {
-  const root = await mkdtemp(join(tmpdir(), 'snapshot-release-contract-'));
+  const root = await mkdtemp(join(await sourceTestTemporaryDirectory(), 'snapshot-release-contract-'));
   roots.push(root);
   return root;
 };

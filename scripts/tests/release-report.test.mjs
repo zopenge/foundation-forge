@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import test from 'node:test';
 
 const implementation = () => import('../release-report.mjs').catch((error) => {
@@ -10,8 +10,8 @@ const binding = { commit: 'a'.repeat(40), fingerprint: 'b'.repeat(64),
   registry: 'https://registry.npmjs.org', pnpmVersion: '10.33.2' };
 const targets = [{ name: '@example/pkg', version: '1.0.0-rc.0' }];
 const fixture = async (context) => {
-  await mkdir(resolve('.tmp', 'release-tests'), { recursive: true });
-  const root = await mkdtemp(resolve('.tmp', 'release-tests', 'report-'));
+  await mkdir(resolve('tmp', 'release-tests'), { recursive: true });
+  const root = await mkdtemp(resolve('tmp', 'release-tests', 'report-'));
   context.after(() => rm(root, { recursive: true, force: true }));
   return root;
 };
@@ -24,6 +24,7 @@ test('阶段失败保存已发布结果、脱敏首错和精确续验目标', as
   report.stages.trustedPublisher = 'succeeded';
   recordReleaseFailure(report, 'consumer', Object.assign(new Error('npm_secret authorization: Bearer hidden otp 123456'), { code: 'FETCH_FAILED' }));
   const path = await writeReleaseReport(root, report);
+  assert.equal(dirname(path), resolve(root, 'state', 'release'));
   const restored = await readReleaseReport(root, path);
   assert.equal(restored.targets[0].publish, 'succeeded');
   assert.equal(restored.stages.trustedPublisher, 'succeeded');

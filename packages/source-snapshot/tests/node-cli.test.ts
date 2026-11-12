@@ -1,5 +1,5 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { sourceTestTemporaryDirectory } from './temporary-directory.js';
 import { join } from 'node:path';
 import { afterEach, expect, onTestFailed, test } from 'vitest';
 import { runSourceSnapshotCli } from '../src/node.js';
@@ -11,7 +11,7 @@ afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, {
 const makeConfig = async () => {
   const source = await createRepository(); roots.push(source);
   await addCommittedFile(source, 'src/a.ts', 'export const TOP_SECRET_SOURCE_MARKER = 1\n');
-  const base = await mkdtemp(join(tmpdir(), 'snapshot-cli-')); roots.push(base);
+  const base = await mkdtemp(join(await sourceTestTemporaryDirectory(), 'snapshot-cli-')); roots.push(base);
   const target = join(base, 'target'); const state = join(base, 'state');
   await Promise.all([mkdir(target), mkdir(state)]);
   const configPath = join(base, 'source-snapshot.config.mjs');
@@ -51,7 +51,7 @@ test('CLI forwards the explicit checked-out submodule head policy', async () => 
   await runGit(source, ['commit', '--quiet', '-am', 'submodule']);
   await writeFile(join(source, 'modules/lib/nested.ts'), 'changed\n', 'utf8');
   await runGit(join(source, 'modules/lib'), ['add', 'nested.ts']); await runGit(join(source, 'modules/lib'), ['commit', '--quiet', '-m', 'drift']);
-  const base = await mkdtemp(join(tmpdir(), 'snapshot-cli-submodule-')); roots.push(base);
+  const base = await mkdtemp(join(await sourceTestTemporaryDirectory(), 'snapshot-cli-submodule-')); roots.push(base);
   const target = join(base, 'target'); const state = join(base, 'state'); await Promise.all([mkdir(target), mkdir(state)]);
   const configPath = join(base, 'source-snapshot.config.mjs');
   await writeFile(configPath, `export default ${JSON.stringify({ projectId:'fixture-project',policyVersion:'1',sourceRoot:source,targetRoot:target,lockPath:join(state,'publish.lock'),ownerId:'fixture-owner',submoduleHeadPolicy:'allow-checked-out',policy:{textExtensions:['.ts'],textBasenames:['.gitignore','.gitmodules']},pack:{targetObjectBytes:4096,maxObjectBytes:8192,maxObjectCount:50,maxObjectBytesTotal:100000} })};\nexport const groupForPath = path => 'root';\n`, 'utf8');
@@ -79,7 +79,7 @@ test('CLI returns blocked exit code without exposing secret content', async () =
   expect(JSON.parse(output).secretFindingCount).toBe(1);
 });
 test('CLI rejects unknown options and missing config deterministically', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'snapshot-cli-errors-')); roots.push(root);
+  const root = await mkdtemp(join(await sourceTestTemporaryDirectory(), 'snapshot-cli-errors-')); roots.push(root);
   const unknown = runtime(root);
   expect((await runSourceSnapshotCli(['plan','--unknown'], unknown.context)).exitCode).toBe(1);
   expect(unknown.stderr.join('')).toContain('INVALID_INPUT');
@@ -91,7 +91,7 @@ test('CLI rejects unknown options and missing config deterministically', async (
 test('CLI forwards configured managed-store publication budgets', async () => {
   const source = await createRepository(); roots.push(source);
   await addCommittedFile(source, 'src/a.ts', 'export const budgeted = 1\n');
-  const base = await mkdtemp(join(tmpdir(), 'snapshot-cli-store-budget-')); roots.push(base);
+  const base = await mkdtemp(join(await sourceTestTemporaryDirectory(), 'snapshot-cli-store-budget-')); roots.push(base);
   const target = join(base, 'target'); const state = join(base, 'state');
   await Promise.all([mkdir(target), mkdir(state)]);
   const configPath = join(base, 'source-snapshot.config.mjs');

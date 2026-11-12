@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { sourceTestTemporaryDirectory } from './temporary-directory.js';
 import { join } from 'node:path';
 import { afterEach, expect, test } from 'vitest';
 import { runSourceSnapshotCli } from '../src/cli.js';
@@ -8,7 +8,7 @@ import { addCommittedFile, createRepository } from './node-fixtures.js';
 
 const roots:string[]=[];const now=Date.parse('2026-09-15T00:00:00.000Z');
 afterEach(async()=>{await Promise.all(roots.splice(0).map(root=>rm(root,{recursive:true,force:true,maxRetries:5,retryDelay:50})))});
-const makeOutside=async(prefix:string)=>{const root=await mkdtemp(join(tmpdir(),prefix));roots.push(root);return root;};
+const makeOutside=async(prefix:string)=>{const root=await mkdtemp(join(await sourceTestTemporaryDirectory(),prefix));roots.push(root);return root;};
 const makeConfig=async(sourceRoot:string,targetRoot:string,stateRoot:string)=>{const config=join(await makeOutside('snapshot-cli-config-'),'config.mjs');const value=`export default {
  sourceRoot: ${JSON.stringify(sourceRoot)}, projectId: 'cli-fixture', policyVersion: '1',
  policy: { textExtensions: ['.ts'], textBasenames: ['.gitignore'], sensitiveBasenamePrefixes: ['.env.'] },

@@ -8,8 +8,8 @@ import { orderCoveragePackages, publishCoverageReports, runWorkspaceCoverage } f
 import { createTestWorkerBudget } from '../test-worker-budget.mjs';
 
 const publicationFixture = async t => {
-  await mkdir(resolve('.tmp/tests'), { recursive: true });
-  const root = await mkdtemp(resolve('.tmp/tests', 'coverage-publication-'));
+  await mkdir(resolve('tmp/tests'), { recursive: true });
+  const root = await mkdtemp(resolve('tmp/tests', 'coverage-publication-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const reports = await Promise.all(['a', 'b'].map(async name => {
     const packageRoot = resolve(root, name), logRoot = resolve(root, 'jobs', name);
@@ -76,8 +76,8 @@ test('coverage publication rolls every report back when the final summary replac
 });
 
 test('coverage publication keeps every old report when a later report cannot be copied', async t => {
-  await mkdir(resolve('.tmp/tests'), { recursive: true });
-  const root = await mkdtemp(resolve('.tmp/tests', 'coverage-publication-'));
+  await mkdir(resolve('tmp/tests'), { recursive: true });
+  const root = await mkdtemp(resolve('tmp/tests', 'coverage-publication-'));
   const cliPath = resolve(root, 'pnpm.cjs'), previousExecPath = process.env.npm_execpath;
   t.after(() => {
     if (previousExecPath === undefined) {
@@ -108,8 +108,8 @@ test('coverage publication keeps every old report when a later report cannot be 
 });
 
 test('coverage scheduling discovers test files and starts larger suites first', async () => {
-  await mkdir(resolve('.tmp/tests'), { recursive: true });
-  const root = await mkdtemp(resolve('.tmp/tests', 'coverage-order-'));
+  await mkdir(resolve('tmp/tests'), { recursive: true });
+  const root = await mkdtemp(resolve('tmp/tests', 'coverage-order-'));
   try {
     const packages = await Promise.all(['small', 'large', 'none'].map(async (name) => {
       const packageRoot = resolve(root, name);
@@ -137,8 +137,8 @@ test('coverage scheduling discovers test files and starts larger suites first', 
 });
 
 test('explicit single-worker packages share two workers without adding another package pool', async () => {
-  await mkdir(resolve('.tmp/tests'), { recursive: true });
-  const root = await mkdtemp(resolve('.tmp/tests', 'coverage-concurrency-'));
+  await mkdir(resolve('tmp/tests'), { recursive: true });
+  const root = await mkdtemp(resolve('tmp/tests', 'coverage-concurrency-'));
   try {
     const packages = await Promise.all(['one', 'two', 'three'].map(async (name) => {
       const packageRoot = resolve(root, name);
@@ -162,8 +162,8 @@ test('explicit single-worker packages share two workers without adding another p
 });
 
 test('a two-worker package excludes other packages and is reduced to one in serial mode', async () => {
-  await mkdir(resolve('.tmp/tests'), { recursive: true });
-  const root = await mkdtemp(resolve('.tmp/tests', 'coverage-weight-'));
+  await mkdir(resolve('tmp/tests'), { recursive: true });
+  const root = await mkdtemp(resolve('tmp/tests', 'coverage-weight-'));
   try {
     const packages = await Promise.all([['heavy', 2], ['small', 1], ['later', 1]].map(async ([name, coverageWorkers]) => {
       const packageRoot = resolve(root, name); await mkdir(packageRoot);

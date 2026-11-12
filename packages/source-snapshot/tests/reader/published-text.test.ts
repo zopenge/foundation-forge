@@ -8,7 +8,7 @@ import {
   readSnapshotText,
   stageSourceTextFile,
 } from '../../src/index.js';
-import type { SnapshotManifest, SnapshotObjectBytes } from '../../src/index.js';
+import type { SnapshotManifest } from '../../src/index.js';
 
 const utf8 = (value: string): Uint8Array => new TextEncoder().encode(value);
 const limits = { maxObjectBytes: 1_048_576, maxFileBytes: 16_777_216, maxTotalBytes: 67_108_864 };
@@ -72,18 +72,6 @@ test('rejects normalized-text mismatch even when object bytes match their object
   });
   await expect(readSnapshotText(tampered, objects, 'src/example.ts', limits))
     .rejects.toMatchObject({ code: 'TEXT_INTEGRITY_MISMATCH' });
-});
-
-test('legacy details remain object-verifiable but are unsupported by authenticated text reader', async () => {
-  const staged = await stageSourceTextFile({ path: 'src/legacy.ts', group: 'code', bytes: utf8('legacy\n') });
-  const packed = await buildSourceTextPackage([staged], {
-    targetObjectBytes: 4096, maxObjectBytes: 8192, maxObjectCount: 10, maxObjectBytesTotal: 100_000,
-  });
-  const manifest = await createTextSnapshotManifest({
-    projectId: 'legacy-reader', policyVersion: '1', publishedAt: 1, repositories: [], textPackage: packed,
-  });  const objects: SnapshotObjectBytes[] = packed.objects.map(object => ({ path: object.path, bytes: utf8(object.content) }));
-  await expect(readSnapshotText(manifest, objects, 'src/legacy.ts', limits))
-    .rejects.toMatchObject({ code: 'TEXT_FORMAT_UNSUPPORTED' });
 });
 
 test('rejects a forged manifest identity before reading text', async () => {

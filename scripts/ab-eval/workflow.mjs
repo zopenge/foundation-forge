@@ -13,7 +13,7 @@ import { assertToolContract, probeMcpTools } from './tool-contract.mjs';
 import { validateTransportBaseURL } from './transport-observer.mjs';
 
 const repoRoot=resolve(import.meta.dirname,'../..');
-const temporaryRoot=resolve(repoRoot,'.tmp');
+const temporaryRoot=resolve(repoRoot,'tmp');
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex').toUpperCase();
 const fail=code=>Object.assign(new Error(code),{code});
 const inside=(base,path)=>path===base||path.startsWith(base+sep);

@@ -88,7 +88,8 @@ export async function runWorkspaceCoverageBatch({ packages, context, signal, sha
     await context.run({ name: 'workspace coverage', workers, command: process.execPath,
       args,
       cwd: repositoryRoot, logRoot, env: { ...process.env, FORGE_CHECK_COVERAGE_SHARD: selection ? '1' : undefined,
-        FORGE_CHECK_COVERAGE_FULL_ORDER: !selection && context.budget.limit === 8 && workers === 6 ? '1' : undefined,
+        FORGE_CHECK_COVERAGE_FULL_ORDER: !selection && ((context.budget.limit === 4 && workers === 4)
+          || (context.budget.limit === 8 && workers === 6)) ? '1' : undefined,
         FORGE_CHECK_PACKAGE_ROOTS: JSON.stringify(selected.map(value => value.packageRoot)) } });
     const result = JSON.parse(await readFile(resolve(logRoot, 'results.json'), 'utf8'));
     if (!result.success || result.numFailedTests) throw new Error('WORKSPACE_COVERAGE_INCOMPLETE');

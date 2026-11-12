@@ -10,7 +10,7 @@ const repositoryRoot = resolve(import.meta.dirname, '../..');
 const probe = new URL('./fixtures/test-process/console-visibility.mjs', import.meta.url).href;
 
 test('hidden runners preserve file isolation and observe real exits for skipped and failed collection workers', { timeout: 45_000 }, async t => {
-  const base = resolve(repositoryRoot, '.tmp/tests'); await mkdir(base, { recursive: true });
+  const base = resolve(repositoryRoot, 'tmp/tests'); await mkdir(base, { recursive: true });
   const root = await mkdtemp(resolve(base, 'hidden-runners-'));
   const run = async () => {
   const model = await discoverWorkspacePackageModel({ repositoryRoot });

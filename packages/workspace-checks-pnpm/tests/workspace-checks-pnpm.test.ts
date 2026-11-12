@@ -7,7 +7,7 @@ import { afterEach, expect, test } from 'vitest';
 import { checkPnpmWorkspace } from '../src/index.js';
 import { runWorkspaceChecksCli } from '../src/cli-runner.js';
 
-const testRoot = resolve(import.meta.dirname, '..', '.tmp', 'tests');
+const testRoot = resolve(import.meta.dirname, '..', 'tmp', 'tests');
 const createdDirectories: string[] = [];
 
 afterEach(async () => {

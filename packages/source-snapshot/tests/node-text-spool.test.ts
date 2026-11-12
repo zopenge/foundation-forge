@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { sourceTestTemporaryDirectory } from './temporary-directory.js';
 import { join } from 'node:path';
 import { afterEach, expect, test } from 'vitest';
 import { calculateBytesIntegrity } from '@openge/forge-artifact-integrity';
@@ -12,7 +12,7 @@ afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, {
 const utf8 = (value: string): Uint8Array => new TextEncoder().encode(value);
 
 test('spools packed text objects while retaining only manifest metadata', async () => {
-  const spoolRoot = await mkdtemp(join(tmpdir(), 'source-text-spool-')); roots.push(spoolRoot);
+  const spoolRoot = await mkdtemp(join(await sourceTestTemporaryDirectory(), 'source-text-spool-')); roots.push(spoolRoot);
   const builder = await createSourceTextSpoolBuilder({
     spoolRoot,
     pack: { targetObjectBytes: 4096, maxObjectBytes: 8192, maxObjectCount: 100, maxObjectBytesTotal: 1_000_000, textFormatVersion: 2 },

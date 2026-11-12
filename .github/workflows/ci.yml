@@ -61,7 +61,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: ubuntu-24.04-coverage-${{ matrix.shard }}-${{ github.run_attempt }}
-          path: .tmp/ci-shards/
+          path: tmp/ci-shards/
           if-no-files-found: error
           include-hidden-files: true
           retention-days: 1
@@ -92,7 +92,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: windows-2025-coverage-${{ matrix.shard }}-${{ github.run_attempt }}
-          path: .tmp/ci-shards/
+          path: tmp/ci-shards/
           if-no-files-found: error
           include-hidden-files: true
           retention-days: 1
@@ -121,19 +121,21 @@ jobs:
       - run: pnpm build
       - uses: actions/download-artifact@v8
         with:
-          pattern: ${{ matrix.os }}-coverage-*-${{ github.run_attempt }}
+          pattern: ${{ matrix.os }}-coverage-*
           merge-multiple: true
-          path: .tmp/ci-shards
-      - run: pnpm check:ci --merge .tmp/ci-shards
+          path: tmp/ci-shards
+      - run: pnpm check:ci --merge tmp/ci-shards
 
   complete:
     name: Complete CI
     if: ${{ always() }}
-    needs: [verify-gates, merge]
+    needs: [verify-gates, verify, verify-windows, merge]
     runs-on: ubuntu-24.04
     steps:
       - name: Require all real gates and complete coverage
         shell: bash
         run: |
           test '${{ needs.verify-gates.result }}' = success
+          test '${{ needs.verify.result }}' = success
+          test '${{ needs.verify-windows.result }}' = success
           test '${{ needs.merge.result }}' = success

@@ -361,7 +361,7 @@ export const diagnoseEvaluation=async({runDir,reportDir})=>{
     modelCalls:postflight.modelCalls,knownCostUsd:postflight.knownCostUsd,
     pairs,arms,issues};
   if(reportDir){
-    const temp=await realpath(resolve(import.meta.dirname,'../..','.tmp'));
+    const temp=await realpath(resolve(import.meta.dirname,'../..','tmp'));
     const parent=await realpath(dirname(output));
     if(!within(temp,output)||!(parent===temp||within(temp,parent)))
       throw fail('DIAGNOSTIC_OUTPUT_OUTSIDE_TEMP');

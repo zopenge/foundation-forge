@@ -11,11 +11,11 @@ import { prebuiltConfiguration } from './prebuilt-configuration.js';
 export async function prebuiltFixture({ sha = 'a'.repeat(40), config = prebuiltConfiguration(), root: callerRoot }:
   { sha?: string; config?: ReturnType<typeof prebuiltConfiguration>; root?: string } = {}) {
   const repository = resolve(import.meta.dirname, '../../../..');
-  const base = await ensureTestTemporaryDirectory(repository, resolve(repository, '.tmp/prebuilt-tests'));
+  const base = await ensureTestTemporaryDirectory(repository, resolve(repository, 'tmp/prebuilt-tests'));
   const root = callerRoot ? await ensureTestTemporaryDirectory(repository, callerRoot) : await mkdtemp(resolve(base, 'r-'));
   const dispose = async () => { if (!callerRoot) await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); };
   const trace: string[] = [], snapshots: PrebuiltReleaseState[] = [];
-  const output = resolve(root, '.vercel/output'), uploadRoot = resolve(root, '.tmp/forge-vercel-release/prebuilt');
+  const output = resolve(root, '.vercel/output'), uploadRoot = resolve(root, 'state/forge-vercel-release/prebuilt');
   const controller = new AbortController();
   const effects: ReleaseReport['effects'] = { developmentPush: 'not-attempted', releasePush: 'not-attempted' };
   const hooks: {

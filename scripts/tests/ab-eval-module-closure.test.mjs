@@ -5,7 +5,7 @@ import test from 'node:test';
 
 import { collectRelativeModuleClosure } from '../ab-eval/module-closure.mjs';
 
-const tempRoot=resolve(import.meta.dirname,'../../.tmp');
+const tempRoot=resolve(import.meta.dirname,'../../tmp');
 test('module closure includes static imports and URL runtime dependencies',async()=>{
   await mkdir(tempRoot,{recursive:true});
   const root=await mkdtemp(resolve(tempRoot,'ab-eval-closure-'));

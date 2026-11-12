@@ -26,21 +26,6 @@ const verifyObjectIntegrity = async (value: CreateTextSnapshotManifestInput['tex
   }
 };
 
-const legacyFileDetails = (file: PackedSourceTextFile): NonNullable<SnapshotFile['details']> => ({
-  group: file.group,
-  encoding: file.encoding,
-  bom: file.bom,
-  lineCount: file.lineCount,
-  segments: file.segments.map(segment => ({
-    objectPath: segment.objectPath,
-    objectSha256: segment.objectSha256,
-    startLine: segment.startLine,
-    endLine: segment.endLine,
-    segmentIndex: segment.segmentIndex,
-    segmentCount: segment.segmentCount,
-  })),
-});
-
 const v2FileDetails = (file: PackedSourceTextFile): NonNullable<SnapshotFile['details']> => ({
   kind: 'source-text',
   formatVersion: 2,
@@ -75,8 +60,8 @@ const verifyFileIntegrity = async (
   file: PackedSourceTextFile,
   objects: ReadonlyMap<string, CreateTextSnapshotManifestInput['textPackage']['objects'][number]>,
 ): Promise<void> => {
+  if (file.textFormatVersion !== 2) throw new SourceSnapshotError('TEXT_FORMAT_UNSUPPORTED', { path: file.path, formatVersion: file.textFormatVersion });
   const text = reconstructPackedSourceText(file, objects);
-  if (file.textFormatVersion !== 2) return;
   const integrity = await calculateNormalizedTextIntegrity(text);
   if (
     integrity.normalizedSha256 !== file.normalizedSha256 ||
@@ -104,7 +89,7 @@ export const createTextSnapshotManifest = async (input: CreateTextSnapshotManife
       sha256: file.sha256,
       byteLength: file.byteLength,
       objectPaths: [...new Set(file.segments.map(segment => segment.objectPath))].sort(compareStrings),
-      details: file.textFormatVersion === 2 ? v2FileDetails(file) : legacyFileDetails(file),
+      details: v2FileDetails(file),
     })),
   });
 };

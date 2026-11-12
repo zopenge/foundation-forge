@@ -11,7 +11,7 @@ const supported = process.platform === 'win32' && process.arch === 'x64';
 
 for (const action of ['natural', 'cancel', 'deadline']) test.runIf(supported)(
   `keeps real Job closure bounded and irreversible during ${action} drain`, async () => {
-    const base = resolve(import.meta.dirname, '../../../.tmp/owned-scope-tests');
+    const base = resolve(import.meta.dirname, '../../../tmp/owned-scope-tests');
     await mkdir(base, { recursive: true });
     const root = await mkdtemp(resolve(base, 'drain-'));
     const ready = deferred(), live = deferred();

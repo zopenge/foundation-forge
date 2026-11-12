@@ -8,11 +8,11 @@ import type { RetirementHost } from '../src/node/retirement-host.js';
 
 // 自包含的历史协议输入；其中empty与文件身份是合成数据，不冒充真实OS停止证明。
 const fixture = (command: 'publish' | 'check' = 'publish') => {
-  const root = resolve(import.meta.dirname, '../../../.tmp/unstarted-retirement-fixture');
+  const root = resolve(import.meta.dirname, '../../../tmp/unstarted-retirement-fixture');
   const runId = '10000000-0000-4000-8000-000000000001', slotId = '20000000-0000-4000-8000-000000000001';
   const commandId = '30000000-0000-4000-8000-000000000001', nonce = '40000000-0000-4000-8000-000000000001';
   const config = validateReleaseConfig({ schemaVersion: 2,
-    source: { mode: 'managed-commit', slotPath: '.tmp/release-slot', maxBytes: 2 ** 31, minFreeBytes: 5 * 2 ** 30,
+    source: { mode: 'managed-commit', slotPath: 'state/release-slot', maxBytes: 2 ** 31, minFreeBytes: 5 * 2 ** 30,
       sampleIntervalMs: 250, install: { packageManager: 'pnpm' }, prepare: [] },
     git: { remote: 'origin', repository: 'github.com/fixture/repository', developmentBranch: 'dev', releaseBranch: 'main' },
     vercel: { teamId: 'team_fixture', projectId: 'prj_fixture', productionUrl: 'https://fixture.example.invalid' },
@@ -29,7 +29,7 @@ const fixture = (command: 'publish' | 'check' = 'publish') => {
       closure: { observedAt: at, exitCode: null, termination: 'termination-failure', requestedTermination: 'abort',
         ownedScope: { scopeId: '50000000-0000-4000-8000-000000000001', binding: `${runId}:${commandId}:${nonce}`,
           observedAt: at, status: 'unknown', reason: 'provider-failed', empty: true } } }] };
-  const slotPath = resolve(root, '.tmp/release-slot');
+  const slotPath = resolve(root, 'state/release-slot');
   const report = { schemaVersion: 2, command, ok: false, runId, slotId, sourceRoot: root, executionRoot: resolve(slotPath, 'checkout'),
     configPath: source.configPath, candidateSha: source.sha, configSha256: source.configSha256,
     startedAt: '2026-11-09T01:59:34.909Z', finishedAt: '2026-11-09T02:02:16.596Z', stage: 'checkout', effects, steps: [],
@@ -121,7 +121,7 @@ it('validates a same-boot archive from its complete original failure snapshot an
   expect(parseRetirementRecord(value)).toEqual(value);
   expect(value.final?.cessation).toBe('recorded-empty-unstarted-scope');
 });
-it('retains the old subsequent-boot archive rule when no new cessation tag exists', () => {
+it('requires subsequent boot evidence for ordinary retirement without an abandonment tag', () => {
   const value = archive();
   if (!value.final) throw Error('fixture final missing');
   Reflect.deleteProperty(value.final, 'cessation');
@@ -129,7 +129,7 @@ it('retains the old subsequent-boot archive rule when no new cessation tag exist
   Reflect.set(value.final.host, 'uptimeSeconds', 1);
   expect(parseRetirementRecord(sealRetirementRecord(value)).final?.host.uptimeSeconds).toBe(1);
 });
-it.each(['unknown-tag', 'operator-origin', 'host-mismatch', 'snapshot-host-mismatch', 'wrong-receipt', 'bound-root', 'wrong-run', 'wrong-slot'])(
+it.each(['unknown-tag', 'host-mismatch', 'snapshot-host-mismatch', 'wrong-receipt', 'bound-root', 'wrong-run', 'wrong-slot'])(
   'rejects a checksum-consistent but ineligible abandonment archive: %s', kind => {
     const snapshot = fixture();
     if (kind === 'wrong-receipt') mutate(snapshot, 'publish', 'report.runId', '60000000-0000-4000-8000-000000000001');
@@ -141,7 +141,6 @@ it.each(['unknown-tag', 'operator-origin', 'host-mismatch', 'snapshot-host-misma
     }
     if (kind === 'wrong-run') Reflect.set(value, 'runId', '60000000-0000-4000-8000-000000000001');
     if (kind === 'wrong-slot') Reflect.set(value, 'slotId', '60000000-0000-4000-8000-000000000001');
-    if (kind === 'operator-origin') Reflect.set(value, 'origin', 'operator-confirmed-origin');
     if (kind === 'host-mismatch') Reflect.set(value.final.host, 'hostId', 'e'.repeat(64));
     if (kind === 'snapshot-host-mismatch') {
       Reflect.set(value.host, 'hostId', 'e'.repeat(64)); Reflect.set(value.final.host, 'hostId', 'e'.repeat(64));

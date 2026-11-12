@@ -6,7 +6,7 @@ import { buildSourceTextPackage, createTextSnapshotManifest, stageSourceTextFile
 import { publishSourceSnapshot, readPublishedSourceSnapshotText } from '../src/node.js';
 import * as managed from '../src/node/managed-read.js';
 
-const scratch = fileURLToPath(new URL('../../../.tmp/', import.meta.url));
+const scratch = fileURLToPath(new URL('../../../tmp/', import.meta.url));
 const temporary = async () => { await mkdir(scratch, { recursive: true }); return mkdtemp(join(scratch, 'read-budget-')); };
 
 test('bounded managed reads reject oversized stored bytes before allocating their body', async () => {

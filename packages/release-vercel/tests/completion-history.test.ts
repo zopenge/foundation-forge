@@ -32,6 +32,7 @@ async function history() {
   const input = { schemaVersion: 1 as const, checkout: { dev: '1', ino: '1' }, git: { dev: '1', ino: '2' }, output: { dev: '1', ino: '3' },
     upload: { dev: '1', ino: '4' }, manifest: { identity: { dev: '1', ino: '5' }, sha256: 'f'.repeat(64) } };
   const original: ManagedState = { schemaVersion: 3, slotId: randomUUID(), runId, source, command: 'publish', history: [],
+    host: { platform: 'linux', hostId: 'e'.repeat(64), uptimeSeconds: 1000, bootId: '11111111-1111-4111-8111-111111111111' },
     coordinator: { pid: 1, startToken: 'protocol' }, stage: 'completion', status: 'closed', processes: [failedCommand],
     effects: { developmentPush: 'not-attempted', releasePush: 'not-attempted', deploymentCreate: 'accepted', deploymentPromote: 'accepted' }, prebuilt, completion, completionInput: input };
   const retryRunId = randomUUID(), completedCommand = command(retryRunId, 0);
@@ -82,9 +83,9 @@ function retirement(state: ManagedState, publishRunId = state.completion?.public
     owner: JSON.stringify({ slotId: state.slotId, sourceRoot: source.root, configPath: source.configPath, repository: source.config.git.repository }),
     check: null, publish: null, identities: { state: identity, lock: identity, anchor: identity, owner: identity } };
   if (!context) throw new Error('completion fixture required');
-  const host = { platform: 'linux' as const, hostId: 'e'.repeat(64), uptimeSeconds: 1000, bootId: '11111111-1111-4111-8111-111111111111' };
+  const host = state.host;
   return sealRetirementRecord({ schemaVersion: 1, kind: 'interrupted-run-retirement', runId: state.runId, slotId: state.slotId,
-    snapshot, snapshotSha256: retirementDigest(snapshot), origin: 'operator-confirmed-origin', host, preparedAt: now,
+    snapshot, snapshotSha256: retirementDigest(snapshot), origin: 'recorded-run-host', host, preparedAt: now,
     final: { host: { ...host, uptimeSeconds: 20, bootId: '22222222-2222-4222-8222-222222222222' }, retiredAt: now,
       observation: { owner: 'inactive', processes: 'unknown', observedAt: now, developmentRef: { sha: source.sha, relation: 'unknown' }, releaseRef: { sha: source.sha, relation: 'unknown' } } } });
 }

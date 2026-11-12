@@ -29,7 +29,7 @@ export const publishIfNeeded = async ({ tag, bootstrap = false, model, policy,
   if (authMode === 'web' && !bootstrap) throw new Error('WEB_AUTH_BOOTSTRAP_ONLY');
   const repositoryRoot = model?.repositoryRoot ?? fileURLToPath(new URL('../', import.meta.url));
   await assertFullCheckReceipt(repositoryRoot);
-  const packDirectory = resolve(repositoryRoot, '.tmp', 'release-packs');
+  const packDirectory = resolve(repositoryRoot, 'tmp', 'release-packs');
 
   async function publishedVersions(packageName, registry) {
     const response = await globalThis.fetch(`${registry}/${encodeURIComponent(packageName)}`, {

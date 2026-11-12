@@ -1,17 +1,20 @@
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { sourceTestTemporaryDirectory } from './temporary-directory.js';
 import { join } from 'node:path';
 import { afterEach, expect, test } from 'vitest';
 import {
-  exportRepositorySnapshot,
-  planRepositorySnapshot,
+  prepareRepositorySnapshot,
+  publishPreparedSourceSnapshot,
   verifyPublishedSourceSnapshot,
   verifyRepositorySnapshotFreeze,
 } from '../src/node.js';
+import type { PreparedRepositorySnapshot, RepositorySnapshotPlanOptions, PublishSourceSnapshotOptions } from '../src/node.js';
+import { parseSourceTextDetails } from '../src/text-format.js';
 import { addCommittedFile, addFixtureSubmodule, createRepository, runGit } from './node-fixtures.js';
 
 const roots: string[] = [];
+const preparations: PreparedRepositorySnapshot[] = [];
 const now = Date.parse('2026-09-15T00:00:00.000Z');
 const policy = {
   sensitiveBasenames: ['.env'], sensitiveBasenamePrefixes: ['.env.'],
@@ -21,21 +24,35 @@ const policy = {
 const pack = { targetObjectBytes: 4096, maxObjectBytes: 8192, maxObjectCount: 50, maxObjectBytesTotal: 1_000_000 };
 const groupForPath = (path: string): string => path.startsWith('src/') ? 'src' : 'root';
 const options = (sourceRoot: string) => ({ sourceRoot, projectId: 'fixture-project', policyVersion: '1', publishedAt: now, policy, pack, groupForPath });
-const createOutside = async (prefix: string): Promise<string> => { const root = await mkdtemp(join(tmpdir(), prefix)); roots.push(root); return root; };
-afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }))); });
+const createOutside = async (prefix: string): Promise<string> => { const root = await mkdtemp(join(await sourceTestTemporaryDirectory(), prefix)); roots.push(root); return root; };
+const preparePlan = async (input: RepositorySnapshotPlanOptions) => {
+  const prepared = await prepareRepositorySnapshot({ ...input, workRoot: await createOutside('snapshot-plan-work-') });
+  preparations.push(prepared);
+  return prepared.plan;
+};
+const publishRepository = async (input: RepositorySnapshotPlanOptions & PublishSourceSnapshotOptions) => {
+  const prepared = await prepareRepositorySnapshot({ ...input, workRoot: await createOutside('snapshot-export-work-') });
+  try {
+    if (!prepared.plan.publishAllowed || prepared.plan.manifest === null) return { status: 'BLOCKED' as const, plan: prepared.plan };
+    expect((await verifyRepositorySnapshotFreeze(input, prepared.plan.freeze)).ok).toBe(true);
+    const publication = await publishPreparedSourceSnapshot({ manifest: prepared.plan.manifest, objects: prepared.objects }, input);
+    return { status: publication.status, plan: prepared.plan, publication };
+  } finally { await prepared.dispose(); }
+};
+afterEach(async () => { await Promise.all(preparations.splice(0).map(prepared => prepared.dispose())); await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }))); });
 test('plans tracked and untracked source with caller-owned policy and grouping', async () => {
   const source = await createRepository(); roots.push(source);
   await addCommittedFile(source, 'src/a.ts');
   await mkdir(join(source, 'src'), { recursive: true });
   await writeFile(join(source, 'src', 'b.ts'), 'export const b = 1\n', 'utf8');
   await writeFile(join(source, '.env.local'), 'SECRET=value\n', 'utf8');
-  const plan = await planRepositorySnapshot(options(source));
+  const plan = await preparePlan(options(source));
   expect(plan.status).toBe('READY');
   expect(plan.publishAllowed).toBe(true);
   expect(plan.includedPaths).toEqual(['.gitignore', 'src/a.ts', 'src/b.ts']);
   expect(plan.decisions.find(value => value.path === '.env.local')?.decision.ruleId).toBe('sensitive-path');
-  expect(plan.bundle?.manifest.projectId).toBe('fixture-project');
-  expect(plan.bundle?.textPackage.files.map(value => value.group)).toEqual(['root', 'src', 'src']);
+  expect(plan.manifest?.projectId).toBe('fixture-project');
+  expect(plan.manifest?.files.map(value => parseSourceTextDetails(value.details).group)).toEqual(['root', 'src', 'src']);
   expect(plan.inventory.repositories[0]?.dirty).toBe(true);
 });
 
@@ -48,17 +65,17 @@ test('plans an explicitly allowed checked-out submodule head and records gitlink
   await writeFile(join(source, 'modules/lib/nested.ts'), 'changed\n', 'utf8');
   await runGit(join(source, 'modules/lib'), ['add', 'nested.ts']); await runGit(join(source, 'modules/lib'), ['commit', '--quiet', '-m', 'drift']);
   const actualHead = (await runGit(join(source, 'modules/lib'), ['rev-parse', 'HEAD'])).trim();
-  const plan = await planRepositorySnapshot({ ...options(source), policy: { ...policy, textBasenames: [...policy.textBasenames, '.gitmodules'] }, submoduleHeadPolicy: 'allow-checked-out' });
+  const plan = await preparePlan({ ...options(source), policy: { ...policy, textBasenames: [...policy.textBasenames, '.gitmodules'] }, submoduleHeadPolicy: 'allow-checked-out' });
   expect(plan.inventory.issues).toEqual([]);
   expect(plan.reviewEntries).toEqual([]);
   expect(plan.status).toBe('READY');
-  expect(plan.bundle?.manifest.repositories).toContainEqual(expect.objectContaining({ path: 'modules/lib', head: actualHead, parentGitlink }));
+  expect(plan.manifest?.repositories).toContainEqual(expect.objectContaining({ path: 'modules/lib', head: actualHead, parentGitlink }));
 });
 
 test('freeze verification detects same-size source mutation after planning', async () => {
   const source = await createRepository(); roots.push(source);
   await writeFile(join(source, 'value.ts'), 'export const a = 1\n', 'utf8');
-  const plan = await planRepositorySnapshot(options(source));
+  const plan = await preparePlan(options(source));
   expect(plan.publishAllowed).toBe(true);
   expect((await verifyRepositorySnapshotFreeze(options(source), plan.freeze)).ok).toBe(true);
   await writeFile(join(source, 'value.ts'), 'export const a = 2\n', 'utf8');
@@ -69,18 +86,18 @@ test('freeze verification detects same-size source mutation after planning', asy
 test('blocks unknown file types and high-confidence secrets without echoing secret values', async () => {
   const source = await createRepository(); roots.push(source);
   await writeFile(join(source, 'unknown.custom'), 'opaque\n', 'utf8');
-  const first = await planRepositorySnapshot(options(source));
+  const first = await preparePlan(options(source));
   expect(first.status).toBe('BLOCKED');
   expect(first.reviewEntries.map(value => value.path)).toEqual(['unknown.custom']);
-  expect(first.bundle).toBeNull();
+  expect(first.manifest).toBeNull();
   await rm(join(source, 'unknown.custom'));
   const secret = `ghp_${'A1b'.repeat(12)}`;
   await writeFile(join(source, 'leak.ts'), `export const token = '${secret}'\n`, 'utf8');
-  const second = await planRepositorySnapshot(options(source));
+  const second = await preparePlan(options(source));
   expect(second.status).toBe('BLOCKED');
   expect(second.secretFindings).toHaveLength(1);
   expect(JSON.stringify(second).includes(secret)).toBe(false);
-  expect(second.bundle).toBeNull();
+  expect(second.manifest).toBeNull();
 });
 
 test('exports a ready repository, verifies publication and returns NO_CHANGES on repeat', async () => {
@@ -91,12 +108,12 @@ test('exports a ready repository, verifies publication and returns NO_CHANGES on
   const exportOptions = { ...options(source), targetRoot: target, lockPath: join(state, 'publish.lock'), ownerId: 'fixture-owner', protectedTopLevelDirectories: ['notes'] };
   await mkdir(join(target, 'notes'));
   await writeFile(join(target, 'notes', 'keep.txt'), 'keep', 'utf8');
-  const first = await exportRepositorySnapshot(exportOptions);
+  const first = await publishRepository(exportOptions);
   expect(first.status).toBe('LOCAL_VERIFIED');
   if (first.status === 'BLOCKED') throw new Error('unexpected blocker');
   expect((await verifyPublishedSourceSnapshot({ targetRoot: target, ownerId: 'fixture-owner', protectedTopLevelDirectories: ['notes'] })).snapshotId).toBe(first.publication.snapshotId);
   expect(await import('node:fs/promises').then(fs => fs.readFile(join(target, 'notes', 'keep.txt'), 'utf8'))).toBe('keep');
-  const second = await exportRepositorySnapshot({ ...exportOptions, publishedAt: now + 1_000 });
+  const second = await publishRepository({ ...exportOptions, publishedAt: now + 1_000 });
   expect(second.status).toBe('NO_CHANGES');
 });
 test('blocked export performs no target publication', async () => {
@@ -104,7 +121,7 @@ test('blocked export performs no target publication', async () => {
   await writeFile(join(source, 'unknown.custom'), 'opaque\n', 'utf8');
   const target = await createOutside('snapshot-pipeline-blocked-');
   const state = await createOutside('snapshot-pipeline-blocked-state-');
-  const result = await exportRepositorySnapshot({ ...options(source), targetRoot: target, lockPath: join(state, 'publish.lock'), ownerId: 'fixture-owner' });
+  const result = await publishRepository({ ...options(source), targetRoot: target, lockPath: join(state, 'publish.lock'), ownerId: 'fixture-owner' });
   expect(result.status).toBe('BLOCKED');
   expect(existsSync(join(target, '.source-snapshot-owner.json'))).toBe(false);
   expect(existsSync(join(target, '00-SOURCE-SNAPSHOT.md'))).toBe(false);

@@ -39,7 +39,7 @@ export const prepareWindowProbeFixture = async directory => {
 
 const main = async name => {
   if (process.platform !== 'win32' || !/^[a-z][a-z0-9-]{0,24}$/u.test(name ?? '')) throw new Error('Windows probe requires a short run name');
-  const evidence = await ensureTestTemporaryDirectory(repositoryRoot, resolve(repositoryRoot, '.tmp/windows-flash-investigation'));
+  const evidence = await ensureTestTemporaryDirectory(repositoryRoot, resolve(repositoryRoot, 'tmp/windows-flash-investigation'));
   const reportPath = resolve(evidence, `${name}.json`);
   const report = { name, startedAt: new Date().toISOString(), workBudgetMs: 5_000, cleanupBudgetMs: 10_000, stages: [] };
   await writeFile(reportPath, `${JSON.stringify(report)}\n`, { flag: 'wx' });

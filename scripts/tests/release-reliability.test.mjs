@@ -86,8 +86,8 @@ test('指定包只选择传递依赖闭包且保留 workspace 拓扑顺序', () 
 });
 
 test('安装与消费者检查分开执行，安装成功后 smoke 失败不重新安装', async (context) => {
-  await mkdir(resolve('.tmp', 'release-tests'), { recursive: true });
-  const root = await mkdtemp(resolve('.tmp', 'release-tests', 'consumer-'));
+  await mkdir(resolve('tmp', 'release-tests'), { recursive: true });
+  const root = await mkdtemp(resolve('tmp', 'release-tests', 'consumer-'));
   context.after(() => rm(root, { recursive: true, force: true }));
   await writeFile(resolve(root, 'pnpm-workspace.yaml'), 'packages: []\n');
   await writeFile(resolve(root, '.npmrc'), 'registry=https://registry.npmjs.org/\n');

@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { sourceTestTemporaryDirectory } from './temporary-directory.js';
 import { afterEach, expect, test } from 'vitest';
 import { buildSourceTextPackage, createTextSnapshotManifest, stageSourceTextFile } from '../src/index.js';
 import { publishSourceSnapshot, verifyPublishedSourceSnapshot } from '../src/node.js';
@@ -8,7 +8,7 @@ import { publishSourceSnapshot, verifyPublishedSourceSnapshot } from '../src/nod
 const roots: string[] = [];
 const first = <T>(values: readonly T[]): T => { const value=values[0]; if(value===undefined)throw new Error('fixture value missing'); return value; };
 
-const makeRoot = async (prefix: string): Promise<string> => { const root=await mkdtemp(join(tmpdir(),prefix)); roots.push(root); return root; };
+const makeRoot = async (prefix: string): Promise<string> => { const root=await mkdtemp(join(await sourceTestTemporaryDirectory(),prefix)); roots.push(root); return root; };
 afterEach(async()=>{await Promise.all(roots.splice(0).map(root=>rm(root,{recursive:true,force:true,maxRetries:5,retryDelay:50})))});
 const bundle = async (version='a', publishedAt=1) => {
   const staged=await stageSourceTextFile({path:'src/value.ts',group:'core',bytes:new TextEncoder().encode(`export const value = '${version}'\n`)});

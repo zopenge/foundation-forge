@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
-const testRoot = resolve(import.meta.dirname, '..', '.tmp', 'tests');
+const testRoot = resolve(import.meta.dirname, '..', 'tmp', 'tests');
 
 export const createTestDirectory = async (): Promise<string> => {
   const directory = resolve(testRoot, randomUUID());

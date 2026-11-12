@@ -1,15 +1,18 @@
-import { chmod, lstat, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { chmod, lstat, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { assertActive, ReleaseError } from './errors.js';
 import { assertPathChain } from './managed-io.js';
 
 /** umask 仅服务部署归档；CLI 配置和缓存隔离在自有目录，不能在宽掩码下创建用户级文件。 */
-export async function createPrebuiltCliContext(uploadRoot: string, teamId: string, signal?: AbortSignal) {
+export async function createPrebuiltCliContext(cwd: string, teamId: string, signal?: AbortSignal) {
   assertActive(signal);
-  const parent = dirname(uploadRoot); await assertPathChain(parent, parent); assertActive(signal);
+  const parent = resolve(cwd, 'tmp/forge-vercel-release');
+  await assertPathChain(cwd, parent); assertActive(signal);
+  await mkdir(parent, { recursive: true });
+  await assertPathChain(cwd, parent); assertActive(signal);
   const directory = await mkdtemp(resolve(parent, 'cli-')), identity = await lstat(directory, { bigint: true });
   const dispose = async () => {
-    await assertPathChain(parent, directory);
+    await assertPathChain(cwd, directory);
     const current = await lstat(directory, { bigint: true });
     if (current.dev !== identity.dev || current.ino !== identity.ino || !current.isDirectory() || current.isSymbolicLink()) throw new ReleaseError('SLOT_PATH');
     await rm(directory, { recursive: true, maxRetries: 3, retryDelay: 100 });

@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { sourceTestTemporaryDirectory } from '../temporary-directory.js';
 import { afterEach, expect, test } from 'vitest';
 import { buildSourceTextPackage, createTextSnapshotManifest, stageSourceTextFile } from '../../src/index.js';
 import { publishSourceSnapshot, verifyPublishedSourceSnapshot } from '../../src/node.js';
@@ -13,20 +13,19 @@ const first = <T>(values: readonly T[]): T => {
   return value;
 };
 const makeRoot = async (): Promise<string> => {
-  const root = await mkdtemp(join(tmpdir(), 'snapshot-reactivation-'));
+  const root = await mkdtemp(join(await sourceTestTemporaryDirectory(), 'snapshot-reactivation-'));
   roots.push(root);
   return root;
 };
 afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })));
 });
-const makeBundle = async (version: string, publishedAt: number, textFormatVersion: 1 | 2 = 2) => {
+const makeBundle = async (version: string, publishedAt: number) => {
   const staged = await stageSourceTextFile({
     path: 'src/value.ts', group: 'core', bytes: encoder.encode(`export const value = '${version}'\n`),
   });
   const textPackage = await buildSourceTextPackage([staged], {
     targetObjectBytes: 4096, maxObjectBytes: 8192, maxObjectCount: 10, maxObjectBytesTotal: 100_000,
-    textFormatVersion,
   });
   const manifest = await createTextSnapshotManifest({
     projectId: 'reactivation-fixture', policyVersion: '2', publishedAt,
@@ -101,18 +100,6 @@ test('reports explicit object and text verification levels', async () => {
   expect(text).toMatchObject({
     requestedLevel: 'text', verifiedLevel: 'text', verifiedFileCount: 1, verifiedPaths: ['src/value.ts'],
   });
-});
-test('text verification fails closed for legacy source text details', async () => {
-  const store = await fixture();
-  const legacy = await makeBundle('d', 4, 1);
-  await publishSourceSnapshot(legacy, publishOptions(store));
-  const objects = await verifyPublishedSourceSnapshot({
-    targetRoot: store.targetRoot, ownerId: store.ownerId, level: 'objects',
-  });
-  expect(objects.verifiedLevel).toBe('objects');
-  await expect(verifyPublishedSourceSnapshot({
-    targetRoot: store.targetRoot, ownerId: store.ownerId, level: 'text',
-  })).rejects.toMatchObject({ code: 'TEXT_FORMAT_UNSUPPORTED' });
 });
 test('rejects an unknown stored manifest schema version before verification', async () => {
   const store = await fixture();

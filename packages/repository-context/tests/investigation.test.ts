@@ -40,6 +40,26 @@ const readRanges = vi.fn(async (ranges: readonly SourceRef[]) => ({
 }));
 
 describe('repository investigation', () => {
+  test('默认调查直接提供可规划的证据单元', async () => {
+    const investigator = createRepositoryInvestigator({
+      corpus: corpusFixture(), readRanges, route: 'investigate',
+    });
+
+    const result = await investigator.investigate({ query: 'decodeSession' });
+
+    expect(result.evidenceUnits).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'excerpt',
+        source: expect.objectContaining({ path: 'src/decode.ts', lineStart: 1, lineEnd: 3 }),
+        text: [
+          'export function decodeSession(input: string) {',
+          '  if (input.length === 0) throw new Error("invalid session");',
+          '  return input;',
+        ].join('\n'),
+      }),
+    ]));
+  });
+
   test('returns ranked candidates, evidence and preferred-scope coverage', async () => {
     const investigator = createRepositoryInvestigator({
       corpus: corpusFixture(),
@@ -75,6 +95,7 @@ describe('repository investigation', () => {
       reason: 'NO_USEFUL_CANDIDATE',
       candidates: [],
       evidence: [],
+      evidenceUnits: [],
       sourceHints: [],
     });
     expect(readRanges).not.toHaveBeenCalled();

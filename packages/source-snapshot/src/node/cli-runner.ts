@@ -33,7 +33,7 @@ const packOptions = (value: unknown): SourceTextPackOptions => {
   const output: Record<(typeof fields)[number], number> = { targetObjectBytes: 0, maxObjectBytes: 0, maxObjectCount: 0, maxObjectBytesTotal: 0 };
   for (const field of fields) { const current = input[field]; if (!Number.isSafeInteger(current) || (current as number) < 0) throw new SourceSnapshotError('INVALID_INPUT', { field: `pack.${field}` }); output[field] = current as number; }
   const textFormatVersion = input.textFormatVersion;
-  if (textFormatVersion !== undefined && textFormatVersion !== 1 && textFormatVersion !== 2) throw new SourceSnapshotError('INVALID_INPUT', { field: 'pack.textFormatVersion' });
+  if (textFormatVersion !== undefined && textFormatVersion !== 2) throw new SourceSnapshotError('INVALID_INPUT', { field: 'pack.textFormatVersion' });
   return { ...output, ...(textFormatVersion === undefined ? {} : { textFormatVersion }) };
 };
 const storeBudgetOptions = (value: unknown): SourceSnapshotStoreBudget => {
@@ -168,7 +168,7 @@ export const runSourceSnapshotCli = async (argv: readonly string[] = process.arg
         const freeze = await verifyRepositorySnapshotFreeze(planOptions(config, timestamp), prepared.plan.freeze);
         if (!freeze.ok) throw new SourceSnapshotError('SOURCE_CHANGED', { inventoryChanged: freeze.inventoryChanged, changedPaths: freeze.changedPaths });
         const publication = await publishPreparedSourceSnapshot({ manifest: prepared.plan.manifest, objects: prepared.objects }, { ...planOptions(config, timestamp), targetRoot: config.targetRoot, lockPath: config.lockPath, ownerId: config.ownerId, ...storageOptions(config), ...(config.storeBudget === undefined ? {} : { storeBudget: config.storeBudget }) });
-        const summary = { status: publication.status, snapshotId: publication.snapshotId, objectCount: publication.objectCount, sourceFileCount: publication.sourceFileCount, writtenObjects: publication.writtenObjects, reusedObjects: publication.reusedObjects };
+        const summary = { status: publication.status, snapshotId: publication.snapshotId, objectCount: publication.objectCount, sourceFileCount: publication.sourceFileCount, writtenObjects: publication.writtenObjects, objectsReused: publication.objectsReused };
         emit(stdout, summary, args.json); return outcome(0, summary);
       } finally { await prepared.dispose(); }
     }

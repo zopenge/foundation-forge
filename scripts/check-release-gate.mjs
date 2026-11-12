@@ -16,7 +16,7 @@ export const assertFullReceipt = ({ state, current, distDigests, tarballDigests 
 // 发布前独立核对真实文件；普通 quick 结果不能作为此入口的凭证。
 export const assertFullCheckReceipt = async (repositoryRoot) => {
   try {
-    const cache = resolve(repositoryRoot, '.tmp/check-cache');
+    const cache = resolve(repositoryRoot, 'tmp/check-cache');
     const state = JSON.parse(await readFile(resolve(cache, 'state.json'), 'utf8'));
     if (state?.validation?.schemaVersion !== 1 || state.validation.kind !== 'full') throw fullCheckRequired('FULL_RECEIPT_MISSING');
     const model = await discoverWorkspacePackageModel({ repositoryRoot });

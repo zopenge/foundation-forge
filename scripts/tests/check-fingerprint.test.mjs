@@ -8,7 +8,7 @@ import { collectTarballDigests, collectWorkspaceFingerprint } from '../check-fin
 import { selectCheckMode } from '../check-mode.mjs';
 
 const temporaryRoot = async (prefix) => {
-  const base = resolve(import.meta.dirname, '../../.tmp');
+  const base = resolve(import.meta.dirname, '../../tmp');
   await mkdir(base, { recursive: true });
   return mkdtemp(join(base, prefix));
 };

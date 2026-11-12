@@ -10,12 +10,12 @@ export async function completionPhaseFixture({ mode = 'ok', jobTimeoutMs, signal
   { mode?: string; jobTimeoutMs?: number; signal?: AbortSignal } = {}) {
   const value = await prebuiltPhaseFixture({ withAlias: true, ...(signal ? { signal } : {}), completion: { idempotent: true,
     jobs: [{ command: 'node', args: [resolve(import.meta.dirname, '../../package-consumer/completion-job.mjs'),
-      '.tmp/completion-mode.txt', '.tmp/production-proof.json', '.tmp/completion-observations.jsonl'],
+      'tmp/completion-mode.txt', 'tmp/production-proof.json', 'tmp/completion-observations.jsonl'],
       ...(jobTimeoutMs === undefined ? {} : { timeoutMs: jobTimeoutMs }) }] } });
   try {
-    const checkout = value.session.execution.cwd, control = resolve(checkout, '.tmp/completion-mode.txt');
-    const observations = resolve(checkout, '.tmp/completion-observations.jsonl');
-    await mkdir(resolve(checkout, '.tmp'), { recursive: true }); await writeFile(control, mode);
+    const checkout = value.session.execution.cwd, control = resolve(checkout, 'tmp/completion-mode.txt');
+    const observations = resolve(checkout, 'tmp/completion-observations.jsonl');
+    await mkdir(resolve(checkout, 'tmp'), { recursive: true }); await writeFile(control, mode);
     await value.publish();
     // 云端在此阶段是已验证的固定输入；本地夹具I/O不能混入SDK的真实请求时限。
     // artifact与completion输入仍由生产guard每次新鲜核验，Native进程与预算没有替换。
@@ -33,7 +33,7 @@ export async function completionPhaseFixture({ mode = 'ok', jobTimeoutMs, signal
       responses.set(url, structuredClone(await value.transport.buildInfo(url, value.engine.controller.signal)));
     }
     const productionMarker = responses.get(observationUrl('/.well-known/forge-prebuilt.json', value.config.vercel.productionUrl));
-    await writeFile(resolve(checkout, '.tmp/production-proof.json'), JSON.stringify({ ...record(productionMarker),
+    await writeFile(resolve(checkout, 'tmp/production-proof.json'), JSON.stringify({ ...record(productionMarker),
       deploymentId: candidate.deploymentId, productionUrl: value.config.vercel.productionUrl }));
     value.transport.buildInfo = async url => {
       if (!responses.has(url)) throw new Error('unexpected phase cloud observation');

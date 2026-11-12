@@ -157,7 +157,7 @@ it('checks an unpublished committed input in a real independent checkout, preser
   if (!report.ok) process.stderr.write(`managed-check command diagnostics: ${JSON.stringify(lifecycleFailures)}\n`);
   expect(report, JSON.stringify({ error: report.error, steps: report.steps, checkoutPreparation, lifecycleFailures, backendFailures,
     members: scopeObservation?.members })).toMatchObject({ ok: true, schemaVersion: 2, candidateSha: sha, stage: 'complete', processes: { status: 'closed' } });
-  expect(report.executionRoot).toBe(resolve(f.cwd, '.tmp/release-slot/checkout'));
+  expect(report.executionRoot).toBe(resolve(f.cwd, 'state/release-slot/checkout'));
   const checked = report.steps.find(step => step.name === 'check:0');
   expect(JSON.parse(checked?.stdout ?? '')).toEqual({ cwd: report.executionRoot, sha, intent: 'check', frozen: sha });
   expect(git(report.executionRoot ?? '', 'rev-parse', '--git-common-dir')).toBe('.git');
@@ -211,7 +211,7 @@ it('publishes the exact managed SHA to two real refs and runs frozen acceptance'
   expect(f.ref('dev')).toBe(sha); expect(f.ref('main')).toBe(sha); expect(git(f.cwd, 'branch', '--show-current')).toBe('dev');
   expect(await readFile(resolve(f.cwd, 'user-note'), 'utf8')).toBe('unrelated');
   expect(JSON.parse(report.steps.find(step => step.name === 'acceptance:0')?.stdout ?? '')).toEqual(['publish', sha, f.config.vercel.productionUrl, deployment.id]);
-  const receiptPath = resolve(f.cwd, '.tmp/release-slot/latest-publish.json'), anchorPath = resolve(f.cwd, '.tmp/forge-vercel-release/managed.json');
+  const receiptPath = resolve(f.cwd, 'state/release-slot/latest-publish.json'), anchorPath = resolve(f.cwd, 'state/forge-vercel-release/managed.json');
   const receipt = await readFile(receiptPath), anchor = await readFile(anchorPath);
   await configure(f, { vercel: { ...f.config.vercel, projectId: 'prj_changed' }, acceptance: [{ command: 'node', args: ['-e', 'process.exit(99)'] }] });
   const verified = await run({ cwd: f.cwd, command: 'verify', transport });

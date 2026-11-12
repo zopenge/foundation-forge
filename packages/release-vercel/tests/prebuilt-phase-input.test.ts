@@ -34,7 +34,7 @@ it('rejects every Git stream before starting a real subprocess', async () => {
 
 it('uses a caller-owned checkout without deleting its unrelated input on disposal', async () => {
   const repository = resolve(import.meta.dirname, '../../..');
-  const base = await ensureTestTemporaryDirectory(repository, resolve(repository, '.tmp/prebuilt-phase-input'));
+  const base = await ensureTestTemporaryDirectory(repository, resolve(repository, 'tmp/prebuilt-phase-input'));
   const root = await mkdtemp(resolve(base, 'r-'));
   try {
     await writeFile(resolve(root, 'caller.txt'), 'preserve');

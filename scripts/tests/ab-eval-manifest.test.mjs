@@ -8,7 +8,7 @@ import { freezePack, slicePack, validatePack } from '../ab-eval/manifest.mjs';
 import { makeTarballFixture } from './ab-eval-tarball-fixture.mjs';
 
 const repoRoot=resolve(import.meta.dirname,'../..');
-const tempRoot=resolve(repoRoot,'.tmp');
+const tempRoot=resolve(repoRoot,'tmp');
 const sha=value=>createHash('sha256').update(value).digest('hex').toUpperCase();
 
 const withPack=async fn=>{

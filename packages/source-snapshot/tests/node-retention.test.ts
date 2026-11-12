@@ -1,14 +1,14 @@
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { sourceTestTemporaryDirectory } from './temporary-directory.js';
 import { afterEach, expect, test } from 'vitest';
 import { buildSourceTextPackage, createTextSnapshotManifest, stageSourceTextFile } from '../src/index.js';
 import { inspectSourceSnapshotRetention, pruneSourceSnapshots, publishSourceSnapshot, verifyPublishedSourceSnapshot } from '../src/node.js';
 import { removeManagedPathConfirmed } from '../src/node/retention.js';
 
 const roots: string[]=[]; const day=86_400_000; const start=Date.parse('2026-09-01T00:00:00.000Z');
-const makeRoot=async()=>{const base=await mkdtemp(join(tmpdir(),'snapshot-retention-')); roots.push(base); const source=join(base,'source');const target=join(base,'target');const state=join(base,'state');await Promise.all([mkdir(source),mkdir(target),mkdir(state)]);return{base,source,target,lockPath:join(state,'publish.lock')}};
+const makeRoot=async()=>{const base=await mkdtemp(join(await sourceTestTemporaryDirectory(),'snapshot-retention-')); roots.push(base); const source=join(base,'source');const target=join(base,'target');const state=join(base,'state');await Promise.all([mkdir(source),mkdir(target),mkdir(state)]);return{base,source,target,lockPath:join(state,'publish.lock')}};
 afterEach(async()=>{await Promise.all(roots.splice(0).map(root=>rm(root,{recursive:true,force:true,maxRetries:5,retryDelay:50})))});
 const makeBundle=async(version:string,publishedAt:number,content=version)=>{const staged=await stageSourceTextFile({path:'src/value.ts',group:'core',bytes:new TextEncoder().encode(`export const value = '${content}'\n`)});const textPackage=await buildSourceTextPackage([staged],{targetObjectBytes:4096,maxObjectBytes:8192,maxObjectCount:10,maxObjectBytesTotal:100_000});const manifest=await createTextSnapshotManifest({projectId:'fixture-project',policyVersion:'1',publishedAt,repositories:[{path:'',head:version.repeat(40),branch:'dev',dirty:false}],textPackage});return{manifest,textPackage}};
 const publishSeries=async(roots:Awaited<ReturnType<typeof makeRoot>>,shared=false)=>{const values=[];for(const [index,version] of ['a','b','c','d'].entries()){const value=await makeBundle(version,start+index*day,shared?'same':version);values.push(value);await publishSourceSnapshot(value,{sourceRoot:roots.source,targetRoot:roots.target,lockPath:roots.lockPath,ownerId:'fixture-owner'});}return values;};
@@ -72,7 +72,6 @@ test('default Windows fallback removes a path when the primary deletion is ineff
   expect(existsSync(join(dirs.target, 'victim.txt'))).toBe(false);
 });
 
-
 test('inspects a single healthy snapshot before any retention history exists', async () => {
   const dirs = await makeRoot();
   const value = await makeBundle('a', start);
@@ -80,27 +79,4 @@ test('inspects a single healthy snapshot before any retention history exists', a
   const status = await inspectSourceSnapshotRetention({ targetRoot: dirs.target, ownerId: 'fixture-owner', now: start });
   expect(status.snapshotCount).toBe(1);
   expect(status.currentSnapshotId).toBe(value.manifest.snapshotId);
-});
-
-test('retains mixed legacy v1 and v2 snapshots without deleting either referenced object', async () => {
-  const dirs = await makeRoot();
-  const legacy = await makeBundle('a', start, 'legacy');
-  const staged = await stageSourceTextFile({ path: 'src/value.ts', group: 'core', bytes: new TextEncoder().encode("export const value = 'v2'\n") });
-  const textPackage = await buildSourceTextPackage([staged], {
-    targetObjectBytes: 4096, maxObjectBytes: 8192, maxObjectCount: 10,
-    maxObjectBytesTotal: 100_000, textFormatVersion: 2,
-  });
-  const manifest = await createTextSnapshotManifest({
-    projectId: 'fixture-project', policyVersion: '1', publishedAt: start + day,
-    repositories: [{ path: '', head: 'b'.repeat(40), branch: 'dev', dirty: false }], textPackage,
-  });
-  await publishSourceSnapshot(legacy, { sourceRoot: dirs.source, targetRoot: dirs.target, lockPath: dirs.lockPath, ownerId: 'fixture-owner' });
-  await publishSourceSnapshot({ manifest, textPackage }, { sourceRoot: dirs.source, targetRoot: dirs.target, lockPath: dirs.lockPath, ownerId: 'fixture-owner' });
-  const result = await pruneSourceSnapshots({
-    targetRoot: dirs.target, ownerId: 'fixture-owner', lockPath: dirs.lockPath,
-    now: start + 2 * day, keepCount: 2, orphanGraceMs: 0,
-  });
-  expect(result.removedSnapshotIds).toEqual([]);
-  expect(result.removedObjectPaths).toEqual([]);
-  expect((await verifyPublishedSourceSnapshot({ targetRoot: dirs.target, ownerId: 'fixture-owner', level: 'text' })).verifiedLevel).toBe('text');
 });

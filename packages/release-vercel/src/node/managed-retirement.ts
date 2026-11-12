@@ -28,8 +28,7 @@ export async function runManagedRetirement(options: RunReleaseOptions, hostReade
   try {
     assertActive(options.signal);
     if (options.config !== undefined || options.command !== 'retire' || !options.runId || !/^[a-f0-9-]{36}$/u.test(options.runId)
-      || (options.abandonUnstarted !== undefined && typeof options.abandonUnstarted !== 'boolean')
-      || (options.abandonUnstarted && options.confirmOrigin !== undefined)) throw new ReleaseError('ARGUMENT_INVALID');
+      || (options.abandonUnstarted !== undefined && typeof options.abandonUnstarted !== 'boolean')) throw new ReleaseError('ARGUMENT_INVALID');
     location = await readManagedLocation(options.cwd, options.configPath ?? 'release.config.json');
     const value = await readBoundedJson(location.paths.statePath), source = frozenSource(record(value).source, location);
     state = parseManagedState(value, source, location.anchor.slotId);
@@ -37,7 +36,7 @@ export async function runManagedRetirement(options: RunReleaseOptions, hostReade
     await assertHistoricalSource(source, options.signal);
     const host = await hostReader(options.signal);
     if (!validRetirementHost(host)) throw new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'HOST_OBSERVATION_UNKNOWN' });
-    if (state.host && state.host.hostId !== host.hostId) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'RETIREMENT_HOST_CHANGED' });
+    if (state.host.hostId !== host.hostId || state.host.platform !== host.platform) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'RETIREMENT_HOST_CHANGED' });
     lease = await acquireRetirementLease(location.paths, host, options.signal);
     const paths = location.paths, current = state, execution = createManagedExecution(source.root, source.config, options.signal, []);
     archivePath = retirementArchivePath(paths, state.runId);
@@ -59,13 +58,8 @@ export async function runManagedRetirement(options: RunReleaseOptions, hostReade
       if (!evidence) {
         const snapshot = await captureRetirementSnapshot(paths), snapshotSha256 = retirementDigest(snapshot);
         if (options.abandonUnstarted && !isUnstartedRetirementSnapshot(snapshot)) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'UNSTARTED_ABANDONMENT_INELIGIBLE' });
-        const originConfirmation = retirementDigest({ runId: state.runId, slotId: state.slotId, snapshotSha256, hostId: host.hostId });
-        if (!state.host) {
-          retirement = { status: 'confirmation-required', historicalVerification: 'unknown', originConfirmation };
-          if (options.confirmOrigin !== originConfirmation) throw new ReleaseError('RECOVERY_REQUIRED', { reason: options.confirmOrigin ? 'ORIGIN_CONFIRMATION_MISMATCH' : 'ORIGIN_CONFIRMATION_REQUIRED' });
-        } else if (options.confirmOrigin !== undefined) throw new ReleaseError('ARGUMENT_INVALID', { reason: 'ORIGIN_ALREADY_RECORDED' });
         evidence = sealRetirementRecord({ schemaVersion: 1, kind: 'interrupted-run-retirement', runId: state.runId, slotId: state.slotId, snapshot, snapshotSha256,
-          origin: state.host ? 'recorded-run-host' : 'operator-confirmed-origin', host: state.host ?? host, preparedAt: startedAt });
+          origin: 'recorded-run-host', host: state.host, preparedAt: startedAt });
       }
     }
     const selected = evidence;

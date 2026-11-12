@@ -113,7 +113,7 @@ test('packs complete text deterministically including empty files and safe markd
   expect(first.objects.map(value => [value.path, value.sha256])).toEqual(second.objects.map(value => [value.path, value.sha256]));
   expect(first.files.map(value => value.path)).toEqual(['src/empty.ts', 'src/fence.md', 'src/value.ts']);
   for (const file of files) expect(reconstructSourceText(first, file.path)).toBe(file.text);
-  const fenceObject = first.objects.find(value => value.content.includes('src/fence.md'));
+  const fenceObject = first.objects.find(value => value.group === 'docs');
   expect(fenceObject?.content).toContain('`````text');
   expect(first.files.find(value => value.path === 'src/empty.ts')?.segments).toHaveLength(1);
 });

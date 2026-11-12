@@ -6,7 +6,7 @@ import { discoverWorkspacePackageModel } from '../workspace-packages.mjs';
 import { discoverTestProcessSupervisor, runTestProcess } from '../test-process-runner.mjs';
 
 const module = await import('../vitest-budget-config.mjs').catch(error => ({ error }));
-const repositoryRoot = resolve(import.meta.dirname, '../..'), base = resolve(repositoryRoot, '.tmp/tests');
+const repositoryRoot = resolve(import.meta.dirname, '../..'), base = resolve(repositoryRoot, 'tmp/tests');
 
 test('the budget wrapper preserves setup, selected files and complete coverage thresholds in one Vitest instance', { timeout: 45_000 }, async t => {
   assert.ifError(module.error);

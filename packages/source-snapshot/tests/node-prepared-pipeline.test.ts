@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { sourceTestTemporaryDirectory } from './temporary-directory.js';
 import { join } from 'node:path';
 import { afterEach, expect, test } from 'vitest';
 import { readSnapshotText } from '../src/index.js';
@@ -9,7 +9,7 @@ import { createRepository, runGit } from './node-fixtures.js';
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }))); });
-const makeOutside = async (prefix: string): Promise<string> => { const root = await mkdtemp(join(tmpdir(), prefix)); roots.push(root); return root; };
+const makeOutside = async (prefix: string): Promise<string> => { const root = await mkdtemp(join(await sourceTestTemporaryDirectory(), prefix)); roots.push(root); return root; };
 const pack = { targetObjectBytes: 4096, maxObjectBytes: 8192, maxObjectCount: 100, maxObjectBytesTotal: 4_000_000, textFormatVersion: 2 as const };
 const policy = { textExtensions: ['.ts'], textBasenames: ['.gitignore'] };
 

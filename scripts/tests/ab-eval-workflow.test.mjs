@@ -11,7 +11,7 @@ import { auditEvaluation, executeEvaluation, prepareEvaluation,
   verifyEvaluationConnections } from '../ab-eval/workflow.mjs';
 
 const repoRoot=resolve(import.meta.dirname,'../..');
-const tempRoot=resolve(repoRoot,'.tmp');
+const tempRoot=resolve(repoRoot,'tmp');
 const withFixture=async fn=>{
   await mkdir(tempRoot,{recursive:true});
   const dir=await mkdtemp(resolve(tempRoot,'ab-eval-workflow-'));

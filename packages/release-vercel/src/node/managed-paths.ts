@@ -22,7 +22,7 @@ import type { ManagedSession } from './release-context.js';
 export async function assertManagementUntracked(source: FrozenSource, execution: Execution): Promise<void> {
   assertNoGitContext();
   if (source.config.source.mode !== 'managed-commit') throw new ReleaseError('SOURCE_UNSUPPORTED');
-  const managementPaths = [source.config.source.slotPath, '.tmp/forge-vercel-release'];
+  const managementPaths = [source.config.source.slotPath, 'state/forge-vercel-release'];
   const compare = (path: string) => process.platform === 'win32' ? path.toLowerCase() : path;
   const protectedPaths = managementPaths.map(compare);
   const roots = [...new Set(managementPaths.flatMap(path => path.split('/').slice(0, 1)))];
@@ -53,7 +53,7 @@ async function assertCommittedIgnore(source: FrozenSource, execution: Execution,
 }
 export async function resolveManagedPaths(source: FrozenSource, execution: Execution): Promise<ManagedPaths> {
   if (source.config.source.mode !== 'managed-commit') throw new ReleaseError('SOURCE_UNSUPPORTED');
-  const slotRoot = resolve(source.root, source.config.source.slotPath), anchorPath = resolve(source.root, '.tmp/forge-vercel-release/managed.json');
+  const slotRoot = resolve(source.root, source.config.source.slotPath), anchorPath = resolve(source.root, 'state/forge-vercel-release/managed.json');
   if (!within(source.root, slotRoot) || slotRoot === source.root || within(slotRoot, anchorPath) || within(dirname(anchorPath), slotRoot)) throw new ReleaseError('SLOT_PATH');
   await assertPathChain(source.root, slotRoot); await assertPathChain(source.root, anchorPath);
   await assertCommittedIgnore(source, execution, `${source.config.source.slotPath}/`);
@@ -106,7 +106,7 @@ export async function openManagedSlot(source: FrozenSource, execution: Execution
       || !sameIdentity(record(owner.slotIdentity), paths.slotIdentity)) throw new ReleaseError('SLOT_FOREIGN');
     slotId = owner.slotId;
     if (anchored && existingAnchor.slotId !== slotId) throw new ReleaseError('SLOT_STATE', { reason: 'ANCHOR_SLOT_ID' });
-    const allowed = ['ownership.json', 'run.lock', 'recover.lock', 'state.json', 'checkout', 'latest-check.json', 'latest-publish.json', 'command-gate.json', 'command-result.json', 'retirement.json', 'retirement-work', 'retired', 'history', 'terminal.json', '.terminal.json.next'];
+    const allowed = ['ownership.json', 'run.lock', 'recover.lock', 'state.json', 'checkout', 'latest-check.json', 'latest-publish.json', 'retirement.json', 'retirement-work', 'retired', 'history', 'terminal.json', '.terminal.json.next'];
     if ((await readdir(paths.slotRoot)).some(name => !allowed.includes(name))) throw new ReleaseError('SLOT_FOREIGN', { reason: 'UNKNOWN_ENTRY' });
   }
   await assertManagedPaths(paths);

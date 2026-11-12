@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, rm } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
-const testRoot = resolve(import.meta.dirname, '..', '.tmp', 'tests');
+const testRoot = resolve(import.meta.dirname, '..', 'tmp', 'tests');
 
 export const createTestDirectory = async (): Promise<string> => {
   const directory = resolve(testRoot, randomUUID());

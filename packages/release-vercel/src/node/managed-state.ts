@@ -45,26 +45,23 @@ function validateEffects(value: unknown): void {
 }
 export function parseManagedState(value: unknown, source: FrozenSource, slotId: string, embeddedObservation = false): ManagedState {
   const item = record(value), owner = record(item.coordinator);
-  if ((item.schemaVersion !== 2 && item.schemaVersion !== 3) || item.slotId !== slotId || typeof item.runId !== 'string' || !uuid.test(item.runId)
+  if (item.schemaVersion !== 3 || item.slotId !== slotId || typeof item.runId !== 'string' || !uuid.test(item.runId)
     || !['check', 'publish', 'verify'].includes(String(item.command)) || !['running', 'closed', 'unknown'].includes(String(item.status))
     || !Number.isSafeInteger(owner.pid) || typeof owner.startToken !== 'string' || !Array.isArray(item.processes)) throw new ReleaseError('SLOT_STATE', { reason: 'STATE' });
   boundSource(item.source, source); validateEffects(item.effects);
   const prebuilt = parsePrebuiltState(item.prebuilt, item.source as FrozenSource, item.effects as ReleaseReport['effects']);
   parseCompletionState(item.completion, item.source as FrozenSource, prebuilt);
   parseCompletionInput(item.completionInput, item.completion !== undefined);
-  if (item.completion !== undefined && item.schemaVersion !== 3) throw new ReleaseError('SLOT_STATE', { reason: 'COMPLETION_HISTORY_BINDING' });
   parsePrebuiltResolutions(item.prebuiltResolutions);
-  if (item.host !== undefined && !validRetirementHost(item.host)) throw new ReleaseError('SLOT_STATE', { reason: 'HOST_OBSERVATION' });
-  if (item.schemaVersion === 3) {
-    if (!Array.isArray(item.history) || item.history.length > 10_000) throw new ReleaseError('SLOT_STATE', { reason: 'HISTORY_BINDING_MISSING' });
-    const paths = new Set<string>();
-    for (const value of item.history) {
-      const entry = record(value), file = record(entry.file), identity = record(file.identity);
-      if (typeof entry.path !== 'string' || !/^(history|retired)\/[a-f0-9-]{36}\.json$/u.test(entry.path) || paths.has(entry.path)
-        || typeof file.sha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(file.sha256)
-        || ![identity.dev, identity.ino].every(part => typeof part === 'string' && /^\d+$/u.test(part))) throw new ReleaseError('SLOT_STATE', { reason: 'HISTORY_BINDING' });
-      paths.add(entry.path);
-    }
+  if (!validRetirementHost(item.host)) throw new ReleaseError('SLOT_STATE', { reason: 'HOST_OBSERVATION' });
+  if (!Array.isArray(item.history) || item.history.length > 10_000) throw new ReleaseError('SLOT_STATE', { reason: 'HISTORY_BINDING_MISSING' });
+  const paths = new Set<string>();
+  for (const value of item.history) {
+    const entry = record(value), file = record(entry.file), identity = record(file.identity);
+    if (typeof entry.path !== 'string' || !/^(history|retired)\/[a-f0-9-]{36}\.json$/u.test(entry.path) || paths.has(entry.path)
+      || typeof file.sha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(file.sha256)
+      || ![identity.dev, identity.ino].every(part => typeof part === 'string' && /^\d+$/u.test(part))) throw new ReleaseError('SLOT_STATE', { reason: 'HISTORY_BINDING' });
+    paths.add(entry.path);
   }
   for (const value of item.processes) {
     const command = record(value);
@@ -72,7 +69,7 @@ export function parseManagedState(value: unknown, source: FrozenSource, slotId: 
       || typeof command.observationComplete !== 'boolean' || !Array.isArray(command.descendants)) throw new ReleaseError('SLOT_STATE', { reason: 'PROCESS' });
     if (command.kind !== undefined) {
       const observations = command.observations;
-      if (item.schemaVersion !== 3 || command.kind !== 'checkout-observation' || command.name !== 'checkout-frozen' || !uuid.test(command.id)
+      if (command.kind !== 'checkout-observation' || command.name !== 'checkout-frozen' || !uuid.test(command.id)
         || command.identity !== undefined || command.scope !== undefined || command.pid !== undefined || command.closure !== undefined
         || command.notStarted !== undefined || command.descendants.length !== 0
         || !Array.isArray(observations) || observations.length > 5 || !['intent', 'closed', 'stopped', 'unknown'].includes(String(command.status))
@@ -90,7 +87,7 @@ export function parseManagedState(value: unknown, source: FrozenSource, slotId: 
       continue;
     }
     if (command.plan !== undefined || command.observations !== undefined) throw new ReleaseError('SLOT_STATE', { reason: 'OBSERVATION_KIND' });
-    if (command.notStarted !== undefined && (item.schemaVersion !== 3 || !hasNoStartWitness(value as ManagedCommand)
+    if (command.notStarted !== undefined && (!hasNoStartWitness(value as ManagedCommand)
       || !String(record(command.notStarted).binding).startsWith(`${String(item.runId)}:${command.id}:`))) {
       throw new ReleaseError('SLOT_STATE', { reason: 'NO_START_WITNESS' });
     }
@@ -116,7 +113,7 @@ export function parseManagedState(value: unknown, source: FrozenSource, slotId: 
       const closure = record(command.closure);
       if (!command.identity || command.observationComplete !== true || closure.termination !== 'exit' || typeof closure.observedAt !== 'string'
         || !Number.isFinite(Date.parse(closure.observedAt)) || (closure.exitCode !== null && !Number.isSafeInteger(closure.exitCode))) throw new ReleaseError('SLOT_STATE', { reason: 'CLOSURE_WITNESS' });
-      if ((command.scope !== undefined || owned !== undefined) && !hasVerifiedManagedClosure(value as ManagedCommand)) throw new ReleaseError('SLOT_STATE', { reason: 'SCOPE_CLOSURE_BINDING' });
+      if (!hasVerifiedManagedClosure(value as ManagedCommand)) throw new ReleaseError('SLOT_STATE', { reason: 'SCOPE_CLOSURE_BINDING' });
     }
     if (command.status === 'stopped' && ((!embeddedObservation && !command.terminalSha256) || !hasVerifiedManagedStop(value as ManagedCommand))) throw new ReleaseError('SLOT_STATE', { reason: 'STOP_WITNESS' });
   }

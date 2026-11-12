@@ -15,15 +15,15 @@ it('observes current index and HEAD together on every guard without repeated tre
   const stream = vi.spyOn(f.execution, 'streamGit');
   await expect(assertManagementUntracked(source, f.execution)).resolves.toBeUndefined();
   expect(stream).toHaveBeenCalledTimes(1);
-  const path = '.tmp/release-slot/new.txt';
-  await mkdir(resolve(f.cwd, '.tmp/release-slot'), { recursive: true }); await writeFile(resolve(f.cwd, path), 'tracked');
+  const path = 'state/release-slot/new.txt';
+  await mkdir(resolve(f.cwd, 'state/release-slot'), { recursive: true }); await writeFile(resolve(f.cwd, path), 'tracked');
   git(f.cwd, 'add', '-f', path);
   await expect(assertManagementUntracked(source, f.execution)).rejects.toMatchObject({ code: 'SLOT_PATH', details: { reason: 'TRACKED_MANAGEMENT_PATH' } });
 });
 
-it.each(['.tmp/release-slot/file', '.tmp/forge-vercel-release/file', '.tmp'])('rejects HEAD tracking of %s even after staged removal', async path => {
+it.each(['state/release-slot/file', 'state/forge-vercel-release/file', 'state'])('rejects HEAD tracking of %s even after staged removal', async path => {
   const f = await fixture();
-  if (path !== '.tmp') await mkdir(resolve(f.cwd, path, '..'), { recursive: true });
+  if (path !== 'state') await mkdir(resolve(f.cwd, path, '..'), { recursive: true });
   await writeFile(resolve(f.cwd, path), 'tracked'); git(f.cwd, 'add', '-f', path); git(f.cwd, 'commit', '-m', 'tracked management');
   const source = await freezeManagedSource(f.cwd, 'release.config.json', f.execution);
   git(f.cwd, 'rm', '-r', '--cached', '--', path);
@@ -32,13 +32,13 @@ it.each(['.tmp/release-slot/file', '.tmp/forge-vercel-release/file', '.tmp'])('r
 
 it('allows unrelated tracked siblings and observes HEAD changes between calls', async () => {
   const f = await fixture();
-  await mkdir(resolve(f.cwd, '.tmp'), { recursive: true }); await writeFile(resolve(f.cwd, '.tmp/other'), 'unrelated');
-  git(f.cwd, 'add', '-f', '.tmp/other'); git(f.cwd, 'commit', '-m', 'unrelated');
+  await mkdir(resolve(f.cwd, 'state'), { recursive: true }); await writeFile(resolve(f.cwd, 'state/other'), 'unrelated');
+  git(f.cwd, 'add', '-f', 'state/other'); git(f.cwd, 'commit', '-m', 'unrelated');
   const source = await freezeManagedSource(f.cwd, 'release.config.json', f.execution);
   await expect(assertManagementUntracked(source, f.execution)).resolves.toBeUndefined();
-  await mkdir(resolve(f.cwd, '.tmp/RELEASE-SLOT'), { recursive: true }); await writeFile(resolve(f.cwd, '.tmp/RELEASE-SLOT/file'), 'tracked');
-  git(f.cwd, 'add', '-f', '.tmp/RELEASE-SLOT/file'); git(f.cwd, 'commit', '-m', 'later management');
-  git(f.cwd, 'rm', '-r', '--cached', '.tmp/RELEASE-SLOT');
+  await mkdir(resolve(f.cwd, 'state/RELEASE-SLOT'), { recursive: true }); await writeFile(resolve(f.cwd, 'state/RELEASE-SLOT/file'), 'tracked');
+  git(f.cwd, 'add', '-f', 'state/RELEASE-SLOT/file'); git(f.cwd, 'commit', '-m', 'later management');
+  git(f.cwd, 'rm', '-r', '--cached', 'state/RELEASE-SLOT');
   if (process.platform === 'win32') await expect(assertManagementUntracked(source, f.execution)).rejects.toMatchObject({ code: 'SLOT_PATH' });
   else await expect(assertManagementUntracked(source, f.execution)).resolves.toBeUndefined();
 });

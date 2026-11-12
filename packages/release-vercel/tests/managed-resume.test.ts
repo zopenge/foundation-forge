@@ -35,7 +35,7 @@ const fixture = async () => { const f = await managedFixture(); fixtures.push(f)
 
 it.each(['closed', 'cancelled'])('the normal entry reclaims a durably %s run after its coordinator exits before reaching installation', { timeout: 240_000 }, async mode => {
   component.stopAfterCheckout = true;
-  const f = await fixture(), slot = resolve(f.cwd, '.tmp/release-slot');
+  const f = await fixture(), slot = resolve(f.cwd, 'state/release-slot');
   const worker = resolve(import.meta.dirname, 'helpers/closed-managed-worker.mjs');
   await promisify(execFile)(process.execPath, [worker, f.cwd, mode], { windowsHide: true, timeout: 120_000 });
   const before = await readFile(resolve(slot, 'state.json'), 'utf8'), previous = JSON.parse(before);
@@ -62,7 +62,7 @@ it('retries a real failed pnpm lifecycle install in the same slot while retainin
   expect(failed.steps.find(step => step.name === 'install')).toMatchObject({ ok: false });
   const resumed = await runs.run({ cwd: f.cwd, command: 'check' });
   expect(resumed, JSON.stringify(resumed.error)).toMatchObject({ ok: true, slotId: failed.slotId, executionRoot: failed.executionRoot });
-  const history = JSON.parse(await readFile(resolve(f.cwd, '.tmp/release-slot/history', `${failed.runId}.json`), 'utf8'));
+  const history = JSON.parse(await readFile(resolve(f.cwd, 'state/release-slot/history', `${failed.runId}.json`), 'utf8'));
   expect(JSON.parse(history.snapshot.check).report).toMatchObject({ ok: false, error: { code: 'COMMAND_FAILED' } });
   expect(await readFile(resolve(resumed.executionRoot ?? '', 'node_modules/install-attempt'), 'utf8')).toBe('failed once');
 });

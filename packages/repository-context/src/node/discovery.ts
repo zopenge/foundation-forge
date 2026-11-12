@@ -8,6 +8,7 @@ const ignoredDirectories = new Set([
   '.hg',
   '.svn',
   '.tmp',
+  'tmp',
   'coverage',
   'dist',
   'node_modules',

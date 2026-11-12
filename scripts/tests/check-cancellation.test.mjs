@@ -3,7 +3,7 @@ import { lstat, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promise
 import { isAbsolute, relative, resolve } from 'node:path';
 import test from 'node:test';
 import { runFullCheck } from '../check-full.mjs';
-import { runScriptTests, writeState } from '../check-runner.mjs';
+import { writeState } from '../check-runner.mjs';
 import { createTestRunContext } from '../test-run-context.mjs';
 import { runTestProcess } from '../test-process-runner.mjs';
 
@@ -17,7 +17,7 @@ const pending = () => {
 const contextFixture = async (t, options) => {
   const context = await createTestRunContext(options);
   const owned = await realpath(context.root), identity = await lstat(context.root, { bigint: true });
-  const inside = relative(await realpath(resolve(root, '.tmp')), owned);
+  const inside = relative(await realpath(resolve(root, 'tmp')), owned);
   assert.ok(inside && !inside.startsWith('..') && !isAbsolute(inside));
   t.after(async () => {
     // 只删除本用例已完成 finalize 的注入上下文；失败或未收尾时留下明确证据。
@@ -59,15 +59,6 @@ test('完整入口在消费者阶段取消后不启动后续阶段并等待 cont
   assert.equal(receivedSignal, control.signal);
   assert.equal(finalized, true);
   assert.deepEqual(calls, ['lint', 'stop', 'cancel', 'finalize']);
-});
-
-test('增量脚本入口取消后不执行下一阶段或发布成功收据', async () => {
-  const control = new globalThis.AbortController(), reason = new Error('cancel lint'), calls = [];
-  await assert.rejects(runScriptTests({ signal: control.signal,
-    run: async args => { calls.push(args.join(' ')); control.abort(reason); },
-    docsValid: async () => { calls.push('docs'); }, persist: async () => { calls.push('persist'); },
-  }), error => error === reason);
-  assert.deepEqual(calls, ['run lint']);
 });
 
 test('pre-abort context 不发现适配器或创建任何 scope', async () => {
@@ -133,7 +124,7 @@ test('pre-abort 进程入口不创建日志或 scope，不进行身份读取及�
   const control = new globalThis.AbortController(), reason = new Error('cancel process');
   control.abort(reason); let started = 0, identified = 0;
   await assert.rejects(runTestProcess({ name: 'pre-abort', command: 'never-executed',
-    logRoot: resolve(root, '.tmp/tests/pre-abort-must-not-start'),
+    logRoot: resolve(root, 'tmp/tests/pre-abort-must-not-start'),
     signal: control.signal, supervisor: {
       provider: { start: () => { started++; throw new Error('must not start'); } },
       reader: { readIdentity: async () => { identified++; } },
@@ -252,7 +243,7 @@ test('context 在已结束 Job 的输出读取阶段仍拒绝独立 spec 取消'
 });
 
 const receiptFixture = ({ onWrite = async () => {}, onClose = async () => {}, onCommit = () => {} } = {}) => {
-  const statePath = resolve(root, '.tmp/check-cache/state.json');
+  const statePath = resolve(root, 'tmp/check-cache/state.json');
   const files = new Map([[statePath, 'previous receipt']]), removed = [], committed = [];
   const io = {
     mkdir: async () => {},
@@ -269,18 +260,11 @@ const receiptFixture = ({ onWrite = async () => {}, onClose = async () => {}, on
   return { statePath, files, removed, committed, io };
 };
 
-const scriptReceiptOptions = (signal, persist) => ({
-  signal, persist, fingerprint: { source: 'verified' }, model: { packages: [] },
-  state: { distDigests: {}, tarballDigests: {} }, run: async () => {}, docsValid: async () => {},
-  distValid: async () => true, tarballsValid: async () => ({}), assertInputs: async () => {},
-});
-
 test('成功收据在异步写入或关闭期间取消时保留旧收据并清理自有暂存', async () => {
   for (const phase of ['onWrite', 'onClose']) {
     const control = new globalThis.AbortController(), reason = new Error('cancel receipt ' + phase);
     const fixture = receiptFixture({ [phase]: async () => { control.abort(reason); } });
-    await assert.rejects(runScriptTests(scriptReceiptOptions(control.signal,
-      (...args) => writeState(...args, fixture.io))), error => error === reason);
+    await assert.rejects(writeState({ source: 'verified' }, {}, {}, control.signal, fixture.io), error => error === reason);
     assert.equal(fixture.files.get(fixture.statePath), 'previous receipt');
     assert.equal(fixture.files.size, 1); assert.equal(fixture.removed.length, 1);
     assert.equal(fixture.committed.length, 0);
@@ -316,17 +300,11 @@ test('未取得暂存文件所有权时不删除同名资源或旧收据', async
 test('同步发布成功后晚到取消不追改已提交收据和成功结果', async () => {
   const control = new globalThis.AbortController(), reason = new Error('cancel after commit');
   const fixture = receiptFixture({ onCommit: () => { globalThis.queueMicrotask(() => { control.abort(reason); }); } });
-  await runScriptTests(scriptReceiptOptions(control.signal, (...args) => writeState(...args, fixture.io)));
+  await writeState({ source: 'verified' }, {}, {}, control.signal, fixture.io);
   assert.equal(control.signal.aborted, true);
   assert.equal(JSON.parse(fixture.files.get(fixture.statePath)).source, 'verified');
   assert.equal(fixture.files.size, 1); assert.equal(fixture.committed.length, 1);
   assert.equal(fixture.removed.length, 0);
-});
-
-test('自定义 persist 未返回已提交结果时仍拒绝晚到取消', async () => {
-  const control = new globalThis.AbortController(), reason = new Error('cancel uncommitted persist');
-  await assert.rejects(runScriptTests(scriptReceiptOptions(control.signal, async () => { control.abort(reason); })),
-    error => error === reason);
 });
 
 test('取消收据的清理失败仍保留原取消原因及任意收尾异常', async () => {

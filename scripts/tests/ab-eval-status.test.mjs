@@ -7,7 +7,7 @@ import test from 'node:test';
 
 import { inspectEvaluationStatus } from '../ab-eval/status.mjs';
 
-const tempRoot=resolve(import.meta.dirname,'../../.tmp');
+const tempRoot=resolve(import.meta.dirname,'../../tmp');
 const writeJson=(path,value)=>writeFile(path,`${JSON.stringify(value)}\n`);
 test('status summarizes in-flight arms and known A/B issues without writing files',async()=>{
   await mkdir(tempRoot,{recursive:true});

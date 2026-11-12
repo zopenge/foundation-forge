@@ -9,7 +9,7 @@ declare module 'vitest' { interface TaskMeta { fixtureRoots?: string[] } }
 vi.mock('node:child_process', async original => ({ ...await original<typeof processes>() }));
 vi.mock('node:fs/promises', async original => ({ ...await original<typeof files>() }));
 const fixtures: Awaited<ReturnType<typeof managedFixture>>[] = [], partialRoots: string[] = [];
-const base = resolve(process.env.FORGE_CHECK_JOB_TEMP ?? resolve(import.meta.dirname, '../../../.tmp'), 'managed-release-tests');
+const base = resolve(process.env.FORGE_CHECK_JOB_TEMP ?? resolve(import.meta.dirname, '../../../tmp'), 'managed-release-tests');
 const fixture = async () => { const value = await managedFixture(); fixtures.push(value); return value; };
 
 afterEach(async () => {

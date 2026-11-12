@@ -12,17 +12,13 @@ interface SourceTextObjectSectionBase {
   readonly segmentCount: number;
   readonly text: string;
 }
-export interface SourceTextObjectPathSectionInput extends SourceTextObjectSectionBase {
-  readonly formatVersion: 1;
-  readonly path: string;
-}
 export interface SourceTextContentBlockSectionInput extends SourceTextObjectSectionBase {
   readonly formatVersion: 2;
   readonly normalization: 'decoded-lf-utf8-v1';
   readonly normalizedSha256: string;
   readonly normalizedByteLength: number;
 }
-export type SourceTextObjectSectionInput = SourceTextObjectPathSectionInput | SourceTextContentBlockSectionInput;
+export type SourceTextObjectSectionInput = SourceTextContentBlockSectionInput;
 export interface SourceTextObjectSectionLocation {
   readonly bodyByteOffset: number;
   readonly bodyByteLength: number;
@@ -41,15 +37,6 @@ const fenceFor = (text: string): string => {
   return '`'.repeat(Math.max(3, max + 1));
 };
 const sectionMetadata = (segment: SourceTextObjectSectionInput): readonly string[] => {
-  if (segment.formatVersion === 1) {
-    return [
-      `## ${segment.path}`,
-      '',
-      `- Group: ${segment.group}`,
-      `- Source SHA-256: ${segment.sourceSha256}`,
-      `- Source bytes: ${segment.sourceByteLength}`,
-    ];
-  }
   return [
     `## Content ${segment.sourceSha256}`,
     '',

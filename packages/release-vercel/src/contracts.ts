@@ -156,10 +156,9 @@ export interface ReleaseReport {
   readonly error?: ReleaseDiagnostic;
   readonly recovery?: { readonly candidateSha: string; readonly nextCommand: string; readonly reportPath: string; readonly reportExists?: boolean; readonly observation?: ReleaseRecoveryObservation };
   readonly retirement?: {
-    readonly status: 'confirmation-required' | 'prepared' | 'retired';
+    readonly status: 'prepared' | 'retired';
     readonly historicalVerification: 'unknown';
-    readonly origin?: 'operator-confirmed-origin' | 'recorded-run-host';
-    readonly originConfirmation?: string;
+    readonly origin?: 'recorded-run-host';
     readonly cessation?: 'observed-subsequent-boot' | 'recorded-empty-unstarted-scope';
     readonly archivePath?: string;
   };
@@ -186,7 +185,6 @@ export interface RunReleaseOptions {
   readonly sha?: string;
   readonly retryCompletion?: boolean;
   readonly runId?: string;
-  readonly confirmOrigin?: string;
   readonly abandonUnstarted?: boolean;
   readonly signal?: AbortSignal;
   readonly transport?: ReleaseTransport;

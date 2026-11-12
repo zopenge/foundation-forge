@@ -56,7 +56,7 @@ export async function discardPreparedState(paths: ManagedPaths, terminal: Manage
 async function isArchivedTerminal(paths: ManagedPaths, state: ManagedState, terminal: ManagedTerminal, file: MetadataFile | null): Promise<boolean> {
   if (state.processes.at(-1)?.terminalSha256 || terminal.runId === state.runId || typeof terminal.runId !== 'string'
     || !/^[a-f0-9-]{36}$/u.test(terminal.runId)) return false;
-  const reference = state.history?.find(entry => entry.path === `history/${terminal.runId}.json`);
+  const reference = state.history.find(entry => entry.path === `history/${terminal.runId}.json`);
   if (!reference) return false;
   await assertManagedHistory(paths, state);
   const previous = await readManagedDisposition(paths, terminal.runId);

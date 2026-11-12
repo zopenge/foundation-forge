@@ -27,7 +27,7 @@ test('consumer-only dependencies are explicit bounded package metadata', async c
 });
 
 for (const hookFails of [false, true]) test(`package verification always removes its directory after the cleanup barrier${hookFails ? ' rejects' : ''}`, async context => {
-  const base = resolve('.tmp/tests'); await mkdir(base, { recursive: true });
+  const base = resolve('tmp/tests'); await mkdir(base, { recursive: true });
   const root = await mkdtemp(join(base, 'verification-cleanup-')), verificationRoot = join(root, 'verification');
   context.after(() => rm(root, { force: true, recursive: true }));
   let release, entered, primary;
@@ -92,8 +92,8 @@ test('coverage shard weights are package-owned hints with existing bounded test-
 
 test('documentation links reject missing local targets and accept present targets', async (context) => {
   assert.equal(typeof packageRunner.verifyDocumentationLinks, 'function');
-  await mkdir(join('.tmp', 'tests'), { recursive: true });
-  const root = await mkdtemp(join('.tmp', 'tests', 'documentation-links-'));
+  await mkdir(join('tmp', 'tests'), { recursive: true });
+  const root = await mkdtemp(join('tmp', 'tests', 'documentation-links-'));
   context.after(() => rm(root, { force: true, recursive: true }));
   await writeFile(join(root, 'README.md'), '[target](./target.md)\n');
   await assert.rejects(packageRunner.verifyDocumentationLinks(root), /missing local target/u);
@@ -108,7 +108,7 @@ const createPackage = async (context, {
   name = '@example/package',
   packageConsumer = false,
 } = {}) => {
-  const fixtureBase = resolve('.tmp/tests'); await mkdir(fixtureBase, { recursive: true });
+  const fixtureBase = resolve('tmp/tests'); await mkdir(fixtureBase, { recursive: true });
   const packageRoot = await mkdtemp(join(fixtureBase, 'foundation-forge-package-'));
   context.after(() => rm(packageRoot, { force: true, recursive: true }));
   for (const [relativePath, contents] of Object.entries(files)) {
@@ -131,6 +131,20 @@ const createPackage = async (context, {
   }
   return { bins, exports, name, packageRoot, version: '1.0.0', workspaceDependencies: [] };
 };
+
+test('documentation links skip only the repository root persistent state directory', async context => {
+  const { packageRoot: root } = await createPackage(context);
+  const persistent = join(root, process.platform === 'win32' ? 'STATE' : 'state');
+  await mkdir(persistent);
+  await writeFile(join(persistent, 'retained.md'), '[deployment route](./route-only)\n');
+  await packageRunner.verifyDocumentationLinks(root);
+  const source = join(root, 'packages/example/src/state');
+  await mkdir(source, { recursive: true });
+  await writeFile(join(source, 'README.md'), '[target](./target.md)\n');
+  await assert.rejects(packageRunner.verifyDocumentationLinks(root), /packages\/example\/src\/state\/README\.md links to missing local target/u);
+  await writeFile(join(source, 'target.md'), '# Target\n');
+  await packageRunner.verifyDocumentationLinks(root);
+});
 
 test('loads explicit browser exports and discovers an adjacent consumer smoke', async (context) => {
   const packageValue = await createPackage(context, { packageConsumer: true });
@@ -398,8 +412,8 @@ test('serial consumer import failures preserve their exact cause and never start
 });
 
 test('consumer smoke directories leave bounded path space and remain distinct for long package names', async (context) => {
-  await mkdir(resolve('.tmp', 'tests'), { recursive: true });
-  const root = await mkdtemp(resolve('.tmp', 'tests', 'smoke-path-'));
+  await mkdir(resolve('tmp', 'tests'), { recursive: true });
+  const root = await mkdtemp(resolve('tmp', 'tests', 'smoke-path-'));
   context.after(() => rm(root, { recursive: true, force: true }));
   await writeFile(join(root, '.npmrc'), '');
   await writeFile(join(root, 'pnpm-workspace.yaml'), 'packages: []\n');

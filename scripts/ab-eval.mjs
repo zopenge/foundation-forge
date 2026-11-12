@@ -88,7 +88,7 @@ export const main=async(argv=process.argv.slice(2))=>{
     requireOptions(options,['local']);
     const local=await readLocal(options.local);
     return probeOpenCodeClient({executable:local.clientExecutable,
-      tempRoot:resolve(import.meta.dirname,'../.tmp')});
+      tempRoot:resolve(import.meta.dirname,'../tmp')});
   }
   if(command==='transport-doctor'){
     requireOptions(options,['executable','out']);

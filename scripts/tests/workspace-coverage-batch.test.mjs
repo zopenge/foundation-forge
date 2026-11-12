@@ -10,7 +10,7 @@ import { runWorkspaceCoverageBatch } from '../run-workspace-coverage-batch.mjs';
 
 test('one coverage collection partitions every source and assertion into its owning package', async () => {
   const { partitionWorkspaceReports } = await import('../run-workspace-coverage-batch.mjs');
-  const packages = ['one', 'two'].map(name => ({ name, packageRoot: resolve('.tmp/batch-coverage', name) }));
+  const packages = ['one', 'two'].map(name => ({ name, packageRoot: resolve('tmp/batch-coverage', name) }));
   const coverage = Object.fromEntries(packages.map(value => [resolve(value.packageRoot, 'src/index.ts'), { marker: value.name }]));
   const results = { success: true, numFailedTests: 0, numPassedTests: 2, testResults: packages.map(value => ({
     name: resolve(value.packageRoot, 'tests/index.test.ts'), assertionResults: [{ status: 'passed' }, { status: 'pending' }],
@@ -23,16 +23,17 @@ test('one coverage collection partitions every source and assertion into its own
 
 test('coverage partitioning rejects an unowned path instead of silently dropping evidence', async () => {
   const { partitionWorkspaceReports } = await import('../run-workspace-coverage-batch.mjs');
-  const packages = [{ name: 'one', packageRoot: resolve('.tmp/batch-coverage/one') }];
-  assert.throws(() => partitionWorkspaceReports(packages, { [resolve('.tmp/batch-coverage/one-other/src/index.ts')]: {} },
+  const packages = [{ name: 'one', packageRoot: resolve('tmp/batch-coverage/one') }];
+  assert.throws(() => partitionWorkspaceReports(packages, { [resolve('tmp/batch-coverage/one-other/src/index.ts')]: {} },
     { success: true, numFailedTests: 0, numPassedTests: 0, testResults: [] }), /WORKSPACE_COVERAGE_UNOWNED/u);
 });
 
-test('only the six-of-eight complete batch passes the fast ordering flag to its child', async () => {
+test('four-of-four and six-of-eight complete batches pass the existing long-test ordering flag', async () => {
   for (const [limit, workers, shard, expected] of [[8, 6, undefined, '1'], [8, 6, '1/2', undefined],
+    [4, 4, undefined, '1'], [4, 4, '1/2', undefined], [4, 2, undefined, undefined],
     [8, 8, undefined, undefined], [6, 6, undefined, undefined], [2, 2, undefined, undefined]]) {
     const stop = new Error('inspect launch before executing a process'); let seen = false;
-    const context = { root: resolve('.tmp/coverage-order-inspection'), budget: { limit }, run: async spec => {
+    const context = { root: resolve('tmp/coverage-order-inspection'), budget: { limit }, run: async spec => {
       seen = true; assert.equal(spec.env.FORGE_CHECK_COVERAGE_FULL_ORDER, expected); assert.equal(spec.workers, workers); throw stop;
     } };
     await assert.rejects(runWorkspaceCoverageBatch({ packages: [], context, workers, shard }), error => error === stop);
@@ -42,7 +43,7 @@ test('only the six-of-eight complete batch passes the fast ordering flag to its 
 
 test('a six-worker coverage reservation can overlap a consumer without reserving the whole root', async t => {
   const repositoryRoot = resolve(import.meta.dirname, '../..');
-  const base = await ensureTestTemporaryDirectory(repositoryRoot, resolve(repositoryRoot, '.tmp/tests'));
+  const base = await ensureTestTemporaryDirectory(repositoryRoot, resolve(repositoryRoot, 'tmp/tests'));
   const root = await mkdtemp(resolve(base, 'coverage-allocation-')), identity = await lstat(root, { bigint: true });
   t.after(async () => {
     const current = await lstat(root, { bigint: true });

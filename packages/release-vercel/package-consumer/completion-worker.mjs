@@ -40,7 +40,7 @@ Execution.prototype.run = function (name, check, ...rest) {
 if (mode === 'crash-publish-receipt') {
   const open = filesystem.promises.open;
   filesystem.promises.open = async (path, ...args) => {
-    if (typeof path === 'string' && basename(path) === '.latest-publish.json.next' && dirname(path) === resolve(cwd, '.tmp/release-slot')) process.exit(71);
+    if (typeof path === 'string' && basename(path) === '.latest-publish.json.next' && dirname(path) === resolve(cwd, 'state/release-slot')) process.exit(71);
     return open(path, ...args);
   };
   syncBuiltinESMExports();

@@ -7,7 +7,7 @@ import { createPosixProcessIdentityReader, createWindowsProcessIdentityReader, c
   createWindowsProcessControl, createPosixProcessControl } from '../dist/index.js';
 
 test.runIf(['win32', 'linux'].includes(process.platform) && process.arch === 'x64')('cleans owned descendants after the coordinator is force-killed', async () => {
-  const base = resolve(import.meta.dirname, '../../../.tmp/owned-scope-tests'); await mkdir(base, { recursive: true });
+  const base = resolve(import.meta.dirname, '../../../tmp/owned-scope-tests'); await mkdir(base, { recursive: true });
   const root = await mkdtemp(resolve(base, 'owner-')), marker = resolve(root, 'pid');
   const owner = spawn(process.execPath, [resolve(import.meta.dirname, 'fixtures/owned-scope-owner.mjs'), marker], { windowsHide: true, stdio: ['ignore', 'ignore', 'inherit', 'ipc'] });
   const reader = process.platform === 'win32' ? createWindowsProcessIdentityReader() : createPosixProcessIdentityReader();

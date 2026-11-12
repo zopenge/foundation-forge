@@ -1,4 +1,4 @@
-import type { SourceTextFormatVersion, StagedSourceTextFile } from './content-contracts.js';
+import type { StagedSourceTextFile } from './content-contracts.js';
 import { SOURCE_TEXT_NORMALIZATION } from './text-integrity.js';
 import { compareStrings } from './validation.js';
 
@@ -14,20 +14,19 @@ export interface SourceTextContentDedupPlan {
   readonly uniqueNormalizedBodyBytes: number;
 }
 
-export const sourceTextContentKey = (file: StagedSourceTextFile, formatVersion: SourceTextFormatVersion): string => formatVersion === 2 ? [
+export const sourceTextContentKey = (file: StagedSourceTextFile): string => [
   'source-text-v2', SOURCE_TEXT_NORMALIZATION, file.group,
   file.sha256, String(file.byteLength), file.normalizedSha256,
   String(file.normalizedByteLength),
-].join(':') : `source-text-v1:${file.path}`;
+].join(':');
 export const planSourceTextContentDedup = (
   files: readonly StagedSourceTextFile[],
-  formatVersion: SourceTextFormatVersion,
 ): SourceTextContentDedupPlan => {
   const ordered = [...files].sort((a, b) => compareStrings(a.path, b.path));
   const blockKeyByPath = new Map<string, string>();
   const grouped = new Map<string, StagedSourceTextFile[]>();
   for (const file of ordered) {
-    const key = sourceTextContentKey(file, formatVersion);
+    const key = sourceTextContentKey(file);
     blockKeyByPath.set(file.path, key);
     const values = grouped.get(key) ?? [];
     values.push(file);

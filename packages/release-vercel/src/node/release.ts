@@ -15,11 +15,10 @@ export async function runRelease(options: RunReleaseOptions): Promise<ReleaseRep
     if (!['check', 'publish', 'status', 'verify', 'recover', 'retire', 'login'].includes(options.command)
       || (options.sha !== undefined && (!['status', 'verify'].includes(options.command) || !/^[a-f0-9]{40}$/u.test(options.sha)))) throw new ReleaseError('ARGUMENT_INVALID');
     if (options.retryCompletion !== undefined && (options.command !== 'verify' || typeof options.retryCompletion !== 'boolean')) throw new ReleaseError('ARGUMENT_INVALID');
-    if (options.abandonUnstarted !== undefined && (options.command !== 'retire' || typeof options.abandonUnstarted !== 'boolean'
-      || (options.abandonUnstarted && options.confirmOrigin !== undefined))) throw new ReleaseError('ARGUMENT_INVALID');
-    if (options.command === 'retire' ? !options.runId || !/^[a-f0-9-]{36}$/u.test(options.runId) || (options.confirmOrigin !== undefined && !/^[a-f0-9]{64}$/u.test(options.confirmOrigin)) : options.runId !== undefined || options.confirmOrigin !== undefined) throw new ReleaseError('ARGUMENT_INVALID');
+    if (options.abandonUnstarted !== undefined && (options.command !== 'retire' || typeof options.abandonUnstarted !== 'boolean')) throw new ReleaseError('ARGUMENT_INVALID');
+    if (options.command === 'retire' ? !options.runId || !/^[a-f0-9-]{36}$/u.test(options.runId) : options.runId !== undefined) throw new ReleaseError('ARGUMENT_INVALID');
     if (options.command === 'login') return await runWorkspaceRelease(options);
-    const managed = await pathExists(resolve(options.cwd, '.tmp/forge-vercel-release/managed.json'));
+    const managed = await pathExists(resolve(options.cwd, 'state/forge-vercel-release/managed.json'));
     if (options.command === 'retire') {
       if (!managed) throw new ReleaseError('SOURCE_UNSUPPORTED', { reason: 'RETIREMENT_REQUIRES_MANAGED_RUN' });
       return await runManagedRetirement(options);

@@ -17,7 +17,7 @@ export const withPolicyFixture = async (
   action: (fixture: NodePolicyFixture) => Promise<void>,
 ): Promise<void> => {
   const cache = fileURLToPath(
-    new URL('../../../../.tmp/policy-tests/', import.meta.url),
+    new URL('../../../../tmp/policy-tests/', import.meta.url),
   );
   await mkdir(cache, { recursive: true });
   const root = await mkdtemp(join(cache, 'fixture-'));

@@ -4,6 +4,7 @@ import { mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 
 import { auditOpenCodeEvidence, runOpenCodeArm, spawnBounded } from './opencode.mjs';
+import { ensureTestTemporaryDirectory } from '../test-temporary-directory.mjs';
 
 const fail=code=>Object.assign(new Error(code),{code});
 const within=(base,target)=>{
@@ -16,9 +17,13 @@ const fakeChunk=(choices,usage)=>JSON.stringify({id:'chatcmpl-transport-probe',
   ...(usage?{usage}:{})});
 
 export const probeTransportObservation=async({executable,outputDir,
+  repositoryRoot=resolve(import.meta.dirname,'../..'),
   processRunner=spawnBounded})=>{
   const output=resolve(outputDir);
-  const temp=await realpath(resolve(import.meta.dirname,'../..','.tmp'));
+  const temporaryRoot=resolve(repositoryRoot,'tmp');
+  if(!within(temporaryRoot,output))throw fail('TRANSPORT_PROBE_OUTPUT_OUTSIDE_TEMP');
+  await ensureTestTemporaryDirectory(repositoryRoot,dirname(output));
+  const temp=await realpath(temporaryRoot);
   const parent=await realpath(dirname(output));
   if(!within(temp,output)||!(parent===temp||within(temp,parent)))
     throw fail('TRANSPORT_PROBE_OUTPUT_OUTSIDE_TEMP');

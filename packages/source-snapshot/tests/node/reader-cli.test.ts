@@ -1,9 +1,11 @@
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { sourceTestTemporaryDirectory } from '../temporary-directory.js';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import {
-  exportRepositorySnapshot,
+  prepareRepositorySnapshot,
+  publishPreparedSourceSnapshot,
+  verifyRepositorySnapshotFreeze,
   readPublishedSourceSnapshotText,
   runSourceSnapshotCli,
   unpackPublishedSourceSnapshot,
@@ -15,7 +17,7 @@ const limits = { maxObjectBytes: 1_048_576, maxFileBytes: 16_777_216, maxTotalBy
 async function publishedFixture() {
   const source = await createRepository();
   await addCommittedFile(source, 'src/main.ts', 'alpha\r\nbeta🙂');
-  const base = await mkdtemp(join(tmpdir(), 'forge-source-reader-'));
+  const base = await mkdtemp(join(await sourceTestTemporaryDirectory(), 'forge-source-reader-'));
   const target = join(base, 'store');
   const state = join(base, 'state');
   await mkdir(state);
@@ -30,14 +32,21 @@ async function publishedFixture() {
     targetRoot: target,
     lockPath: join(state, 'publish.lock'),
     ownerId: 'reader-owner',
-  };  const result = await exportRepositorySnapshot(options);
-  if (result.status === 'BLOCKED') throw new Error('fixture export blocked');
+  };
+  const prepared = await prepareRepositorySnapshot({ ...options, workRoot: state });
+  let snapshotId: string;
+  try {
+    if (prepared.plan.manifest === null) throw new Error('fixture export blocked');
+    expect((await verifyRepositorySnapshotFreeze(options, prepared.plan.freeze)).ok).toBe(true);
+    const result = await publishPreparedSourceSnapshot({ manifest: prepared.plan.manifest, objects: prepared.objects }, options);
+    snapshotId = result.snapshotId;
+  } finally { await prepared.dispose(); }
   await removeRepository(source);
   return {
     base,
     target,
     ownerId: options.ownerId,
-    snapshotId: result.publication.snapshotId,
+    snapshotId,
     cleanup: () => rm(base, { recursive: true, force: true }),
   };
 }

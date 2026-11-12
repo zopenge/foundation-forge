@@ -32,7 +32,7 @@ export async function recordVerifiedAlias(session: ManagedSession, receipt: Mana
 export async function resumeVerifiedAlias(session: ManagedSession, receipt: ManagedReceipt) {
   if (!pendingAlias(receipt)) return;
   const original = await originalIntent(session, receipt);
-  for (const reference of session.state.history ?? []) {
+  for (const reference of session.state.history) {
     if (!reference.path.startsWith('history/')) continue;
     const archive = await readManagedDisposition(session.slot.paths, reference.path.slice(8, -5));
     if (!archive || archive.stopped.command !== 'verify' || archive.outcome?.ok !== true) continue;

@@ -145,21 +145,7 @@ export const splitSourceTextFile = (file: StagedSourceTextFile, maxObjectBytes: 
   });
 };
 
-const sectionInput = (segment: RawSourceTextSegment): SourceTextObjectSectionInput => ({
-  formatVersion: 1,
-  path: segment.file.path,
-  group: segment.file.group,
-  sourceSha256: segment.file.sha256,
-  sourceByteLength: segment.file.byteLength,
-  encoding: segment.file.encoding,
-  bom: segment.file.bom,
-  startLine: segment.startLine,
-  endLine: segment.endLine,
-  segmentIndex: segment.segmentIndex,
-  segmentCount: segment.segmentCount,
-  text: segment.text,
-});
-const contentBlockInput = (segment: RawSourceTextSegment): SourceTextObjectSectionInput => ({
+export const sourceTextObjectInputForSegment = (segment: RawSourceTextSegment): SourceTextObjectSectionInput => ({
   formatVersion: 2,
   group: segment.file.group,
   sourceSha256: segment.file.sha256,
@@ -175,10 +161,8 @@ const contentBlockInput = (segment: RawSourceTextSegment): SourceTextObjectSecti
   segmentCount: segment.segmentCount,
   text: segment.text,
 });
-export const sourceTextObjectInputForSegment = (segment: RawSourceTextSegment, formatVersion: SourceTextFormatVersion): SourceTextObjectSectionInput =>
-  formatVersion === 2 ? contentBlockInput(segment) : sectionInput(segment);
-const renderInputs = (segments: readonly RawSourceTextSegment[], formatVersion: SourceTextFormatVersion) =>
-  segments.map(segment => sourceTextObjectInputForSegment(segment, formatVersion));
+const renderInputs = (segments: readonly RawSourceTextSegment[]) =>
+  segments.map(sourceTextObjectInputForSegment);
 
 export const validateSourceTextPackOptions = (options: SourceTextPackOptions): SourceTextFormatVersion => {
   for (const field of ['targetObjectBytes', 'maxObjectBytes', 'maxObjectCount', 'maxObjectBytesTotal'] as const) {
@@ -188,8 +172,8 @@ export const validateSourceTextPackOptions = (options: SourceTextPackOptions): S
   if (options.targetObjectBytes === 0 || options.maxObjectBytes === 0 || options.targetObjectBytes > options.maxObjectBytes) {
     throw new SourceSnapshotError('INVALID_INPUT', { field: 'objectBytes' });
   }
-  const version = options.textFormatVersion ?? 1;
-  if (version !== 1 && version !== 2) throw new SourceSnapshotError('INVALID_INPUT', { field: 'textFormatVersion' });
+  const version = options.textFormatVersion ?? 2;
+  if (version !== 2) throw new SourceSnapshotError('INVALID_INPUT', { field: 'textFormatVersion' });
   return version;
 };
 
@@ -197,9 +181,8 @@ const finalizeObject = async (
   group: string,
   segments: readonly RawSourceTextSegment[],
   maxObjectBytes: number,
-  formatVersion: SourceTextFormatVersion,
 ): Promise<PackedSourceTextObject> => {
-  const rendered = renderSourceTextObject(group, renderInputs(segments, formatVersion));
+  const rendered = renderSourceTextObject(group, renderInputs(segments));
   const bytes = encoder.encode(rendered.content);
   if (bytes.byteLength > maxObjectBytes) throw new SourceSnapshotError('PACK_OBJECT_TOO_LARGE', { group });
   const integrity = await calculateBytesIntegrity(bytes);
@@ -210,10 +193,8 @@ const finalizeObject = async (
     if (location === undefined) throw new SourceSnapshotError('COVERAGE_INVALID', { path: segment.file.path });
     segment.objectPath = path;
     segment.objectSha256 = integrity.sha256;
-    if (formatVersion === 2) {
-      segment.bodyByteOffset = location.bodyByteOffset;
-      segment.bodyByteLength = location.bodyByteLength;
-    }
+    segment.bodyByteOffset = location.bodyByteOffset;
+    segment.bodyByteLength = location.bodyByteLength;
   });
   return Object.freeze({ path, sha256: integrity.sha256, byteLength: integrity.byteLength, group, content: rendered.content });
 };
@@ -225,7 +206,7 @@ export const buildSourceTextPackage = async (
   const formatVersion = validateSourceTextPackOptions(options);
   uniquePaths(input.map(value => value.path));
   const files = [...input].sort((a, b) => compareStrings(a.path, b.path));
-  const dedup = planSourceTextContentDedup(files, formatVersion);
+  const dedup = planSourceTextContentDedup(files);
   const raw = dedup.blocks
     .flatMap(block => splitSourceTextFile(block.file, options.maxObjectBytes, block.key))
     .sort((a, b) => compareStrings(a.file.group, b.file.group) || compareStrings(a.contentKey, b.contentKey) || a.segmentIndex - b.segmentIndex);
@@ -246,15 +227,15 @@ export const buildSourceTextPackage = async (
     let current: RawSourceTextSegment[] = [];
     let currentByteLength = headerByteLength;
     for (const segment of segments) {
-      const sectionByteLength = sourceTextObjectSectionByteLength(sourceTextObjectInputForSegment(segment, formatVersion));
+      const sectionByteLength = sourceTextObjectSectionByteLength(sourceTextObjectInputForSegment(segment));
       const candidateByteLength = currentByteLength + (current.length > 0 ? 1 : 0) + sectionByteLength;
       if (current.length > 0 && candidateByteLength > options.targetObjectBytes) {
-        objects.push(await finalizeObject(group, current, options.maxObjectBytes, formatVersion));
+        objects.push(await finalizeObject(group, current, options.maxObjectBytes));
         current = [segment]; currentByteLength = headerByteLength + sectionByteLength;
       } else { current.push(segment); currentByteLength = candidateByteLength; }
       if (currentByteLength > options.maxObjectBytes) throw new SourceSnapshotError('PACK_OBJECT_TOO_LARGE', { path: segment.file.path });
     }
-    if (current.length > 0) objects.push(await finalizeObject(group, current, options.maxObjectBytes, formatVersion));
+    if (current.length > 0) objects.push(await finalizeObject(group, current, options.maxObjectBytes));
   }
 
   const total = objects.reduce((sum, value) => sum + value.byteLength, 0);
@@ -266,7 +247,7 @@ export const buildSourceTextPackage = async (
     const contentKey = dedup.blockKeyByPath.get(file.path);
     if (contentKey === undefined) throw new SourceSnapshotError('COVERAGE_INVALID', { path: file.path });
     const segments = (segmentsByContentKey.get(contentKey) ?? []).map(value => {
-      if (value.objectPath === undefined || value.objectSha256 === undefined) {
+      if (value.objectPath === undefined || value.objectSha256 === undefined || value.bodyByteOffset === undefined || value.bodyByteLength === undefined) {
         throw new SourceSnapshotError('COVERAGE_INVALID', { path: file.path });
       }
       return Object.freeze({
@@ -277,13 +258,9 @@ export const buildSourceTextPackage = async (
         segmentIndex: value.segmentIndex,
         segmentCount: value.segmentCount,
         text: value.text,
-        ...(formatVersion === 2
-          ? {
-              bodyByteOffset: value.bodyByteOffset,
-              bodyByteLength: value.bodyByteLength,
-              sourceByteOffset: value.sourceByteOffset,
-            }
-          : {}),
+        bodyByteOffset: value.bodyByteOffset,
+        bodyByteLength: value.bodyByteLength,
+        sourceByteOffset: value.sourceByteOffset,
       });
     });
     return Object.freeze({

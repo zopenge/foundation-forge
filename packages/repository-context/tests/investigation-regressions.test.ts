@@ -319,6 +319,7 @@ test('locate-only investigation never reads evidence or hint bodies', async () =
 
   expect(reads).toBe(0);
   expect(result.evidence).toEqual([]);
+  expect(result.evidenceUnits).toEqual([]);
   expect(result.sourceHints).toEqual([]);
   expect(result.candidates.length).toBeGreaterThan(0);
 });
@@ -686,7 +687,7 @@ test('显式请求范围在补充证据与实际读取中保持收窄', async ()
             lineStart: source.lineStart, lineEnd: source.lineEnd,
             text: files.find((file) => file.path === source.path)?.text ?? '' })) };
       } });
-    const result = await investigator.investigate({ ...request, evidenceBudget: { maxBytes: 4096 } });
+    const result = await investigator.investigate(request);
     expect(result.candidates.map((item) => item.path)).toContain('src/alpha/main.ts');
     expect([...result.evidence, ...result.sourceHints].every((item) => item.path === 'src/alpha/main.ts')).toBe(true);
     expect([...new Set(reads)]).toEqual(['src/alpha/main.ts']);
@@ -715,8 +716,7 @@ test('正文高频注释不能挤掉已明确命名的第三个符号', async ()
         lineStart: source.lineStart, lineEnd: source.lineEnd,
         text: files.find((file) => file.path === source.path)?.text.split('\n')
           .slice(source.lineStart - 1, source.lineEnd).join('\n') ?? '' })) }) });
-  const result = await investigator.investigate({ query: named.join(' '), scope: ['src/'],
-    evidenceBudget: { maxBytes: 30_000 } });
+  const result = await investigator.investigate({ query: named.join(' '), scope: ['src/'] });
   expect(result.candidates.map((item) => item.name).sort()).toEqual([...named].sort());
   expect(result.evidence.map((item) => item.path)).not.toContain('src/notes.ts');
 });
@@ -748,8 +748,7 @@ test('三至五个明确符号在顺序和文件长度变化后仍优先于注�
             text: files.find((file) => file.path === source.path)?.text.split('\n')
               .slice(source.lineStart - 1, source.lineEnd).join('\n') ?? '',
           })) }) });
-      const result = await investigator.investigate({ query: queryNames.join(' '), scope: ['src/'],
-        evidenceBudget: { maxBytes: 40_000 } });
+      const result = await investigator.investigate({ query: queryNames.join(' '), scope: ['src/'] });
       expect(result.candidates.map((item) => item.name).sort()).toEqual([...names].sort());
       expect(result.evidence.map((item) => item.path)).not.toContain('src/notes.ts');
     }

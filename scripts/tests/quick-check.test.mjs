@@ -11,15 +11,23 @@ const packages = [
   { name: 'leaf', directory: 'packages/leaf', workspaceDependencies: ['core'], quickTests: ['tests/unit.test.ts'] },
   { name: 'other', directory: 'packages/other', workspaceDependencies: [], quickTests: ['tests/unit.test.ts'] },
 ];
-const state = { schemaVersion: 1, environmentDigest: 'env', files: { 'packages/core/src/a.ts': 'a', 'packages/leaf/src/b.ts': 'b' } };
+const state = { schemaVersion: 1, environmentDigest: 'env', selectionEnvironmentDigest: 'selection',
+  files: { 'packages/core/src/a.ts': 'a', 'packages/leaf/src/b.ts': 'b' } };
 const quick = files => selectQuickPlan({ state, fingerprint: { ...state, files: { ...state.files, ...files } }, packages,
   scriptFiles: ['scripts/tests/quick-check.test.mjs', 'scripts/tests/slow.test.mjs'] });
+
+test('quick 拒绝缺少当前影响选择摘要的收据', () => {
+  const old = { ...state }; delete old.selectionEnvironmentDigest;
+  for (const [previous, fingerprint] of [[old, state], [state, old], [old, old]])
+    assert.equal(selectQuickPlan({ state: previous, fingerprint, packages,
+      scriptFiles: ['scripts/tests/quick-check.test.mjs'] }).kind, 'full-required');
+});
 test('quick 复用传递依赖选择，只运行明确快速集合并保留完整套件为 NOT RUN', () => {
   assert.deepEqual(quick({ 'packages/core/src/a.ts': 'changed' }), { kind: 'quick', packageNames: ['core', 'leaf'],
     scriptFiles: ['scripts/tests/quick-check.test.mjs'], tests: { core: ['tests/core.test.ts'], leaf: ['tests/unit.test.ts'] } });
 });
 test('quick 真实文件编排只构建影响包、显式报告 NOT RUN，收据逐字节不变且发布拒绝', async t => {
-  const base = resolve(import.meta.dirname, '../../.tmp/tests'); await mkdir(base, { recursive: true });
+  const base = resolve(import.meta.dirname, '../../tmp/tests'); await mkdir(base, { recursive: true });
   const root = await mkdtemp(resolve(base, 'quick-flow-')); t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(resolve(root, 'scripts/tests'), { recursive: true });
   await writeFile(resolve(root, 'scripts/tests/quick-fixture.test.mjs'), '');
@@ -31,11 +39,11 @@ test('quick 真实文件编排只构建影响包、显式报告 NOT RUN，收据
     values.push({ name, directory: `packages/${name}`, packageRoot, workspaceDependencies: [],
       verification: {}, manifest: { scripts: { 'test:coverage': 'vitest run --coverage' } } });
   }
-  const old = { schemaVersion: 1, environmentDigest: 'env', files: { 'packages/leaf/src/a.ts': 'old' },
+  const old = { schemaVersion: 1, environmentDigest: 'env', selectionEnvironmentDigest: 'selection', files: { 'packages/leaf/src/a.ts': 'old' },
     distDigests: await collectDistDigests(values), validation: { schemaVersion: 1, kind: 'full' } };
-  const next = { schemaVersion: 1, environmentDigest: 'env', files: { 'packages/leaf/src/a.ts': 'new' } };
-  await mkdir(resolve(root, '.tmp/check-cache'), { recursive: true });
-  const path = resolve(root, '.tmp/check-cache/state.json'), receipt = JSON.stringify(old); await writeFile(path, receipt);
+  const next = { schemaVersion: 1, environmentDigest: 'env', selectionEnvironmentDigest: 'selection', files: { 'packages/leaf/src/a.ts': 'new' } };
+  await mkdir(resolve(root, 'tmp/check-cache'), { recursive: true });
+  const path = resolve(root, 'tmp/check-cache/state.json'), receipt = JSON.stringify(old); await writeFile(path, receipt);
   const calls = []; let finalized = 0;
   const options = { repositoryRoot: root, discover: async () => ({ repositoryRoot: root, packages: values }),
     collect: async () => next,

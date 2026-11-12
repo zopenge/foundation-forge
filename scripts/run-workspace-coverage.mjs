@@ -11,12 +11,12 @@ import { createTestRunContext } from './test-run-context.mjs';
 
 const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
 const scriptPath = fileURLToPath(import.meta.url);
-const ignoredDirectories = new Set(['.git', '.tmp', 'coverage', 'dist', 'node_modules']);
+const ignoredDirectories = new Set(['.git', '.tmp', 'tmp', 'coverage', 'dist', 'node_modules']);
 const testFilename = /\.(?:test|spec)\.[cm]?[jt]sx?$/u;
 
 export const publishCoverageReports = async ({ reports, root, summary, copy = cp, write = writeFile, move = rename, remove = rm }) => {
   const owned = (parent, path) => { const value = relative(parent, path); return value && !value.startsWith('..') && !isAbsolute(value); };
-  if (!owned(resolve(repositoryRoot, '.tmp'), resolve(root))) throw new Error('unsafe coverage publication root');
+  if (!owned(resolve(repositoryRoot, 'tmp'), resolve(root))) throw new Error('unsafe coverage publication root');
   const outputs = reports.map(report => {
     const target = resolve(report.packageRoot, 'coverage');
     const source = resolve(report.logRoot, 'coverage');

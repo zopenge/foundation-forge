@@ -54,7 +54,7 @@ const fixture = async () => {
     expect(execution.cwd).toBe(f.cwd); return { dev: initial, main: initial };
   });
   vi.spyOn(Execution.prototype, 'run').mockImplementation(async name => { throw new Error(`unexpected recovery component application command: ${name}`); });
-  const ignore = Buffer.from('.tmp/\n'), ignoreOid = createHash('sha1').update(Buffer.from(`blob ${ignore.length}\0`)).update(ignore).digest('hex');
+  const ignore = Buffer.from('tmp/\nstate/\n'), ignoreOid = createHash('sha1').update(Buffer.from(`blob ${ignore.length}\0`)).update(ignore).digest('hex');
   await writeFile(resolve(f.cwd, '.gitignore'), ignore);
   const git = vi.spyOn(Execution.prototype, 'git').mockImplementation(async function (this: Execution, args) {
     expect(this.cwd).toBe(f.cwd);
@@ -62,14 +62,14 @@ const fixture = async () => {
     if (JSON.stringify(args) === JSON.stringify(['merge-base', '--is-ancestor', f.sha, initial])) throw new ReleaseError('GIT_FAILED', { exitCode: 1 });
     if (JSON.stringify(args) === JSON.stringify(['rev-parse', '--verify', `${f.sha}:.gitignore`])) return ignoreOid;
     if (args.length === 7 && JSON.stringify(args.slice(0, 6)) === JSON.stringify(['-c', 'core.quotepath=false', 'check-ignore', '--no-index', '-v', '--'])
-      && ['.tmp/release-slot/', '.tmp/forge-vercel-release/managed.json'].includes(args[6] ?? '')) return `.gitignore:1:.tmp/\t${args[6]}`;
+      && ['state/release-slot/', 'state/forge-vercel-release/managed.json'].includes(args[6] ?? '')) return `.gitignore:2:state/\t${args[6]}`;
     throw new Error(`unexpected recovery component Git query: ${JSON.stringify(args)}`);
   });
   vi.spyOn(Execution.prototype, 'streamGit').mockImplementation(async function (this: Execution, args, consume) {
     expect(this.cwd).toBe(f.cwd);
-    const pathspec = process.platform === 'win32' ? ':(icase,literal).tmp' : ':(literal).tmp';
+    const pathspec = process.platform === 'win32' ? ':(icase,literal)state' : ':(literal)state';
     if (JSON.stringify(args) === JSON.stringify(['ls-files', '--cached', '--with-tree=HEAD', '-z', '--', pathspec])) return;
-    if (JSON.stringify(args) === JSON.stringify(['ls-tree', '-rz', f.sha, '--', '.tmp/release-slot'])) return;
+    if (JSON.stringify(args) === JSON.stringify(['ls-tree', '-rz', f.sha, '--', 'state/release-slot'])) return;
     if (JSON.stringify(args) === JSON.stringify(['cat-file', 'blob', ignoreOid])) { consume(ignore); return; }
     throw new Error(`unexpected recovery component Git stream: ${JSON.stringify(args)}`);
   });

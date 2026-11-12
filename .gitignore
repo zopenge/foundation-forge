@@ -9,11 +9,16 @@ coverage/
 
 # Tool caches and temporary files
 .cache/
-.tmp/
 tmp/
 .vitest/
 .nyc_output/
 .eslintcache
+
+# 持久的本地发布恢复证据
+state/
+
+# 仅保留退役的历史证据；活跃工具只使用 tmp/ 与 state/
+.tmp/
 
 # Agent planning artifacts
 docs/superpowers/

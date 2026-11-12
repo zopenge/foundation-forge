@@ -23,7 +23,7 @@ function deferred<T>() {
 afterEach(() => { vi.useRealTimers(); delete probe.read; });
 
 async function controlledCommand() {
-  const base = resolve(import.meta.dirname, '../../../.tmp/execution-identity');
+  const base = resolve(import.meta.dirname, '../../../tmp/execution-identity');
   await mkdir(base, { recursive: true });
   const root = await mkdtemp(resolve(base, 'r-')), marker = resolve(root, 'finish');
   const observed = deferred<ReadProcessIdentityRequest>(), identity = deferred<ReadProcessIdentityResult>();

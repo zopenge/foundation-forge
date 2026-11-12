@@ -20,7 +20,7 @@ export const runReportedVerification = async ({ model, policy, mode, packageName
   try {
     await verify({ model, policy, mode: report.mode,
       packageNames: report.targets.map(({ name }) => name), expectedCommit: report.expectedCommit, budget,
-      verificationRoot: resolve(model.repositoryRoot, '.tmp', 'registry-package-verification'),
+      verificationRoot: resolve(model.repositoryRoot, 'tmp', 'registry-package-verification'),
       onEvent: async (event) => {
         stage = event.stage;
         if (event.state === 'verified') {

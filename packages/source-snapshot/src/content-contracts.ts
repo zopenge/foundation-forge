@@ -63,7 +63,7 @@ export interface StagedSourceTextFile {
   readonly normalizedByteLength: number;
   readonly finalNewline: boolean;
 }
-export type SourceTextFormatVersion = 1 | 2;
+export type SourceTextFormatVersion = 2;
 export interface SourceTextPackOptions {
   readonly targetObjectBytes: number;
   readonly maxObjectBytes: number;
@@ -79,9 +79,9 @@ export interface SourceTextSegment {
   readonly segmentIndex: number;
   readonly segmentCount: number;
   readonly text: string;
-  readonly bodyByteOffset?: number;
-  readonly bodyByteLength?: number;
-  readonly sourceByteOffset?: number;
+  readonly bodyByteOffset: number;
+  readonly bodyByteLength: number;
+  readonly sourceByteOffset: number;
 }
 export interface PackedSourceTextFile extends Omit<StagedSourceTextFile, 'text'> {
   readonly textFormatVersion: SourceTextFormatVersion;
@@ -130,16 +130,7 @@ export interface SourceTextDetailsV2 {
   readonly rawReconstruction: 'not-provided';
   readonly segments: readonly SourceTextLocatorV2[];
 }
-export interface SourceTextDetailsV1 {
-  readonly kind: 'source-text';
-  readonly formatVersion: 1;
-  readonly group: string;
-  readonly encoding: DecodedSourceText['encoding'];
-  readonly bom: DecodedSourceText['bom'];
-  readonly lineCount: number;
-  readonly segments: readonly Readonly<Record<string, unknown>>[];
-}
-export type SourceTextDetails = SourceTextDetailsV1 | SourceTextDetailsV2;
+export type SourceTextDetails = SourceTextDetailsV2;
 
 export interface CreateTextSnapshotManifestInput {
   readonly projectId: string;

@@ -42,12 +42,6 @@ export const collectSnapshotObjectRequirements = (
 
 const parseV2 = (context: SnapshotReadContext, path: string): SourceTextDetailsV2 => {
   const details = parseSourceTextDetails(requireSnapshotReadFile(context, path).details);
-  if (details.formatVersion !== 2) {
-    throw new SourceSnapshotError('TEXT_FORMAT_UNSUPPORTED', {
-      path,
-      availableAssurance: 'object-integrity',
-    });
-  }
   return details;
 };
 

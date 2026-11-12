@@ -6,7 +6,7 @@ async function fixture() {
     { targetObjectBytes: 4096, maxObjectBytes: 8192, maxObjectCount: 10, maxObjectBytesTotal: 100000, textFormatVersion: 2 });
   return createTextSnapshotManifest({ projectId: 'provenance', policyVersion: 'v1', publishedAt: 1, repositories: [], textPackage });
 }
-test('legacy snapshots preserve unknown capture provenance instead of backfilling current state', async () => {
+test('manifest-only snapshots preserve unknown capture provenance instead of backfilling current state', async () => {
   const manifest = await fixture(); const report = await buildSnapshotProvenance(manifest);
   expect(report).toMatchObject({ snapshotId: manifest.snapshotId, origin: 'manifest-only', captureMode: 'unknown',
     exporter: null, grouping: null, policy: null, frozenInputDigest: null, fileStates: null, bodyVerification: 'not-performed' });

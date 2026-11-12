@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { collectDistDigests, collectWorkspaceFingerprint } from './check-fingerprint.mjs';
 import { runFullCheck } from './check-full.mjs';
 import { openCheckCancellation } from './check-cancellation.mjs';
-import { parseCoverageShard, persistCoverageShard, readCoverageShardArtifacts } from './ci-coverage-shards.mjs';
+import { coverageShardDirectoryName, parseCoverageShard, persistCoverageShard, readCoverageShardArtifacts } from './ci-coverage-shards.mjs';
 import { runWorkspaceCoverageBatch, mergeWorkspaceCoverage } from './run-workspace-coverage-batch.mjs';
 import { discoverPackageTestFiles } from './run-workspace-coverage.mjs';
 import { discoverWorkspacePackageModel } from './workspace-packages.mjs';
@@ -55,8 +55,8 @@ export async function runCiCheck(args, signal) {
     return;
   }
   if (command.kind === 'shard' || command.kind === 'coverage-shard') {
-    const shard = parseCoverageShard(command.shard), directory = resolve(repositoryRoot, '.tmp/ci-shards');
-    try { await lstat(resolve(directory, `part-${shard.index}`)); throw new Error('CI_SHARD_OUTPUT_EXISTS'); }
+    const shard = parseCoverageShard(command.shard), directory = resolve(repositoryRoot, 'tmp/ci-shards');
+    try { await lstat(resolve(directory, coverageShardDirectoryName(shard.index, process.env.GITHUB_RUN_ATTEMPT ?? null))); throw new Error('CI_SHARD_OUTPUT_EXISTS'); }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
     let partial, context;
     const coverage = async options => {

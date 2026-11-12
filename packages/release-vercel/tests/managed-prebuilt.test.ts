@@ -21,7 +21,7 @@ describe('managed prebuilt lifecycle', () => {
       source: { ...fixture.config.source, prepare: [{ command: 'node', args: ['-e', build +
         'process.stdout.write(JSON.stringify({url:process.env.FORGE_RELEASE_VERSION_URL,config:process.env.FORGE_RELEASE_CONFIG_SHA256,context:process.env.FORGE_RELEASE_CANDIDATE_CONTEXT}))'] }] } };
       await writeFile(resolve(fixture.cwd, 'release.config.json'), JSON.stringify(config));
-      await writeFile(resolve(fixture.cwd, '.gitignore'), '.tmp/\nnode_modules/\n.vercel/\n');
+      await writeFile(resolve(fixture.cwd, '.gitignore'), 'tmp/\nstate/\nnode_modules/\n.vercel/\n');
       const sha = fixture.commit();
       const result = await runRelease({ command: 'check', cwd: fixture.cwd,
         transport: { api: async () => { throw new Error('check must not query the cloud'); },
@@ -40,14 +40,14 @@ describe('managed prebuilt lifecycle', () => {
         admission: [{ command: 'node', args: ['-e', 'process.exit(0)'] }] },
       source: { ...fixture.config.source, prepare: [{ command: 'node', args: ['-e', build] }] } };
       await writeFile(resolve(fixture.cwd, 'release.config.json'), JSON.stringify(config));
-      await writeFile(resolve(fixture.cwd, '.gitignore'), '.tmp/\nnode_modules/\n.vercel/\n');
+      await writeFile(resolve(fixture.cwd, '.gitignore'), 'tmp/\nstate/\nnode_modules/\n.vercel/\n');
       const sha = fixture.commit();
       const transport = { api: async () => { throw new Error('check must not use the cloud'); },
         buildInfo: async () => { throw new Error('check must not use the cloud'); } };
       const result = await runRelease({ command: 'check', cwd: fixture.cwd, transport });
       expect(result).toMatchObject({ ok: true, candidateSha: sha, processes: { status: 'closed' },
         prebuilt: { sourceSha: sha, fileCount: 2, createEffect: 'not-attempted', promoteEffect: 'not-attempted' } });
-      const state = JSON.parse(await readFile(resolve(fixture.cwd, '.tmp/release-slot/state.json'), 'utf8'));
+      const state = JSON.parse(await readFile(resolve(fixture.cwd, 'state/release-slot/state.json'), 'utf8'));
       expect(state.prebuilt).toEqual(result.prebuilt);
       expect(state.processes.every((item: { status: string }) => item.status === 'closed')).toBe(true);
       expect(fixture.ref('dev')).toBe(fixture.initial); expect(fixture.ref('main')).toBe(fixture.initial);

@@ -13,7 +13,7 @@ it('persists alias uncertainty, exposes readonly context, and proves the origina
     expect(first, JSON.stringify(first.error)).toMatchObject({ ok: false, error: { code: 'VERCEL_API' },
       prebuilt: { deploymentId: 'dpl_candidate', versionAlias: { effect: 'unknown', verified: false } },
       effects: { versionAliasAssign: 'unknown' } });
-    const receipt = resolve(value.cwd, '.tmp/release-slot/latest-publish.json');
+    const receipt = resolve(value.cwd, 'state/release-slot/latest-publish.json');
     const before = await readFile(receipt);
     let verificationRunId = '';
     for (const command of ['status', 'verify'] as const) {
@@ -33,7 +33,7 @@ it('persists alias uncertainty, exposes readonly context, and proves the origina
     let proofCheckedBeforeCreate = false;
     value.hooks.project = async () => {
       expect(await value.creates()).toBe(1);
-      const archive = JSON.parse(await readFile(resolve(value.cwd, `.tmp/release-slot/history/${verificationRunId}.json`), 'utf8'));
+      const archive = JSON.parse(await readFile(resolve(value.cwd, `state/release-slot/history/${verificationRunId}.json`), 'utf8'));
       expect(archive).toMatchObject({ stopped: { runId: verificationRunId, command: 'verify' }, outcome: { ok: true } });
       expect(archive.stopped.prebuiltResolutions).toEqual(expect.arrayContaining([expect.objectContaining({ runId: first.runId,
         sourceSha: value.sha, configSha256: first.configSha256, artifactSha256: first.prebuilt?.artifactSha256, deploymentId: 'dpl_candidate',

@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import test from 'node:test';
+import { ensureTestTemporaryDirectory } from '../test-temporary-directory.mjs';
 
 import {
   createWorkspacePackageModel,
@@ -13,7 +13,9 @@ import {
 } from '../workspace-packages.mjs';
 
 const createFixture = async (context, manifests) => {
-  const root = await mkdtemp(join(tmpdir(), 'foundation-forge-workspace-'));
+  const parent = await ensureTestTemporaryDirectory(resolve(import.meta.dirname, '../..'),
+    resolve(import.meta.dirname, '../../tmp/workspace-tests'));
+  const root = await mkdtemp(join(parent, 'workspace-'));
   context.after(() => rm(root, { force: true, recursive: true }));
   await writeFile(join(root, 'package.json'), JSON.stringify({
     engines: { node: '>=22.14.0' },

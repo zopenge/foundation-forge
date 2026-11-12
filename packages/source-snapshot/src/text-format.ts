@@ -16,12 +16,6 @@ const string = (value: unknown, field: string): string => typeof value === 'stri
 const count = (value: unknown, field: string): number => Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : invalid(field);
 const encoding = (value: unknown): DecodedSourceText['encoding'] => encodings.has(value as DecodedSourceText['encoding']) ? value as DecodedSourceText['encoding'] : invalid('encoding');
 const bom = (value: unknown): DecodedSourceText['bom'] => boms.has(value as DecodedSourceText['bom']) ? value as DecodedSourceText['bom'] : invalid('bom');
-const segments = (value: unknown): readonly Readonly<Record<string, unknown>>[] => {
-  if (!Array.isArray(value) || value.length === 0) invalid('segments');
-  const values = value as unknown[];
-  return Object.freeze(values.map((item: unknown, index: number) => Object.freeze({ ...record(item, `segments.${index}`) })));
-};
-
 const parseLocator = (value: unknown, index: number): SourceTextLocatorV2 => {
   const item = record(value, `segments.${index}`);
   const objectSha256 = string(item.objectSha256, `segments.${index}.objectSha256`);
@@ -47,18 +41,6 @@ const parseLocator = (value: unknown, index: number): SourceTextLocatorV2 => {
 
 export const parseSourceTextDetails = (value: JsonValue | undefined): SourceTextDetails => {
   const input = record(value, 'details');
-  if (input.formatVersion === undefined && input.kind === undefined) {
-    return Object.freeze({
-      kind: 'source-text' as const,
-      formatVersion: 1 as const,
-      group: string(input.group, 'group'),
-      encoding: encoding(input.encoding),
-      bom: bom(input.bom),
-      lineCount: count(input.lineCount, 'lineCount'),
-      segments: segments(input.segments),
-    });
-  }
-
   if (input.kind !== 'source-text') invalid('kind');
   if (input.formatVersion !== 2) {
     throw new SourceSnapshotError('TEXT_FORMAT_UNSUPPORTED', { formatVersion: input.formatVersion });

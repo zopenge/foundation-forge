@@ -7,7 +7,7 @@ import { files } from '../src/node/files.js';
 let root: string;
 const options = { conflictPolicy: 'overwrite', pathCaseSensitivity: 'case-sensitive' } as const;
 async function bundle(entries: Record<string, string | Uint8Array>) { return decodeConfigBundle(await createConfigBundle(Object.entries(entries).map(([path, content]) => ({ path, content: typeof content === 'string' ? new TextEncoder().encode(content) : content })), { createdAt: '2026-09-04T00:00:00Z' })); }
-beforeEach(async () => { const parent = path.resolve(import.meta.dirname, '../../../.tmp'); await fs.mkdir(parent, { recursive: true }); root = await fs.mkdtemp(path.join(parent, 'config-bundle-')); });
+beforeEach(async () => { const parent = path.resolve(import.meta.dirname, '../../../tmp'); await fs.mkdir(parent, { recursive: true }); root = await fs.mkdtemp(path.join(parent, 'config-bundle-')); });
 afterEach(async () => { vi.restoreAllMocks(); await fs.rm(root, { recursive: true, force: true }); });
 describe('safe import planning', () => {
     it('classifies all entries and aggregates reject conflicts without writes', async () => {

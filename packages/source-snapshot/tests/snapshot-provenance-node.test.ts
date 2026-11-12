@@ -7,7 +7,7 @@ import { runGit } from './node-fixtures.js';
 const policy = { sensitiveBasenames: ['.env'], textExtensions: ['.ts'], textBasenames: ['.gitignore'] };
 const stamps = { exporter: { id: 'fixture-exporter', version: '1.0.0' }, grouping: { id: 'fixture-groups', version: '1', configDigest: 'a'.repeat(64) } };
 async function fixture() {
-  const work = resolve(import.meta.dirname, '../../../.tmp/provenance-tests'); await mkdir(work, { recursive: true });
+  const work = resolve(import.meta.dirname, '../../../tmp/provenance-tests'); await mkdir(work, { recursive: true });
   const base = await mkdtemp(join(work, 'case-')); const sourceRoot = join(base, 'source'); await mkdir(sourceRoot);
   await runGit(sourceRoot, ['init', '--quiet']); await writeFile(join(sourceRoot, '.gitignore'), 'ignored/\n');
   await writeFile(join(sourceRoot, 'main.ts'), 'export const value = 1;\n'); await runGit(sourceRoot, ['add', '.']);

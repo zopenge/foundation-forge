@@ -10,7 +10,7 @@ import { discoverTestProcessSupervisor, runTestProcess } from '../test-process-r
 const module = await import('../vitest-unified-budget-config.mjs').catch(error => ({ error }));
 const repositoryRoot = resolve(import.meta.dirname, '../..');
 const create = async options => { assert.ifError(module.error); return module.createUnifiedVitestBudgetConfig(options); };
-const root = resolve('.tmp/unified-config');
+const root = resolve('tmp/unified-config');
 const packages = ['one', 'two'].map(name => ({ name, packageRoot: resolve(root, name), verification: { coverageWorkers: 8 } }));
 const options = { packages, repositoryRoot: root, jobRoot: resolve(root, 'job'), workers: 8, env: {},
   load: async ({ packageRoot, workers }) => ({ root: packageRoot, test: { maxWorkers: workers, fileParallelism: workers > 1,
@@ -56,7 +56,7 @@ test('unified execution refuses a lower package limit or configuration it cannot
 
 test('real unified workers retain package cwd and different test timeouts', { timeout: 45_000 }, async t => {
   assert.ifError(module.error);
-  const parent = resolve(repositoryRoot, '.tmp/tests'); await mkdir(parent, { recursive: true });
+  const parent = resolve(repositoryRoot, 'tmp/tests'); await mkdir(parent, { recursive: true });
   const temporary = await mkdtemp(resolve(parent, 'unified-budget-'));
   t.after(async () => {
     const inside = relative(parent, temporary); assert.ok(inside && !inside.startsWith('..') && !isAbsolute(inside));

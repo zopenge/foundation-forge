@@ -9,7 +9,7 @@ import { auditOpenCodeEvidence, buildOpenCodeInvocation,
   probeOpenCodeClient, runOpenCodeArm } from '../ab-eval/opencode.mjs';
 
 const repoRoot=resolve(import.meta.dirname,'../..');
-const tempRoot=resolve(repoRoot,'.tmp');
+const tempRoot=resolve(repoRoot,'tmp');
 const profile={version:'1.18.30',model:'vendor/model',variant:'high',agent:'build'};
 const withArm=async fn=>{
   await mkdir(tempRoot,{recursive:true});

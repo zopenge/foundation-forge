@@ -1,7 +1,7 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 
-import { afterEach, describe, expect, test } from 'vitest';
+import { describe, expect, test } from 'vitest';
 
 import {
   RepositoryFilesError,
@@ -12,25 +12,24 @@ import {
   normalizeRepositoryPath,
 } from '../src/index.js';
 import {
-  createTestRepository,
-  removeTestRepository,
-  runGit,
+  withTestRepositories,
+  type RepositoryFixture,
 } from './fixtures.js';
 
-const createdRepositories: string[] = [];
-
-const createRoot = async (): Promise<string> => {
-  const root = await createTestRepository();
-  createdRepositories.push(root);
-  return root;
-};
-
-afterEach(async () => {
-  await Promise.all(createdRepositories.splice(0).map(removeTestRepository));
-});
+const repositoryTest = (name: string, body: (fixture: RepositoryFixture) => Promise<void>) =>
+  test(name, context => withTestRepositories(context, body), 15_000);
 
 describe('repository discovery', () => {
-  test('lists tracked and untracked non-ignored files with stable normalized paths', async () => {
+  repositoryTest('pins fixture Git identities independently of inherited user configuration', async ({ createRoot, runGit }) => {
+    const root = await createRoot();
+    const emptyUser = ['-c', 'user.name=', '-c', 'user.email='];
+    for (const identity of ['GIT_AUTHOR_IDENT', 'GIT_COMMITTER_IDENT']) {
+      expect(await runGit(root, [...emptyUser, 'var', identity])).toMatch(/^Test User <test@example\.com> /u);
+    }
+    await runGit(root, [...emptyUser, 'commit', '--allow-empty', '--quiet', '-m', 'fixture identity']);
+  });
+
+  repositoryTest('lists tracked and untracked non-ignored files with stable normalized paths', async ({ createRoot, runGit, signal }) => {
     const root = await createRoot();
     await writeFile(join(root, '.gitignore'), 'ignored/\n', 'utf8');
     await mkdir(join(root, 'ignored'));
@@ -39,22 +38,22 @@ describe('repository discovery', () => {
     await writeFile(join(root, 'a tracked.ts'), '', 'utf8');
     await runGit(root, ['add', '.gitignore', 'a tracked.ts']);
 
-    await expect(listRepositoryFiles({ cwd: root })).resolves.toEqual([
+    await expect(listRepositoryFiles({ cwd: root, signal })).resolves.toEqual([
       '.gitignore',
       'a tracked.ts',
       'z-last.ts',
     ]);
-    await expect(findRepositoryRoot(join(root, 'ignored'))).resolves.toBe(root);
+    await expect(findRepositoryRoot(join(root, 'ignored'), { signal })).resolves.toBe(root);
   });
 
-  test('fails explicitly outside a Git repository', async () => {
+  repositoryTest('fails explicitly outside a Git repository', async ({ createRoot, signal }) => {
     const root = await createRoot();
     const outside = join(root, 'outside');
     await mkdir(outside);
     const previousCeiling = process.env.GIT_CEILING_DIRECTORIES;
     process.env.GIT_CEILING_DIRECTORIES = root;
     try {
-      await expect(findRepositoryRoot(outside)).rejects.toMatchObject({
+      await expect(findRepositoryRoot(outside, { signal })).rejects.toMatchObject({
         code: 'REPOSITORY_NOT_FOUND',
       });
     } finally {
@@ -63,7 +62,7 @@ describe('repository discovery', () => {
     }
   });
 
-  test('recursively lists tracked and untracked files from initialized submodules', async () => {
+  repositoryTest('recursively lists tracked and untracked files from initialized submodules', async ({ createRoot, runGit, signal }) => {
     const root = await createRoot();
     const submodule = join(root, 'modules', 'nested');
     await mkdir(submodule, { recursive: true });
@@ -83,7 +82,7 @@ describe('repository discovery', () => {
     await writeFile(join(root, 'root-untracked.ts'), '', 'utf8');
     await writeFile(join(root, 'modules', 'nested', 'nested-untracked.ts'), '', 'utf8');
 
-    await expect(listRepositoryFiles({ cwd: root, recurseSubmodules: true })).resolves.toEqual([
+    await expect(listRepositoryFiles({ cwd: root, recurseSubmodules: true, signal })).resolves.toEqual([
       '.gitmodules',
       'modules/nested/nested-untracked.ts',
       'modules/nested/tracked.ts',
@@ -93,7 +92,7 @@ describe('repository discovery', () => {
 });
 
 describe('changed repository files', () => {
-  test('returns rename targets and untracked files while excluding deleted paths', async () => {
+  repositoryTest('returns rename targets and untracked files while excluding deleted paths', async ({ createRoot, runGit, signal }) => {
     const root = await createRoot();
     await writeFile(join(root, 'renamed-from.ts'), '', 'utf8');
     await writeFile(join(root, 'deleted.ts'), '', 'utf8');
@@ -103,18 +102,18 @@ describe('changed repository files', () => {
     await rm(join(root, 'deleted.ts'));
     await writeFile(join(root, 'untracked.ts'), '', 'utf8');
 
-    await expect(listChangedRepositoryFiles({ cwd: root })).resolves.toEqual([
+    await expect(listChangedRepositoryFiles({ cwd: root, signal })).resolves.toEqual([
       'renamed.ts',
       'untracked.ts',
     ]);
-    await expect(listChangedRepositoryFiles({ cwd: root, includeDeleted: true })).resolves.toEqual([
+    await expect(listChangedRepositoryFiles({ cwd: root, includeDeleted: true, signal })).resolves.toEqual([
       'deleted.ts',
       'renamed.ts',
       'untracked.ts',
     ]);
   });
 
-  test('observes an already-aborted signal', async () => {
+  repositoryTest('observes an already-aborted signal', async ({ createRoot }) => {
     const root = await createRoot();
     const controller = new AbortController();
     controller.abort(new Error('cancelled'));
@@ -127,7 +126,7 @@ describe('changed repository files', () => {
 });
 
 describe('ignore filtering', () => {
-  test('respects the current and nested repository ignore rules', async () => {
+  repositoryTest('respects the current and nested repository ignore rules', async ({ createRoot, runGit, signal }) => {
     const root = await createRoot();
     await writeFile(join(root, '.gitignore'), 'ignored/\n', 'utf8');
     await mkdir(join(root, 'ignored'));
@@ -146,7 +145,7 @@ describe('ignore filtering', () => {
       join(nested, 'visible.ts'),
     ].map((path) => normalizeRepositoryPath(relative(root, path)));
 
-    await expect(filterIgnoredRepositoryPaths(paths, { cwd: root }))
+    await expect(filterIgnoredRepositoryPaths(paths, { cwd: root, signal }))
       .resolves.toEqual(['modules/nested/visible.ts']);
   });
 });

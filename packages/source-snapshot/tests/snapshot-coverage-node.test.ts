@@ -7,7 +7,7 @@ import { resolveSnapshotCoverage } from '../src/snapshot-coverage.js';
 import { runGit } from './node-fixtures.js';
 const policy = { sensitiveBasenames: ['.env'], binaryExtensions: ['.bin'], textExtensions: ['.ts', '.json'], textBasenames: ['.gitignore'] };
 async function fixture(blocked = false) {
-  const work = resolve(import.meta.dirname, '../../../.tmp/coverage-tests'); await mkdir(work, { recursive: true });
+  const work = resolve(import.meta.dirname, '../../../tmp/coverage-tests'); await mkdir(work, { recursive: true });
   const base = await mkdtemp(join(work, 'case-')); const sourceRoot = join(base, 'source'); await mkdir(sourceRoot);
   await runGit(sourceRoot, ['init', '--quiet']); await writeFile(join(sourceRoot, '.gitignore'), 'ignored/\n');
   await runGit(sourceRoot, ['add', '.gitignore']); await runGit(sourceRoot, ['commit', '--quiet', '-m', 'fixture']);

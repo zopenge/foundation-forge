@@ -74,7 +74,7 @@ export async function publishPrebuiltCandidate(context: ExecutionContext, comman
       await assertVersionAliasAvailable(verify, state.versionAlias.hostname);
     }
     await admission('create'); await guard(); await context.stage('deployment');
-    const cli = await createPrebuiltCliContext(artifact.uploadRoot, config.vercel.teamId, signal);
+    const cli = await createPrebuiltCliContext(execution.cwd, config.vercel.teamId, signal);
     let creationError: unknown, creationFailed = false;
     try {
       assertActive(signal); state = await save({ ...state, createEffect: 'unknown' });

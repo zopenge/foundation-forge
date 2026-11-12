@@ -27,7 +27,7 @@ async function checkout(f: Awaited<ReturnType<typeof fixture>>) {
     error: { code: 'COMMAND_FAILED', details: { reason: 'FIXTURE_CHECKOUT_BOUNDARY' } },
     processes: { status: 'closed' }, effects: { developmentPush: 'not-attempted', releasePush: 'not-attempted' } });
   expect(report.executionRoot).toBeDefined();
-  await expect(readFile(resolve(f.cwd, '.tmp/release-slot/run.lock'))).rejects.toMatchObject({ code: 'ENOENT' });
+  await expect(readFile(resolve(f.cwd, 'state/release-slot/run.lock'))).rejects.toMatchObject({ code: 'ENOENT' });
   return { report, root: report.executionRoot ?? '' };
 }
 

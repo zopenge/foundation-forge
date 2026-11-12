@@ -45,15 +45,15 @@
 配置模板须为每个臂提供按顺序声明的 `permission`：首项 `"*":"deny"`，随后对 `allowedTools` 中每个工具精确配置 `"allow"`。其他权限可继续设置为 `"deny"`。配置模板可使用 `{{WORK_DIR}}`、`{{ARM_DIR}}`、`{{PACK_DIR}}`、`{{CANDIDATE}}` 和 `{{NODE}}`。OpenCode 本地 MCP 的 `command` 是参数数组，例如 `{"type":"local","command":["{{NODE}}","{{PACK_DIR}}/mcp.mjs"],"enabled":true}`。任务包须纳入 MCP 程序及其所有运行依赖；不得引用仓库外的临时代码。可选 `setup.mjs` 依次接收工作目录、臂目录、候选 tarball 路径、臂名和任务 ID，在模型启动前从**真实 tarball** 准备 CLI、索引或测试依赖；A/C 各执行一次。配置和 fixture 在准备后会记录哈希，付费运行前再次核对。验证器依次接收工作目录和任务 ID。
 
 ```text
-pnpm ab:eval freeze --draft .tmp/pack/draft.json --out .tmp/pack/pack.json
-pnpm ab:eval verify-pack --manifest .tmp/pack/pack.json
+pnpm ab:eval freeze --draft tmp/pack/draft.json --out tmp/pack/pack.json
+pnpm ab:eval verify-pack --manifest tmp/pack/pack.json
 ```
 
 冻结清单记录包内文件的 SHA-256。移动任务包后仍可验证；更改任务、依赖、配置或候选包需重新冻结并取得新批次授权。任务 fixture 不允许未登记的新文件或符号链接。不要把凭据放进任务包。
 
 ## 本机配置与模型禁用预检
 
-每台机器在仓库忽略的 `.tmp/ab-eval-local.json` 写入自己的 OpenCode 可执行文件和认证文件路径；文件只存路径，不存凭据正文：
+每台机器在仓库忽略的 `tmp/ab-eval-local.json` 写入自己的 OpenCode 可执行文件和认证文件路径；文件只存路径，不存凭据正文：
 
 ```json
 {
@@ -63,9 +63,9 @@ pnpm ab:eval verify-pack --manifest .tmp/pack/pack.json
 ```
 
 ```text
-pnpm ab:eval client-doctor --local .tmp/ab-eval-local.json
-pnpm ab:eval prepare --manifest .tmp/pack/pack.json --run-dir .tmp/eval-run-001 --local .tmp/ab-eval-local.json
-pnpm ab:eval doctor --run-dir .tmp/eval-run-001
+pnpm ab:eval client-doctor --local tmp/ab-eval-local.json
+pnpm ab:eval prepare --manifest tmp/pack/pack.json --run-dir tmp/eval-run-001 --local tmp/ab-eval-local.json
+pnpm ab:eval doctor --run-dir tmp/eval-run-001
 ```
 
 `client-doctor` 在隔离目录里验证版本和自带 MCP 握手；`doctor` 对每个 C 臂检查真实任务 MCP 的连接，并对每个 A/C 臂读取完整的 MCP `tools/list`（包括分页），核对工具名称、命名空间、schema 指纹、冻结允许集合与配置权限。旧包若缺少 `toolContract`，新运行预检不会通过。两者均不发起模型调用。`prepare` 写入 `preflight.json` 和 `approval-template.json`，记录客户端版本、二进制及认证文件哈希、任务包哈希、候选包哈希和每臂配置。改变本机环境后重新准备新的运行目录，保留旧目录及证据。
@@ -75,13 +75,13 @@ pnpm ab:eval doctor --run-dir .tmp/eval-run-001
 仅在该**具体付费批次**取得授权后，将 `approval-template.json` 内容复制为同目录的 `approval.json`，设置 `approved: true`、完整的 `approvedArmIds` 和实际授权记录 `userAuthorization`。运行入口核对运行 ID、任务包哈希、全部臂及所有臂的工具合同预检，并用 `run.lock.json` 防止重复启动。同一运行目录不重放。
 
 ```text
-pnpm ab:eval run --run-dir .tmp/eval-run-001
-pnpm ab:eval audit --run-dir .tmp/eval-run-001
-pnpm ab:eval assess --run-dir .tmp/eval-run-001
-pnpm ab:eval diagnose --run-dir .tmp/eval-run-001
+pnpm ab:eval run --run-dir tmp/eval-run-001
+pnpm ab:eval audit --run-dir tmp/eval-run-001
+pnpm ab:eval assess --run-dir tmp/eval-run-001
+pnpm ab:eval diagnose --run-dir tmp/eval-run-001
 ```
 
-运行期间或结束后可用 `pnpm ab:eval status --run-dir .tmp/eval-run-001` 只读查看已启动/结算臂、在途臂、运行失败臂、完成配对、逐对 token、模型调用和已知质量/账目/工具边界问题。命令成功读取时退出码为 0，即使批次状态为 `blocked`；状态字段仍保留原失败。无需为进度或逐对收据再写临时提取脚本。
+运行期间或结束后可用 `pnpm ab:eval status --run-dir tmp/eval-run-001` 只读查看已启动/结算臂、在途臂、运行失败臂、完成配对、逐对 token、模型调用和已知质量/账目/工具边界问题。命令成功读取时退出码为 0，即使批次状态为 `blocked`；状态字段仍保留原失败。无需为进度或逐对收据再写临时提取脚本。
 
 每对按任务包中的 `AC`/`CA` 顺序依次执行，最多并行 `concurrency` 对。每臂最长 `armTimeoutMs`，超时终止该臂拥有的进程树。任一质量、计费、工具边界或副作用不明即停止新发；任一完整对满足 `C.rawTotal >= A.rawTotal` 也停止新发，已启动的对继续结算。`journal/` 的 started/settled 文件、每臂 OpenCode `run.jsonl` 与 `export.json`、`result.json` 和 `postflight.json` 是审计依据。审计独立重算原始输入与输出 token，要求逐对 `C.rawTotal < A.rawTotal`，不将未完成或未知状态计为通过。诊断命令从收据和 OpenCode 导出提取逐对差值、质量失败、模型调用数、首轮输入 token、工具输出字节、违规工具名、MCP 错误码及真实重复查询，写入同目录的 `diagnostics.json` 和 `diagnostics.md`；未启动的对标为“未运行”。诊断还列出逐回合原始输入与输出 token、工具所属回合、工具错误载荷字节、证据完整文件与片段、响应截断状态，以及首次替换前运行公开测试的次数。若收据调用数与导出消息数无法对齐，会记录 `TURN_ALIGNMENT_MISMATCH`，不伪造逐回合工具归属。工具输出字节和错误字节只是载荷大小，不等同于模型输入 token 或最终计费。
 
@@ -93,7 +93,7 @@ pnpm ab:eval diagnose --run-dir .tmp/eval-run-001
 
 逐回合诊断保留 `input`、`cacheRead`、`cacheWrite`、`output`、`reasoning` 分项；`rawInput` 是前三项之和，`rawOutput` 是后两项之和。缓存分项由客户端收据提供，不能单独证明服务端实际请求体或原始计费。
 
-诊断的“导出历史字节”是本回合之前、OpenCode 导出消息 `parts` 的 JSON UTF-8 字节数；它不包括系统提示、工具定义和提供方请求包装，不能当成请求大小或 token 数。重新诊断历史轮次时使用 `diagnose --run-dir PATH --report-dir .tmp/新目录`；新目录必须位于仓库 `.tmp/` 内且尚不存在。诊断文件以独占创建方式写入，避免覆盖已有收据和报告。
+诊断的“导出历史字节”是本回合之前、OpenCode 导出消息 `parts` 的 JSON UTF-8 字节数；它不包括系统提示、工具定义和提供方请求包装，不能当成请求大小或 token 数。重新诊断历史轮次时使用 `diagnose --run-dir PATH --report-dir tmp/新目录`；新目录必须位于仓库 `tmp/` 内且尚不存在。诊断文件以独占创建方式写入，避免覆盖已有收据和报告。
 
 `diagnostics.json` 的每个工具事件还记录导航请求的 `input.maxBytes`。未提供或无效的预算记为 `null`，便于对照模型请求预算与实际输出字节；这两者都不能直接换算成模型 token。
 
@@ -104,11 +104,11 @@ pnpm ab:eval diagnose --run-dir .tmp/eval-run-001
 回环转发器按 Fetch 标准避开禁用端口；遇到禁用端口时，确认该监听关闭后再申请系统动态端口，最多尝试 32 次。耗尽后以 `TRANSPORT_FETCH_PORT_UNAVAILABLE` 停止，真实监听错误直接保留；此过程不重试上游请求或模型调用。
 
 ```text
-pnpm ab:eval transport-doctor --executable C:/path/to/opencode.exe --out .tmp/transport-probe-001
-pnpm ab:eval run --run-dir .tmp/eval-run-002 --observe-transport on
+pnpm ab:eval transport-doctor --executable C:/path/to/opencode.exe --out tmp/transport-probe-001
+pnpm ab:eval run --run-dir tmp/eval-run-002 --observe-transport on
 ```
 
-`transport-doctor` 使用本机假提供方和假凭据，运行真实客户端、导出收据并审计观测证据；不调用付费模型。输出目录必须是仓库 `.tmp/` 内尚不存在的目录。真实批次仍须按上文单批授权流程准备，并在批准该批次时明确开启观测。
+`transport-doctor` 使用本机假提供方和假凭据，运行真实客户端、导出收据并审计观测证据；不调用付费模型。输出目录必须是仓库 `tmp/` 内尚不存在的目录；首次运行会安全创建临时根及输出父目录，拒绝重解析祖先。真实批次仍须按上文单批授权流程准备，并在批准该批次时明确开启观测。
 
 观测器只保存每个请求的字节数、SHA-256、响应状态、响应字节数、响应中的数值用量字段，以及 JSON 请求的结构计数；不保存请求或响应正文、认证头。结构计数包括顶层字段数、消息和工具数量、各自的序列化字节数及最多 128 项的逐项字节数，超限时标记截断。结构字节数由解析后重新序列化得到，用来比较组成，不能当作原始请求的精确分段。`evidence/transport.json`、`transport-config.json` 与 `transport-config-probe.json` 留在对应臂目录；收据绑定观测文件和配置哈希，审计要求观测请求数覆盖导出的模型调用数。`diagnose` 在请求数与导出回合数一一对应时列出逐请求结构与提供方用量；文件漂移或回合数不符时标记问题，不强行对齐。字节数可定位传输体变化，不能直接换算为 token；请求摘要只能确认字节相同与否。观测文件缺失、配置漂移或请求未覆盖模型调用会使该臂无法通过审计。
 
@@ -118,23 +118,22 @@ pnpm ab:eval run --run-dir .tmp/eval-run-002 --observe-transport on
 
 诊断同时检查 HTTP 状态和传输终态，HTTP 502 不依赖 `UPSTREAM_TRANSPORT_FAILED` 才能被发现。请求数超出收据回合数时，分别报告含额外 usage 的 `TRANSPORT_USAGE_REQUEST_OVERAGE` 与不含额外 usage 的 `TRANSPORT_REQUEST_OVERAGE_NO_USAGE`。只有每个回合的输入、输出数值都能唯一且按序匹配请求时，才提供 `TRANSPORT_NUMERIC_TURN_CANDIDATES` 数值候选及同请求体摘要对；候选不代表已证实的回合身份或计费结论，未匹配请求不会被强行并入收据。
 
-## H8 冻结任务迁移
+## H8 冻结任务包
 
-旧 H8 的包导出器位于 `packages/repository-context/evaluation/export-h8-pack.mjs`。它核对 run063 候选 tarball 与 CLI 哈希、八项 fixture 的冻结树哈希、公开/隐藏验证器哈希和任务清单；自动收集 MCP 模块的相对导入闭包及候选 CLI 的运行依赖，生成不含本机绝对路径的完整任务包。导出器只在原工作区需要，之后可把包目录复制到另一台机器。`slice` 从冻结包按 pair ID 选择新轮次，不编辑脚本或旧包。新导出的 A/C 工具合同均不开放 `todowrite`；也只开放自动运行公开测试的 `formal_task_replace_text`，不开放额外的 `formal_task_run_public_test`。`scripts/ab-eval/formal-task-filtered-stdio.mjs` 通过固定的 MCP 投影层同时收窄实际 `tools/list` 和可调用工具，模型禁用预检必须核对这一实际集合。每次成功编辑后的公开测试、每臂最终公开与隐藏验证、全部质量断言仍执行。A 的源码导航工具与 C 的 `investigate`、`read`、`continue` 分别保留。此变化仅影响新包，既有冻结包和收据保持原样；工具合同变化后的结果不能直接与旧包按同一实验条件合并。
-
-```text
-node packages/repository-context/evaluation/export-h8-pack.mjs --out .tmp/h8-pack --client-version 1.18.30
-pnpm ab:eval slice --manifest .tmp/h8-pack/pack.json --pairs v85-full-01 --id h8-pilot-01 --out .tmp/h8-pilot-01
-pnpm ab:eval prepare --manifest .tmp/h8-pilot-01/pack.json --run-dir .tmp/h8-pilot-run-01 --local .tmp/ab-eval-local.json
-pnpm ab:eval doctor --run-dir .tmp/h8-pilot-run-01
-```
-
-修改 repository-context 源码后，先完成 `pnpm check`，再从包目录执行 `pnpm pack --out ../../.tmp/h8-next/candidate.tgz` 生成新真实 tarball（先创建目标目录）。固定换包入口用旧冻结任务包及新 tarball 生成新的自含包；它从 tarball 提取 CLI 运行时，只复用依赖版本相同的已冻结运行依赖，依赖契约变化会拒绝换包。然后按常规 `prepare`、`doctor`、单批授权、`run`、`audit`、`diagnose` 运行，无需编辑 `.tmp/` 中的代码。
+H8 评估从完整、自含且通过哈希验证的冻结任务包开始。历史工作区导出入口及其模板已移除；仓库工具不读取原 `.tmp/` 档案。`slice` 从提供的冻结包按 pair ID 选择新轮次，不编辑原包。`scripts/ab-eval/formal-task-filtered-stdio.mjs` 通过固定的 MCP 投影层同时收窄实际 `tools/list` 和可调用工具，模型禁用预检必须核对这一实际集合。每次成功编辑后的公开测试、每臂最终公开与隐藏验证、全部质量断言仍执行；工具合同不同的结果不能按同一实验条件合并。
 
 ```text
-node packages/repository-context/evaluation/rebase-h8-candidate.mjs --source-pack .tmp/h8-pilot-01/pack.json --candidate .tmp/h8-next/candidate.tgz --out .tmp/h8-pilot-next --id h8-pilot-next
-pnpm ab:eval prepare --manifest .tmp/h8-pilot-next/pack.json --run-dir .tmp/h8-pilot-run-next --local .tmp/ab-eval-local.json
-pnpm ab:eval doctor --run-dir .tmp/h8-pilot-run-next
+pnpm ab:eval slice --manifest tmp/h8-pack/pack.json --pairs v85-full-01 --id h8-pilot-01 --out tmp/h8-pilot-01
+pnpm ab:eval prepare --manifest tmp/h8-pilot-01/pack.json --run-dir tmp/h8-pilot-run-01 --local tmp/ab-eval-local.json
+pnpm ab:eval doctor --run-dir tmp/h8-pilot-run-01
 ```
 
-迁移时已对完整 24 对、48 臂包完成模型禁用准备，24 个 C 臂 MCP 全部连通；单对切片迁移目录后也通过准备与连接检查。经单批授权，四对切片的真实试点启动了前三对共六臂，六臂质量均通过；两对 C 的原始 token 高于 A，因此调度器停止新发，第四对未运行。该试点的冻结包、收据和诊断报告保留在忽略的 `.tmp/repository-context-optimization-v3/h8-portable-pilot4-preflight-v1/`。历史 run063 的收据没有修改。新入口与旧 v85 的会话续接策略不同，因此不能把旧批次 token 与新协议的数字直接比较；新批次必须在同一冻结任务包和运行协议内比较 A/C。付费运行仍按每批单独授权。新任务及独立代码库的泛化验收仍需独立任务包。
+修改 repository-context 源码后，先完成 `pnpm check`，再从包目录执行 `pnpm pack --out ../../tmp/h8-next/candidate.tgz` 生成新真实 tarball（先创建目标目录）。固定换包入口用旧冻结任务包及新 tarball 生成新的自含包；它从 tarball 提取 CLI 运行时，只复用依赖版本相同的已冻结运行依赖，依赖契约变化会拒绝换包。然后按常规 `prepare`、`doctor`、单批授权、`run`、`audit`、`diagnose` 运行，无需编辑 `tmp/` 中的代码。
+
+```text
+node packages/repository-context/evaluation/rebase-h8-candidate.mjs --source-pack tmp/h8-pilot-01/pack.json --candidate tmp/h8-next/candidate.tgz --out tmp/h8-pilot-next --id h8-pilot-next
+pnpm ab:eval prepare --manifest tmp/h8-pilot-next/pack.json --run-dir tmp/h8-pilot-run-next --local tmp/ab-eval-local.json
+pnpm ab:eval doctor --run-dir tmp/h8-pilot-run-next
+```
+
+迁移时已对完整 24 对、48 臂包完成模型禁用准备，24 个 C 臂 MCP 全部连通；单对切片迁移目录后也通过准备与连接检查。经单批授权，四对切片的真实试点启动了前三对共六臂，六臂质量均通过；两对 C 的原始 token 高于 A，因此调度器停止新发，第四对未运行。该试点的冻结包、收据和诊断报告保留在忽略的 `.tmp/repository-context-optimization-v3/h8-portable-pilot4-preflight-v1/`，本轮未搬迁。历史 run063 的收据没有修改。新入口与旧 v85 的会话续接策略不同，因此不能把旧批次 token 与新协议的数字直接比较；新批次必须在同一冻结任务包和运行协议内比较 A/C。付费运行仍按每批单独授权。新任务及独立代码库的泛化验收仍需独立任务包。

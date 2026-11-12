@@ -30,7 +30,7 @@ const { runRelease } = await import('@openge/forge-release-vercel/node');
 const report = await runRelease({ command: 'check', cwd });
 assert.equal(corrupted, true); assert.equal(helpers, 1); assert.equal(starts, 0);
 assert.equal(report.ok, false); assert.equal(report.error?.code, 'PROCESS_STATE_UNKNOWN');
-const state = JSON.parse(await readFile(resolve(cwd, '.tmp/release-slot/state.json'), 'utf8'));
+const state = JSON.parse(await readFile(resolve(cwd, 'state/release-slot/state.json'), 'utf8'));
 assert.equal(state.processes.length, 1);
 const command = state.processes[0];
 assert.equal(command.name, 'git'); assert.equal(command.status, 'unknown');

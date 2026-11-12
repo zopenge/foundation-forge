@@ -1,5 +1,5 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { sourceTestTemporaryDirectory } from '../temporary-directory.js';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import {
@@ -56,24 +56,18 @@ test('builds exact v2 read entries with object requirements and byte locators', 
   expect(empty?.normalizedByteLength).toBe(0);
   expect(empty?.locators).toHaveLength(1);
 });
-test('reports exact path view results without expanding missing or legacy paths', async () => {
-  const staged = await stageSourceTextFile({ path: 'src/legacy.ts', group: 'code', bytes: utf8('legacy\n') });
-  const textPackage = await buildSourceTextPackage([staged], {
-    targetObjectBytes: 4096, maxObjectBytes: 8192, maxObjectCount: 10, maxObjectBytesTotal: 100_000,
-  });
-  const manifest = await createTextSnapshotManifest({
-    projectId: 'legacy-index', policyVersion: 'v1', publishedAt: 1, repositories: [], textPackage,
-  });
+test('reports exact path view results without expanding missing paths', async () => {
+  const { manifest } = await fixture([{ path: 'src/value.ts', group: 'code', text: 'value\n' }]);
   const index = buildSnapshotReadIndex(manifest);
-  expect(index.files[0]).toMatchObject({ path: 'src/legacy.ts', formatVersion: 1, assurance: 'object-integrity' });
-  expect(index.files[0]?.locators).toEqual([]);
+  expect(index.files[0]).toMatchObject({ path: 'src/value.ts', formatVersion: 2, assurance: 'normalized-text-verified' });
+  expect(index.files[0]?.locators).toHaveLength(1);
 
   const view = buildSnapshotReadView(manifest, {
     viewId: 'exact-only', snapshotId: manifest.snapshotId,
-    paths: ['src/legacy.ts', 'src/missing.ts'],
+    paths: ['src/value.ts', 'src/missing.ts'],
   });
-  expect(view.found).toEqual([]);
-  expect(view.unsupported).toEqual(['src/legacy.ts']);
+  expect(view.found).toEqual(['src/value.ts']);
+  expect(view.unsupported).toEqual([]);
   expect(view.missing).toEqual(['src/missing.ts']);
 });
 test('publishes machine and human indexes from the same derived read index', async () => {
@@ -81,7 +75,7 @@ test('publishes machine and human indexes from the same derived read index', asy
     { path: 'src/main.ts', group: 'code', text: 'export const value = 1\n' },
     { path: 'docs/readme.md', group: 'docs', text: '# 文档\n' },
   ]);
-  const base = await mkdtemp(join(tmpdir(), 'forge-read-index-'));
+  const base = await mkdtemp(join(await sourceTestTemporaryDirectory(), 'forge-read-index-'));
   const targetRoot = join(base, 'store');
   try {
     await publishSourceSnapshot({ manifest, textPackage }, {

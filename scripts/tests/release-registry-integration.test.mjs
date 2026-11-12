@@ -19,8 +19,8 @@ import { discoverWorkspacePackageModel } from '../workspace-packages.mjs';
 
 const fixture = async (context) => {
   captureReleaseOutput(context);
-  await mkdir(resolve('.tmp', 'release-tests'), { recursive: true });
-  const root = await mkdtemp(resolve('.tmp', 'release-tests', 'real-'));
+  await mkdir(resolve('tmp', 'release-tests'), { recursive: true });
+  const root = await mkdtemp(resolve('tmp', 'release-tests', 'real-'));
   context.after(() => rm(root, { recursive: true, force: true }));
   return root;
 };
@@ -94,7 +94,7 @@ test('真实 pnpm 在元数据已通过后遇到首次 404，重试安装 tarbal
   const root = await fixture(context);
   const { name, registry, requests, packageValue } = await servePackage(context, root);
   const stages = [];
-  const verificationRoot = resolve(root, '.tmp', 'consumer-verification');
+  const verificationRoot = resolve(root, 'tmp', 'consumer-verification');
   const result = await verifyRegistryPackages({
     model: { repositoryRoot: root, packages: [packageValue,
       { name: 'unrelated-not-published', version: '9.0.0', workspaceDependencies: [] }] },
@@ -116,7 +116,7 @@ test('真实 pnpm 包装的首次元数据断连会重试并成功安装', { tim
   const { name, registry, requests, packageValue } = await servePackage(context, root, 'reset');
   await verifyRegistryPackages({ model: { repositoryRoot: root, packages: [packageValue] },
     mode: 'bootstrap', packageNames: [name], policy: { registry, pollTimeoutMilliseconds: 30_000 },
-    verificationRoot: resolve(root, '.tmp', 'verification'), resolveCommit: async () => 'a'.repeat(40),
+    verificationRoot: resolve(root, 'tmp', 'verification'), resolveCommit: async () => 'a'.repeat(40),
     budget: createPropagationBudget({ timeoutMilliseconds: 30_000, intervalMilliseconds: 1 }),
   });
   assert.ok(requests.filter(({ install, url }) => install && !url.endsWith('.tgz')).length >= 2);
@@ -135,7 +135,7 @@ test('定向 registry 验证在网络阶段前展开消费依赖且不扩大发�
   const requested = [];
   await assert.rejects(verifyRegistryPackages({ model, mode: 'stable', packageNames: ['core'],
     policy: { registry: 'https://registry.invalid', pollTimeoutMilliseconds: 1000 },
-    verificationRoot: resolve(root, '.tmp', 'verification'),
+    verificationRoot: resolve(root, 'tmp', 'verification'),
     fetch: async url => { requested.push(url); throw new Error('stop before network'); },
     budget: { remaining: () => 1000, retry: operation => operation() },
   }), /unknown workspace package: missing-consumer/u);

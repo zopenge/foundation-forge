@@ -28,14 +28,14 @@ const manager = process.env.npm_execpath;
 if (!manager) throw new Error('consumer verification requires the invoking pnpm CLI path');
 const pnpmVersion = execute(process.cwd(), process.execPath, [manager, '--version']);
 if (!/^\d+\.\d+\.\d+$/u.test(pnpmVersion)) throw new Error('consumer pnpm version unavailable');
-const base = resolve(process.cwd(), '.tmp/managed-consumers'); await mkdir(base, { recursive: true });
+const base = resolve(process.cwd(), 'tmp/managed-consumers'); await mkdir(base, { recursive: true });
 for (const name of ['alpha', 'beta']) {
   const root = resolve(base, name), cwd = resolve(root, 'source with spaces'), remote = resolve(root, 'remote.git');
   await mkdir(root, { recursive: true });
   execute(root, 'git', ['init', '--bare', remote]); execute(root, 'git', ['init', '-b', 'dev', cwd]);
   const git = (...args) => execute(cwd, 'git', args);
   git('config', 'user.name', 'Consumer'); git('config', 'user.email', 'consumer@example.invalid'); git('remote', 'add', 'origin', remote);
-  const managedSource = { mode: 'managed-commit', slotPath: '.tmp/release-slot', maxBytes: 2147483648, minFreeBytes: 5368709120,
+  const managedSource = { mode: 'managed-commit', slotPath: 'state/release-slot', maxBytes: 2147483648, minFreeBytes: 5368709120,
       sampleIntervalMs: 1000, install: { packageManager: 'pnpm' }, prepare: [{ command: 'node', args: ['-e',
         'const f=require("node:fs"),p=require("node:path");const link=p.resolve("node_modules/pending"),target=p.resolve("node_modules/.pnpm/pending/node_modules/dependency");f.mkdirSync(p.dirname(link),{recursive:true});try{f.lstatSync(link)}catch(e){if(e.code!=="ENOENT")throw e;f.symlinkSync(target,link,"junction")}'
       ] }] };
@@ -50,7 +50,7 @@ for (const name of ['alpha', 'beta']) {
     checks: [{ command: 'node', args: ['-e', 'process.stdout.write(JSON.stringify([process.env.FORGE_RELEASE_COMMAND,process.env.FORGE_RELEASE_SHA,process.cwd()]))'] }],
     acceptance: [{ command: 'node', args: ['-e', 'process.exit(0)'] }], buildInfo: { path: '/build-info.json', revisionField: 'revision' },
     limits: { commandMs: 30000, deploymentMs: 1000, pollMs: 20, requestMs: 1000, maxOutputBytes: 4096 } });
-  await writeFile(resolve(cwd, '.gitignore'), `.tmp/\nnode_modules/\n.vercel/\n${name === 'beta' ? 'user-note\n' : ''}`);
+  await writeFile(resolve(cwd, '.gitignore'), `tmp/\nstate/\nnode_modules/\n.vercel/\n${name === 'beta' ? 'user-note\n' : ''}`);
   await writeFile(resolve(cwd, 'release.config.json'), JSON.stringify(config));
   if (name === 'alpha') await copyFile(resolve(import.meta.dirname, 'linked-output.mjs'), resolve(cwd, 'linked-output.mjs'));
   await writeFile(resolve(cwd, 'package.json'), JSON.stringify({ name: `consumer-${name}`, private: true, packageManager: `pnpm@${pnpmVersion}`,
@@ -82,7 +82,7 @@ for (const name of ['alpha', 'beta']) {
   if (JSON.stringify(JSON.parse(first.steps.find(step => step.name === 'check:0')?.stdout ?? 'null')) !== JSON.stringify(expected)) throw new Error('tarball frozen command metadata mismatch');
   if (!(await readFile(resolve(executionRoot, 'pnpm-lock.yaml'))).equals(lock)) throw new Error('frozen lock changed');
   if (name === 'alpha') {
-    const before = await readFile(resolve(cwd, '.tmp/release-slot/state.json'));
+    const before = await readFile(resolve(cwd, 'state/release-slot/state.json'));
     const installs = JSON.parse(before.toString('utf8')).processes.filter(command => command.name === 'install');
     const install = installs[0], steps = first.steps.filter(step => step.name === 'install');
     const closure = install?.closure?.ownedScope;
@@ -103,7 +103,7 @@ for (const name of ['alpha', 'beta']) {
     if (!recovered.ok || recovered.command !== 'recover' || recovered.candidateSha !== sha
       || recovered.processes?.status !== 'closed' || recovered.steps.some(step => step.name === 'install' || step.name.startsWith('check:')))
       throw new Error(`tarball managed CLI recovery failed: ${JSON.stringify(recovered.error)}`);
-    if (!(await readFile(resolve(cwd, '.tmp/release-slot/state.json'))).equals(before)) throw new Error('CLI recovery changed stopped history');
+    if (!(await readFile(resolve(cwd, 'state/release-slot/state.json'))).equals(before)) throw new Error('CLI recovery changed stopped history');
     const assertAbandonedHistory = await verifyUnstartedConsumer({ cwd, binary: binaries['forge-vercel-release'], sha, execute });
     await verifyNotStartedConsumer({ cwd, binary: binaries['forge-vercel-release'], sha, execute });
     await assertAbandonedHistory();
@@ -112,13 +112,13 @@ for (const name of ['alpha', 'beta']) {
   if (sourceState.branch !== 'dev' || sourceState.tracked !== '' || sourceState.note !== 'preserve') throw new Error(`source changed: ${JSON.stringify(sourceState)}`);
   for (const branch of ['dev', 'main']) if (execute(root, 'git', ['--git-dir', remote, 'rev-parse', branch]) !== initial) throw new Error('check changed remote refs');
   if (name === 'alpha') {
-    const state = JSON.parse(await readFile(resolve(cwd, '.tmp/release-slot/state.json'), 'utf8'));
+    const state = JSON.parse(await readFile(resolve(cwd, 'state/release-slot/state.json'), 'utf8'));
     if (state.schemaVersion !== 3 || !/^[a-f0-9]{64}$/u.test(state.host?.hostId ?? '')) throw new Error('current managed origin was not recorded');
   } else {
     // 真实CLI仍经过managed选择和来源准入；外来slot必须在安装/执行之前被拒绝。
     config.source = managedSource; await writeFile(resolve(cwd, 'release.config.json'), JSON.stringify(config));
     git('add', '-u'); git('commit', '-m', 'managed admission');
-    const rejectedSha = git('rev-parse', 'HEAD'), foreign = resolve(cwd, '.tmp/release-slot'); await mkdir(foreign, { recursive: true });
+    const rejectedSha = git('rev-parse', 'HEAD'), foreign = resolve(cwd, 'state/release-slot'); await mkdir(foreign, { recursive: true });
     const rejected = spawnSync(process.execPath, [binaries['forge-vercel-release'], 'check', '--cwd', cwd],
       { cwd, encoding: 'utf8', shell: false, windowsHide: true, timeout: 600_000 });
     const failure = JSON.parse(rejected.stdout);
@@ -145,7 +145,7 @@ for (const name of ['alpha', 'beta']) {
   if (git('status', '--porcelain=v1', '--untracked-files=no') !== '' || await readFile(resolve(cwd, 'user-note'), 'utf8') !== 'preserve') throw new Error('prebuilt consumer changed source');
   for (const branch of ['dev', 'main']) if (execute(root, 'git', ['--git-dir', remote, 'rev-parse', branch]) !== initial) throw new Error('prebuilt check changed remote refs');
   const executionOutput = resolve(checked.executionRoot, '.vercel/output'), moved = resolve(root, 'moved-artifact');
-  await rename(resolve(checked.executionRoot, '.tmp/forge-vercel-release/prebuilt'), moved);
+  await rename(resolve(checked.executionRoot, 'state/forge-vercel-release/prebuilt'), moved);
   await rm(executionOutput, { recursive: true });
   const loaded = execute(root, process.execPath, ['-e', 'process.stdout.write(require(process.argv[1]))', resolve(moved, '.vercel/output/functions/alias.func/index.cjs')]);
   if (loaded !== 'public-tarball-layout') throw new Error('public tarball moved link closure failed');

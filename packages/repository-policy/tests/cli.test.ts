@@ -1,5 +1,5 @@
-import { mkdtemp, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -99,7 +99,9 @@ describe('repository policy CLI', () => {
   });
 
   it('returns exit 1 for a non-repository/missing manifest input', async () => {
-    const root = await mkdtemp(join(process.cwd(), '.tmp-cli-missing-'));
+    const base = resolve(import.meta.dirname, '../../../tmp/policy-tests');
+    await mkdir(base, { recursive: true });
+    const root = await mkdtemp(join(base, 'cli-missing-'));
     try {
       const result = await runCli([
         'check',

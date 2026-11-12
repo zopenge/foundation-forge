@@ -24,7 +24,7 @@ import {
 } from '../release-plan.mjs';
 
 test('writes Changesets v2 git-tag events to the configured output file', async (context) => {
-  const outputPath = resolve('.tmp', `changesets-output-${randomUUID()}.ndjson`);
+  const outputPath = resolve('tmp', `changesets-output-${randomUUID()}.ndjson`);
   context.after(async () => rm(outputPath, { force: true }));
   const reporter = await createChangesetsOutputReporter(outputPath);
 

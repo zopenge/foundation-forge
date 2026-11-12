@@ -8,7 +8,7 @@ import { fileURLToPath, URL } from 'node:url';
 import { promisify } from 'node:util';
 
 // 只记录外部命令类别、时长和退出码，不采集参数、环境、输出或凭据。
-const temporary = fileURLToPath(new URL('../../../.tmp/', import.meta.url));
+const temporary = fileURLToPath(new URL('../../../tmp/', import.meta.url));
 const directory = resolve(process.env.FORGE_CHECK_PROFILE_DIRECTORY ?? resolve(temporary, 'check-performance-profile'));
 const contained = relative(temporary, directory);
 if (!contained || contained === '..' || contained.startsWith('../') || contained.startsWith('..\\') || isAbsolute(contained)) {

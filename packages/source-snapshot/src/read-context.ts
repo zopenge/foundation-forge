@@ -49,12 +49,10 @@ export const readContextSourceDetails = (context: SnapshotReadContext, file: Sna
   for (const path of paths) {
     if (!context.objectByPath.has(path)) throw new SourceSnapshotError('DANGLING_OBJECT', { path });
   }
-  if (details.formatVersion === 2) {
-    for (const locator of details.segments) {
-      const object = paths.has(locator.objectPath) ? context.objectByPath.get(locator.objectPath) : undefined;
-      if (object === undefined || object.sha256 !== locator.objectSha256) {
-        throw new SourceSnapshotError('TEXT_DETAILS_INVALID', { path: file.path, field: 'locator.object' });
-      }
+  for (const locator of details.segments) {
+    const object = paths.has(locator.objectPath) ? context.objectByPath.get(locator.objectPath) : undefined;
+    if (object === undefined || object.sha256 !== locator.objectSha256) {
+      throw new SourceSnapshotError('TEXT_DETAILS_INVALID', { path: file.path, field: 'locator.object' });
     }
   }
   return details;

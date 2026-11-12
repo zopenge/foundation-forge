@@ -18,7 +18,7 @@ async function start(args: string[], command = process.execPath) {
   await scope.bind(observed.identity); return scope;
 }
 async function fixture() {
-  const base = resolve(import.meta.dirname, '../../../.tmp/owned-scope-tests'); await mkdir(base, { recursive: true });
+  const base = resolve(import.meta.dirname, '../../../tmp/owned-scope-tests'); await mkdir(base, { recursive: true });
   const root = await mkdtemp(resolve(base, 'w-')); roots.push(root); return root;
 }
 test.runIf(supported)('does not run before authorization and closes a short command with real Job evidence', async () => {

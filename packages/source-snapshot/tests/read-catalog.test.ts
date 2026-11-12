@@ -105,18 +105,16 @@ test('separates exact content aliases from other files packed in the same object
   if (aliases.status !== 'found') throw new Error('expected aliases');
   expect(aliases.aliases.map(a => a.path)).toEqual(['src/module-1/same.ts', 'src/中文 空格🙂.ts']);
 });
-test('preserves empty files and legacy object-only verification capabilities', async () => {
+test('preserves empty files with normalized text verification capabilities', async () => {
   const api = await load();
-  for (const textFormatVersion of [1, 2] as const) {
-    const staged = await stageSourceTextFile({ path: 'empty.txt', group: 'text', bytes: utf8('') });
-    const textPackage = await buildSourceTextPackage([staged], { targetObjectBytes: 2048, maxObjectBytes: 4096, maxObjectCount: 20, maxObjectBytesTotal: 100000, textFormatVersion });
-    const manifest = await createTextSnapshotManifest({ projectId: 'empty', policyVersion: 'v1', publishedAt: 1, repositories: [], textPackage });
-    const catalog = await api.buildSnapshotReadCatalog(manifest);
-    const result = await api.resolveSnapshotCatalog(catalog.root, catalog.root.sha256, { kind: 'path', path: 'empty.txt' }, catalog.artifacts);
-    if (result.status !== 'found') throw new Error('expected empty file');
-    expect(result.files[0]?.sourceLineCount).toBe(0);
-    expect(result.files[0]?.verificationCapabilities).toEqual(textFormatVersion === 2 ? ['object-sha256', 'normalized-text-sha256'] : ['object-sha256']);
-  }
+  const staged = await stageSourceTextFile({ path: 'empty.txt', group: 'text', bytes: utf8('') });
+  const textPackage = await buildSourceTextPackage([staged], { targetObjectBytes: 2048, maxObjectBytes: 4096, maxObjectCount: 20, maxObjectBytesTotal: 100000 });
+  const manifest = await createTextSnapshotManifest({ projectId: 'empty', policyVersion: 'v1', publishedAt: 1, repositories: [], textPackage });
+  const catalog = await api.buildSnapshotReadCatalog(manifest);
+  const result = await api.resolveSnapshotCatalog(catalog.root, catalog.root.sha256, { kind: 'path', path: 'empty.txt' }, catalog.artifacts);
+  if (result.status !== 'found') throw new Error('expected empty file');
+  expect(result.files[0]?.sourceLineCount).toBe(0);
+  expect(result.files[0]?.verificationCapabilities).toEqual(['object-sha256', 'normalized-text-sha256']);
 });
 test('profile-only changes preserve source locators and all content objects', async () => {
   const api = await load(); const { manifest } = await fixture(); const before = JSON.stringify(manifest);

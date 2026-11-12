@@ -5,22 +5,31 @@ import test from 'node:test';
 import { ensureTestTemporaryDirectory } from '../test-temporary-directory.mjs';
 
 const repositoryRoot = resolve(import.meta.dirname, '../..');
+test('只允许新的临时根与无点前缀的子目录，拒绝时不接触文件系统', async () => {
+  const root = resolve(repositoryRoot, 'injected-repository');
+  const unexpected = async () => { assert.fail('unexpected filesystem access'); };
+  for (const path of ['.tmp/work', 'tmp/.hidden/work']) {
+    await assert.rejects(ensureTestTemporaryDirectory(root, resolve(root, path), {
+      lstat: unexpected, mkdir: unexpected, realpath: unexpected,
+    }), /test temporary directory must be under repository tmp/u);
+  }
+});
 for (const mode of ['root-link', 'ancestor-link', 'file', 'create']) {
   test('临时目录纯注入拒绝重解析：' + mode, async () => {
     const root = resolve(repositoryRoot, 'injected-repository'), created = [];
-    const target = resolve(root, '.tmp/work/log'), known = new Set(mode === 'create' ? [] : [resolve(root, '.tmp'), resolve(root, '.tmp/work')]);
+    const target = resolve(root, 'tmp/work/log'), known = new Set(mode === 'create' ? [] : [resolve(root, 'tmp'), resolve(root, 'tmp/work')]);
     const io = {
       realpath: async path => path,
       mkdir: async path => { created.push(path); known.add(path); },
       lstat: async path => {
         if (!known.has(path)) throw Object.assign(new Error('missing'), { code: 'ENOENT' });
-        const linked = (mode === 'root-link' && path === resolve(root, '.tmp')) || (mode === 'ancestor-link' && path === resolve(root, '.tmp/work'));
+        const linked = (mode === 'root-link' && path === resolve(root, 'tmp')) || (mode === 'ancestor-link' && path === resolve(root, 'tmp/work'));
         return { isSymbolicLink: () => linked, isDirectory: () => !linked && mode !== 'file' };
       },
     };
     if (mode === 'create') {
       assert.equal(await ensureTestTemporaryDirectory(root, target, io), target);
-      assert.deepEqual(created, [resolve(root, '.tmp'), resolve(root, '.tmp/work'), target]);
+      assert.deepEqual(created, [resolve(root, 'tmp'), resolve(root, 'tmp/work'), target]);
     } else {
       await assert.rejects(ensureTestTemporaryDirectory(root, target, io), /plain directory/u);
       assert.deepEqual(created, []);
@@ -30,7 +39,7 @@ for (const mode of ['root-link', 'ancestor-link', 'file', 'create']) {
 
 for (const layer of ['root', 'ancestor']) {
   test('原生临时目录 junction 保护独立哨兵：' + layer, async t => {
-    const parent = await ensureTestTemporaryDirectory(repositoryRoot, resolve(repositoryRoot, '.tmp/tests'));
+    const parent = await ensureTestTemporaryDirectory(repositoryRoot, resolve(repositoryRoot, 'tmp/tests'));
     const owned = await mkdtemp(resolve(parent, 'temporary-guard-'));
     const ownedIdentity = await lstat(owned, { bigint: true }), canonicalOwned = await realpath(owned);
     const simulatedRepository = resolve(owned, 'repository'), survivor = resolve(owned, 'survivor');
@@ -45,10 +54,10 @@ for (const layer of ['root', 'ancestor']) {
     await mkdir(simulatedRepository); await mkdir(survivor);
     const sentinel = resolve(survivor, 'sentinel');
     await writeFile(sentinel, 'independent fixture; preserve');
-    if (layer === 'ancestor') await mkdir(resolve(simulatedRepository, '.tmp'));
-    link = resolve(simulatedRepository, layer === 'root' ? '.tmp' : '.tmp/test-work');
+    if (layer === 'ancestor') await mkdir(resolve(simulatedRepository, 'tmp'));
+    link = resolve(simulatedRepository, layer === 'root' ? 'tmp' : 'tmp/test-work');
     await symlink(survivor, link, process.platform === 'win32' ? 'junction' : 'dir');
-    await assert.rejects(ensureTestTemporaryDirectory(simulatedRepository, resolve(simulatedRepository, '.tmp/test-work/new')), /plain directory/u);
+    await assert.rejects(ensureTestTemporaryDirectory(simulatedRepository, resolve(simulatedRepository, 'tmp/test-work/new')), /plain directory/u);
     assert.equal(await readFile(sentinel, 'utf8'), 'independent fixture; preserve');
     await assert.rejects(lstat(resolve(survivor, layer === 'root' ? 'test-work' : 'new')), { code: 'ENOENT' });
   });

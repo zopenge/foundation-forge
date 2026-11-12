@@ -71,7 +71,7 @@ it('reconciles a real rejected main push after its coordinator exits without rep
   const report = JSON.parse(new TextDecoder().decode(result.stdout)) as ReleaseReport;
   expect(report).toMatchObject({ fixtureBoundary: 'push-phase', fixturePushes: [`${f.sha}:refs/heads/dev`, `${f.sha}:refs/heads/main`] });
   expect(report, `${JSON.stringify(report.error)}\n${new TextDecoder().decode(result.stderr)}`).toMatchObject({ ok: false, error: { code: 'GIT_FAILED' }, effects: { developmentPush: 'pushed', releasePush: 'unknown' }, processes: { status: 'closed' } });
-  const phaseState = JSON.parse(await readFile(resolve(f.cwd, '.tmp/release-slot/state.json'), 'utf8'));
+  const phaseState = JSON.parse(await readFile(resolve(f.cwd, 'state/release-slot/state.json'), 'utf8'));
   expect(phaseState).toMatchObject({ status: 'closed', pendingPush: 'releasePush' });
   expect(phaseState.processes).toHaveLength(2);
   for (const command of phaseState.processes) expect(command).toMatchObject({ name: 'git', status: 'closed',
@@ -83,10 +83,10 @@ it('reconciles a real rejected main push after its coordinator exits without rep
   expect(f.ref('dev')).toBe(f.sha); expect(f.ref('main')).toBe(f.initial);
   expect(gitCalls.mock.calls.filter(([args]) => args[0] === 'push')).toEqual([]);
   gitCalls.mockRestore();
-  await expect(readFile(resolve(f.cwd, '.tmp/release-slot/run.lock'))).rejects.toMatchObject({ code: 'ENOENT' });
-  const saved = JSON.parse(await readFile(resolve(f.cwd, '.tmp/release-slot/latest-publish.json'), 'utf8')) as { report: ReleaseReport };
+  await expect(readFile(resolve(f.cwd, 'state/release-slot/run.lock'))).rejects.toMatchObject({ code: 'ENOENT' });
+  const saved = JSON.parse(await readFile(resolve(f.cwd, 'state/release-slot/latest-publish.json'), 'utf8')) as { report: ReleaseReport };
   expect(saved.report.effects.releasePush).toBe('unknown'); expect(saved.report.ok).toBe(false);
-  const history = JSON.parse(await readFile(resolve(f.cwd, '.tmp/release-slot/history', `${report.runId}.json`), 'utf8'));
+  const history = JSON.parse(await readFile(resolve(f.cwd, 'state/release-slot/history', `${report.runId}.json`), 'utf8'));
   expect(JSON.parse(history.snapshot.publish).report).toEqual(saved.report);
 });
 it('keeps an accepted remote push unknown after a real coordinator crash instead of replaying it', { timeout: 720_000 }, async () => {
@@ -126,7 +126,7 @@ it('keeps an accepted remote push unknown after a real coordinator crash instead
       }
     }
     expect(f.ref('main')).toBe(f.sha);
-    const pending = JSON.parse(await readFile(resolve(f.cwd, '.tmp/release-slot/state.json'), 'utf8'));
+    const pending = JSON.parse(await readFile(resolve(f.cwd, 'state/release-slot/state.json'), 'utf8'));
     expect(pending).toMatchObject({ status: 'running', pendingPush: 'releasePush',
       effects: { developmentPush: 'pushed', releasePush: 'unknown' } });
     expect(pending.processes).toHaveLength(2);
@@ -156,15 +156,15 @@ it('keeps an accepted remote push unknown after a real coordinator crash instead
     await waitForOwnerExit(worker);
     fixturePhase = 'close-descendants';
     for (const identity of known) await stopFixtureDescendant(identity);
-    const before = await readFile(resolve(f.cwd, '.tmp/release-slot/run.lock'));
-    const beforeState = await readFile(resolve(f.cwd, '.tmp/release-slot/state.json'));
+    const before = await readFile(resolve(f.cwd, 'state/release-slot/run.lock'));
+    const beforeState = await readFile(resolve(f.cwd, 'state/release-slot/state.json'));
     fixturePhase = 'recover';
     const gitCalls = vi.spyOn(Execution.prototype, 'git');
     const recovered = await runRelease({ cwd: f.cwd, command: 'recover', transport: emptyTransport });
     expect(recovered, JSON.stringify(recovered)).toMatchObject({ ok: false, error: { code: 'PROCESS_STATE_UNKNOWN' }, effects: { releasePush: 'unknown' },
       recovery: { observation: { releaseRef: { sha: f.sha, relation: 'candidate' } } } });
-    expect(await readFile(resolve(f.cwd, '.tmp/release-slot/run.lock'))).toEqual(before);
-    expect(await readFile(resolve(f.cwd, '.tmp/release-slot/state.json'))).toEqual(beforeState);
+    expect(await readFile(resolve(f.cwd, 'state/release-slot/run.lock'))).toEqual(before);
+    expect(await readFile(resolve(f.cwd, 'state/release-slot/state.json'))).toEqual(beforeState);
     expect(f.ref('main')).toBe(f.sha); expect(f.ref('dev')).toBe(f.sha);
     expect(gitCalls.mock.calls.filter(([args]) => args[0] === 'push')).toEqual([]);
     gitCalls.mockRestore();

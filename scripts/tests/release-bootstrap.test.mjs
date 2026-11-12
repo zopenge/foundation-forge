@@ -9,8 +9,8 @@ const implementation = () => import('../release-bootstrap.mjs').catch((error) =>
 const binding = { commit: 'a'.repeat(40), fingerprint: 'b'.repeat(64), registry: 'https://registry.npmjs.org', pnpmVersion: '10.33.2' };
 const setup = async (context) => {
   const output = captureReleaseOutput(context);
-  await mkdir(resolve('.tmp', 'release-tests'), { recursive: true });
-  const repositoryRoot = await mkdtemp(resolve('.tmp', 'release-tests', 'bootstrap-'));
+  await mkdir(resolve('tmp', 'release-tests'), { recursive: true });
+  const repositoryRoot = await mkdtemp(resolve('tmp', 'release-tests', 'bootstrap-'));
   context.after(() => rm(repositoryRoot, { force: true, recursive: true }));
   return { output, model: { repositoryRoot, packages: [{ name: 'fixture', version: '1.0.0-rc.0', workspaceDependencies: [] }] }, policy: {},
     readMetadata: async () => undefined, readState: () => {}, verifyTags: async () => {},
@@ -56,7 +56,7 @@ test('publish 成功而 trust 失败时保留可续验报告', async (context) =
     configure: async () => { throw new Error('trust failed'); },
     verify: async () => assert.fail('不应继续验证'),
   }), /trust failed/u);
-  const directory = resolve(options.model.repositoryRoot, '.tmp', 'release');
+  const directory = resolve(options.model.repositoryRoot, 'state', 'release');
   const files = (await readdir(directory)).filter((name) => name.endsWith('.json'));
   assert.equal(files.length, 1);
   const report = await readReleaseReport(options.model.repositoryRoot, resolve(directory, files[0]));

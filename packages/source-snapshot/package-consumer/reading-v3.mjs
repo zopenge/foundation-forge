@@ -40,7 +40,7 @@ assert.equal((await buildSnapshotReadCatalog((await sample()).manifest)).root.sh
 const reference=await buildSnapshotReadCatalog(manifest,{profile:options.profile});
 assert.notEqual(reference.root.sha256,catalog.root.sha256);
 assert.deepEqual(manifest.objects,renamed.manifest.objects);
-const work=join(process.cwd(),'.tmp'); await mkdir(work,{recursive:true});
+const work=join(process.cwd(),'tmp'); await mkdir(work,{recursive:true});
 const base=await mkdtemp(join(work,'reading-api-')); const sourceRoot=join(base,'source'); await mkdir(sourceRoot);
 const git=args=>execFileSync('git',['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','-C',sourceRoot,...args],{stdio:'pipe',windowsHide:true});
 let captured;

@@ -15,7 +15,7 @@ const prematureResult = (message, result) => new Error(message, { cause: {
 } });
 
 test.runIf(process.platform === 'win32')('the command deadline remains active during real owned Job drain', async () => {
-  const base = resolve(import.meta.dirname, '../../../.tmp/owned-scope-tests');
+  const base = resolve(import.meta.dirname, '../../../tmp/owned-scope-tests');
   await mkdir(base, { recursive: true });
   const root = await mkdtemp(resolve(base, 'deadline-'));
   let ready, active, expire, childPid, scope, output = '';
