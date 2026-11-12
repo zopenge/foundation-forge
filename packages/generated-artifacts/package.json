@@ -47,6 +47,7 @@
     "url": "https://github.com/zopenge/foundation-forge/issues"
   },
   "dependencies": {
-    "@openge/forge-path-safety": "workspace:0.1.1"
+    "@openge/forge-path-safety": "workspace:0.1.1",
+    "koffi": "3.3.3"
   }
 }
