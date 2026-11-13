@@ -14,12 +14,11 @@ it('publishes once and observes the saved exact ID through status and verify wit
     const before = await readFile(resolve(value.cwd, 'state/release-slot/latest-publish.json'));
     for (const command of ['status', 'verify'] as const) {
       const observed = await runRelease({ command, cwd: value.cwd, transport: value.transport });
-      expect(observed, JSON.stringify(observed.error)).toMatchObject({ ok: true, candidateSha: value.sha, deployment: { id: 'dpl_candidate' } });
+      expect(observed, JSON.stringify({ command, error: observed.error, unexpected: value.unexpected })).toMatchObject({ ok: true, candidateSha: value.sha, deployment: { id: 'dpl_candidate' } });
     }
     expect(await readFile(resolve(value.cwd, 'state/release-slot/latest-publish.json'))).toEqual(before);
     expect(await value.creates()).toBe(1); expect(value.promotions()).toBe(1);
     expect(value.paths.every(path => !path.startsWith('/v6/deployments'))).toBe(true);
-    expect(value.ref('dev')).toBe(value.initial); expect(value.ref('main')).toBe(value.initial);
   }, 300_000);
 it('observes an accepted promotion with a lost response and never promotes the candidate twice', async () => {
     const value = await fixture(); value.hooks.promote = () => { throw new ReleaseError('VERCEL_API'); };

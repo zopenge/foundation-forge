@@ -1,11 +1,14 @@
 import { resolve } from 'node:path';
+import { readFile, stat } from 'node:fs/promises';
 import { afterEach, vi } from 'vitest';
 import { managedRuns } from './managed-runs.js';
 import { completionFixture } from './completion-fixture.js';
 import { completionDeadline } from './completion-deadline.js';
 
 const boundary = vi.hoisted(() => ({ counter: '', deadline: undefined as ReturnType<typeof completionDeadline> | undefined,
-  blockCompletionIdentity: false, completionRequested: undefined as (() => void) | undefined }));
+  blockCompletionIdentity: false, completionRequested: undefined as (() => void) | undefined,
+  phases: [] as { phase: string; at: number; utc: string }[],
+  steps: [] as { name: string; durationMs: number; ok: boolean }[] }));
 vi.mock('@openge/forge-command-runner/node', async importOriginal => {
   const actual = await importOriginal<typeof import('@openge/forge-command-runner/node')>();
   return { ...actual, createNodeCommandRunner: (options: Parameters<typeof actual.createNodeCommandRunner>[0]) => {
@@ -55,12 +58,32 @@ vi.mock('../../src/node/execution.js', async importOriginal => {
 });
 const fixtures: Awaited<ReturnType<typeof completionFixture>>[] = [];
 const runs = managedRuns(), runRelease = runs.run;
-afterEach(async () => {
+afterEach(async context => {
+  // 超时后先保存取消/清理之前的现场；正常路径只在整例结束后输出内存时间线，不插入同步阶段日志。
+  if (context.task.result?.state === 'fail' && boundary.phases.length) {
+    const snapshots = await Promise.all(fixtures.map(async fixture => {
+      try {
+        const state = JSON.parse(await readFile(resolve(fixture.cwd, 'state/release-slot/state.json'), 'utf8'));
+        const exists = async (path: string) => stat(path).then(() => true, (error: unknown) => {
+          if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return false; throw error;
+        });
+        return { utc: new Date().toISOString(), stage: state.stage, completion: state.completion?.status,
+          lastCommands: state.processes.slice(-3).map((item: { name: string; status: string }) => ({ name: item.name, status: item.status })),
+          observations: (await fixture.results()).length,
+          control: await readFile(fixture.control, 'utf8'),
+          lock: await exists(resolve(fixture.cwd, 'state/release-slot/run.lock')),
+          receipt: await exists(resolve(fixture.cwd, 'state/release-slot/latest-publish.json')) };
+      } catch (error) { return { snapshotError: error instanceof Error ? error.name : typeof error }; }
+    }));
+    process.stderr.write(`COMPLETION_TEST_FAILURE ${JSON.stringify({ phases: boundary.phases, steps: boundary.steps, snapshots })}\n`);
+  }
   await runs.close();
   boundary.deadline?.dispose(); boundary.deadline = undefined; boundary.blockCompletionIdentity = false;
   boundary.completionRequested = undefined;
   vi.unstubAllEnvs();
   for (const fixture of fixtures.splice(0)) await fixture.dispose();
+  if (boundary.phases.length) process.stdout.write(`COMPLETION_TEST_TIMELINE ${JSON.stringify({ phases: boundary.phases, steps: boundary.steps })}\n`);
+  boundary.phases = []; boundary.steps = [];
   boundary.counter = '';
 });
 async function fixture(options?: Parameters<typeof completionFixture>[0]) {

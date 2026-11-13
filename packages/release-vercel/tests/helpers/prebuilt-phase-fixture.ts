@@ -44,13 +44,13 @@ export async function prebuiltPhaseFixture({ withAlias = false, completion, sign
       assign: async (id, hostname) => { assignments++; bindings.set(hostname, id); hooks.alias?.(); return { alias: hostname, uid: 'phaseAlias' }; },
     },
   };
-  const publish = () => publishCandidate({ ...engine.context, transport, effects: base.session.state.effects,
+   const publish = (command: 'check' | 'publish' | 'verify' = 'publish') => publishCandidate({ ...engine.context, transport, effects: base.session.state.effects,
     stage: async stage => { base.session.state.stage = stage; await base.session.persist(); },
     prebuilt: { ...engine.prebuilt, state: base.session.state.prebuilt, save: async value => {
       await engine.prebuilt.save(value);
       const managed = managedPrebuiltContext(base.session); if (!managed) throw new Error('managed prebuilt context required');
       await managed.save(value);
-    } } }, 'publish');
+     } } }, command);
   return { ...base, get session() { return base.session; }, engine, publish, transport, hooks, assignments: () => assignments,
     dispose: async () => { try { await engine.dispose(); } finally { await base.dispose(); } } };
   } catch (error) { await base.dispose(); throw error; }

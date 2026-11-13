@@ -8,8 +8,10 @@ import { assertActive, ReleaseError } from '../../src/node/errors.js';
 import { prebuiltConfiguration } from './prebuilt-configuration.js';
 
 /** 真实文件系统与发布引擎；仅替换不会在普通测试中授权的云端和 CLI 写入边界。 */
-export async function prebuiltFixture({ sha = 'a'.repeat(40), config = prebuiltConfiguration(), root: callerRoot }:
-  { sha?: string; config?: ReturnType<typeof prebuiltConfiguration>; root?: string } = {}) {
+export async function prebuiltFixture({ sha = 'a'.repeat(40), config = prebuiltConfiguration(), root: callerRoot,
+  deployment = { id: 'dpl_candidate', hostname: 'candidate.vercel.app' } }:
+  { sha?: string; config?: ReturnType<typeof prebuiltConfiguration>; root?: string;
+    deployment?: { id: string; hostname: string } } = {}) {
   const repository = resolve(import.meta.dirname, '../../../..');
   const base = await ensureTestTemporaryDirectory(repository, resolve(repository, 'tmp/prebuilt-tests'));
   const root = callerRoot ? await ensureTestTemporaryDirectory(repository, callerRoot) : await mkdtemp(resolve(base, 'r-'));
@@ -54,7 +56,7 @@ export async function prebuiltFixture({ sha = 'a'.repeat(40), config = prebuiltC
         }
         creates++;
         await hooks.created?.();
-        return JSON.stringify({ status: 'ok', deployment: { id: 'dpl_candidate', url: 'https://candidate.vercel.app', target: 'production', readyState: 'QUEUED' } });
+        return JSON.stringify({ status: 'ok', deployment: { id: deployment.id, url: `https://${deployment.hostname}`, target: 'production', readyState: 'QUEUED' } });
       }
       return '';
     }
@@ -65,12 +67,12 @@ export async function prebuiltFixture({ sha = 'a'.repeat(40), config = prebuiltC
       trace.push(`api:${path}`);
       let response: Record<string, unknown>;
       if (path.startsWith('/v9/projects/')) response = { id: 'prj_fixture', accountId: 'team_fixture', link: null,
-        ...(aliased ? { lastAliasRequest: { type: 'promote', jobStatus: 'succeeded', toDeploymentId: 'dpl_candidate' } } : {}) };
-      else if (path.startsWith('/v13/deployments/')) response = { id: 'dpl_candidate', projectId: 'prj_fixture', ownerId: 'team_fixture',
-        target: 'production', readyState: 'READY', source: 'cli', url: 'candidate.vercel.app', meta: { githubCommitSha: 'b'.repeat(40) } };
+        ...(aliased ? { lastAliasRequest: { type: 'promote', jobStatus: 'succeeded', toDeploymentId: deployment.id } } : {}) };
+      else if (path.startsWith('/v13/deployments/')) response = { id: deployment.id, projectId: 'prj_fixture', ownerId: 'team_fixture',
+        target: 'production', readyState: 'READY', source: 'cli', url: deployment.hostname, meta: { githubCommitSha: 'b'.repeat(40) } };
       else if (path.startsWith('/v4/aliases/')) {
         if (!aliased) throw new ReleaseError('ALIAS_MISMATCH');
-        response = { alias: 'fixture.example.invalid', projectId: 'prj_fixture', deploymentId: 'dpl_candidate' };
+        response = { alias: 'fixture.example.invalid', projectId: 'prj_fixture', deploymentId: deployment.id };
       } else throw new Error(`unexpected API path: ${path}`);
       return hooks.api ? hooks.api(path, response) : response;
     },

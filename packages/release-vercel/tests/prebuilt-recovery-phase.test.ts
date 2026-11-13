@@ -32,6 +32,30 @@ it('refuses another creation after an unknown create even when the phase source 
   expect(value.session.state.processes).toEqual([]);
 });
 
+it('uses an archived alias proof for a newer candidate without querying or rebinding the old version URL', async () => {
+  const value = await fixture(true);
+  value.hooks.alias = () => { throw new ReleaseError('VERCEL_API'); };
+  await expect(value.publish()).rejects.toMatchObject({ code: 'VERCEL_API' });
+  const original = structuredClone(value.session.state), receipt = await value.archive(false);
+  const originalPath = resolve(value.session.slot.paths.slotRoot, 'history', `${original.runId}.json`), before = await readFile(originalPath);
+  delete value.hooks.alias;
+  await value.next('verify'); await recordVerifiedAlias(value.session, receipt, value.transport);
+  const verified = await value.archive(true), verificationPath = resolve(value.session.slot.paths.slotRoot, 'history', `${verified.report.runId}.json`);
+  const proofBytes = await readFile(verificationPath);
+  expect(JSON.parse(proofBytes.toString('utf8')).stopped.prebuiltResolutions).toEqual([expect.objectContaining({
+    runId: original.runId, sourceSha: value.sha, configSha256: value.source.configSha256,
+    artifactSha256: original.prebuilt?.artifactSha256, deploymentId: 'dpl_candidate',
+    versionAlias: { hostname: `fixture-${value.sha}.vercel.app`, verified: true } })]);
+  await value.next('publish', 'b'.repeat(40));
+  const noCloud = { ...value.transport, api: async () => { throw new Error('old alias proof must precede new cloud writes'); },
+    buildInfo: async () => { throw new Error('a later candidate must not re-observe the old artifact'); } };
+  await expect(assertManagedRemoteSettled(value.session.slot.paths, value.session.execution, undefined, noCloud)).resolves.toBeUndefined();
+  expect(await readFile(originalPath)).toEqual(before);
+  expect(await readFile(verificationPath)).toEqual(proofBytes);
+  expect(value.session.state.source.sha).toBe('b'.repeat(40));
+  expect(value.engine.counts()).toEqual({ creates: 1, promotions: 0 }); expect(value.assignments()).toBe(1);
+});
+
 it.each(['lost-response', 'failed-job'] as const)('keeps a proved old promotion settled across two later phase candidates: %s', async kind => {
   const value = await fixture();
   if (kind === 'lost-response') value.hooks.promote = () => { throw new ReleaseError('VERCEL_API'); };

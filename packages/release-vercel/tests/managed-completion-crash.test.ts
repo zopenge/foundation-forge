@@ -9,11 +9,15 @@ import { serveCompletionTransport } from '../package-consumer/completion-rpc.mjs
 import { completionFixture } from './helpers/completion-fixture.js';
 import { fixtureExec } from './helpers/fixture-exec.js';
 import { managedRuns } from './helpers/managed-runs.js';
+import { Execution } from '../src/node/execution.js';
+import { installReadQueryComponentExecution } from './helpers/component-command-runtime.mjs';
 
 const runs = managedRuns();
+let restoreQueries: (() => void) | undefined;
 const fixtures: { value: Awaited<ReturnType<typeof completionFixture>>; stopped: boolean; server?: Awaited<ReturnType<typeof serveCompletionTransport>> }[] = [];
 afterEach(async () => {
-  await runs.close();
+  try { await runs.close(); }
+  finally { restoreQueries?.(); restoreQueries = undefined; }
   for (const fixture of fixtures.splice(0)) {
     await fixture.server?.close();
     // 只有真实coordinator已退出且所有业务子scope停止已证实，才在worker内回收；否则留给父Job核验。
@@ -21,15 +25,22 @@ afterEach(async () => {
   }
 });
 it('recovers the archived original intent when the coordinator exits before its publish receipt exists', async () => {
+  restoreQueries = installReadQueryComponentExecution(Execution);
   const value = await completionFixture({ mode: 'fail' }), entry: typeof fixtures[number] = { value, stopped: false }; fixtures.push(entry);
   const server = await serveCompletionTransport(value.transport); entry.server = server;
   const api = pathToFileURL(resolve(import.meta.dirname, '../dist/node.js')).href;
-  await expect(fixtureExec(process.execPath, [resolve(import.meta.dirname, '../package-consumer/completion-worker.mjs'),
+  await expect(fixtureExec(process.execPath, [resolve(import.meta.dirname, 'helpers/managed-completion-component-worker.mjs'),
     api, value.cwd, server.endpoint, value.createCounter, 'crash-publish-receipt'], { cwd: value.cwd, timeout: 180_000 }))
     .rejects.toMatchObject({ code: 71 });
   const location = await readManagedLocation(value.cwd, 'release.config.json');
   const state = JSON.parse(await readFile(location.paths.statePath, 'utf8')) as ManagedState;
   expect(state.processes.every(hasVerifiedManagedStop)).toBe(true); entry.stopped = true;
+  // 崩溃恢复只承担真实任务/收据窗口；完整固定查询批次由成功代表和专项崩溃矩阵验证。
+  expect(state.processes.filter(command => command.kind === 'checkout-observation')).toHaveLength(0);
+  const failedJob = state.processes.find(command => command.name === 'completion:0');
+  expect(failedJob).toMatchObject({ status: 'closed', closure: { exitCode: 23, termination: 'exit',
+    ownedScope: { status: 'closed', reason: 'normal', empty: true } } });
+  expect(failedJob?.terminalSha256).toMatch(/^[a-f0-9]{64}$/u);
   expect(await inspectManagedRecovery(state, location.paths)).toMatchObject({ owner: 'inactive', processes: 'closed' });
   expect(state.completion).toMatchObject({ status: 'failed' });
   await expect(readFile(resolve(location.paths.slotRoot, 'latest-publish.json'))).rejects.toMatchObject({ code: 'ENOENT' });
@@ -45,4 +56,5 @@ it('recovers the archived original intent when the coordinator exits before its 
   await expect(readFile(resolve(location.paths.slotRoot, 'latest-publish.json'))).rejects.toMatchObject({ code: 'ENOENT' });
   expect(await value.counts()).toEqual({ creates: 1, promotions: 1, assignments: 1 });
   expect(await value.results()).toHaveLength(2);
+  expect(value.ref('dev')).toBe(value.initial); expect(value.ref('main')).toBe(value.initial);
 }, 300_000);

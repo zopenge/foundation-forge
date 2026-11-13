@@ -16,7 +16,7 @@ export async function completionFixture({ completion = true, mode = 'ok', jobTim
       concurrencyControl: { mode: 'external-serialization', scope: 'fixture-project' },
       admission: [{ command: 'node', args: ['-e', 'process.exit(0)'] }] },
     source: { ...value.config.source, prepare: [{ command: 'node', args: ['-e',
-      'const f=require("node:fs");f.mkdirSync(".vercel/output/static",{recursive:true});f.writeFileSync(".vercel/output/config.json",JSON.stringify({version:3}));f.writeFileSync(".vercel/output/static/index.html","candidate");'] }] },
+      'const f=require("node:fs");f.mkdirSync(".vercel/output/static",{recursive:true});f.writeFileSync(".vercel/output/config.json",JSON.stringify({version:3}));f.writeFileSync(".vercel/output/static/index.html","candidate");process.stdout.write(JSON.stringify({url:process.env.FORGE_RELEASE_VERSION_URL,config:process.env.FORGE_RELEASE_CONFIG_SHA256,context:process.env.FORGE_RELEASE_CANDIDATE_CONTEXT}));'] }] },
     ...(completion ? { completion: { idempotent: true, jobs: [{ command: 'node',
       args: [resolve(import.meta.dirname, '../../package-consumer/completion-job.mjs'), control, proof, observations],
       ...(jobTimeoutMs === undefined ? {} : { timeoutMs: jobTimeoutMs }) }] } } : {}) };

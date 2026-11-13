@@ -1,77 +1,131 @@
-import { readFile, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
-import { afterEach, vi } from 'vitest';
+import { afterEach, expect, vi } from 'vitest';
+import { prebuiltPhaseFixture } from './prebuilt-phase-fixture.js';
+import { prebuiltFixture } from './prebuilt-fixture.js';
 import type { ReleaseTransport } from '../../src/contracts.js';
+import { completionPhaseFixture } from './completion-phase-fixture.js';
+import { admitCompletionSlot } from '../../src/node/completion-history.js';
+import { managedRuns } from './managed-runs.js';
+import * as source from '../../src/node/source.js';
+import * as git from '../../src/node/git.js';
+import * as checkout from '../../src/node/managed-checkout.js';
+import * as paths from '../../src/node/managed-paths.js';
+import { Execution } from '../../src/node/execution.js';
+import * as recovery from '../../src/node/managed-recovery.js';
+import { observePrebuiltCandidate } from '../../src/node/prebuilt-recovery.js';
 
-const boundary = vi.hoisted(() => ({ counter: '', mode: 'ok' }));
-// 只有创建部署的外部 CLI 被换成随仓库维护的真实 Node 子进程；Git、槽位、锁、事务及关闭协议均真实运行。
-vi.mock('../../src/node/execution.js', async importOriginal => {
-  const original = await importOriginal<typeof import('../../src/node/execution.js')>();
-  return { ...original, vercelInvocation: (args: readonly string[]) => {
-    if (args[0] !== '--global-config' || args[2] !== 'deploy') throw new Error('unexpected CLI operation in controlled-cloud fixture');
-    return { command: process.execPath, args: [resolve(import.meta.dirname, 'prebuilt-cli.mjs'), boundary.counter, boundary.mode, ...args] };
+vi.mock('../../src/node/source.js', async original => ({ ...await original<typeof source>() }));
+vi.mock('../../src/node/git.js', async original => ({ ...await original<typeof git>() }));
+vi.mock('../../src/node/managed-recovery.js', async original => ({ ...await original<typeof recovery>() }));
+vi.mock('../../src/node/managed-checkout.js', async original => ({ ...await original<typeof checkout>() }));
+// paths 与 recovery 互相引用；先注册替身，再在调用时加载路径检查，避免循环中捕获原 openManagedSlot。
+vi.mock('../../src/node/managed-paths.js', () => ({
+  openManagedSlot: vi.fn<typeof paths.openManagedSlot>(),
+  assertManagedPaths: async (...args: Parameters<typeof paths.assertManagedPaths>) =>
+    (await vi.importActual<typeof paths>('../../src/node/managed-paths.js')).assertManagedPaths(...args),
+  assertManagementUntracked: async (...args: Parameters<typeof paths.assertManagementUntracked>) =>
+    (await vi.importActual<typeof paths>('../../src/node/managed-paths.js')).assertManagementUntracked(...args),
+  resolveManagedPaths: async (...args: Parameters<typeof paths.resolveManagedPaths>) =>
+    (await vi.importActual<typeof paths>('../../src/node/managed-paths.js')).resolveManagedPaths(...args),
+}));
+
+const boundary = vi.hoisted(() => ({ preparing: false, current: undefined as Awaited<ReturnType<typeof prebuiltPhaseFixture>> | undefined }));
+// 仅来源/checkout 与发布命令为阶段输入；公开协调器、制品、锁、回执、观察、归档及恢复均执行生产实现。
+// BoundaryExecution 拒绝未知命令，不产生合成 identity/scope/closure；Native 完整接线另有成功代表。
+vi.mock('../../src/node/publication.js', async original => {
+  const actual = await original<typeof import('../../src/node/publication.js')>();
+  return { ...actual, publishCandidate: async (...[context, command]: Parameters<typeof actual.publishCandidate>) => {
+    if (boundary.preparing) return actual.publishCandidate(context, command);
+    const value = boundary.current;
+    if (!value || !context.prebuilt) throw new Error('owned prebuilt phase required');
+    const managed = context.prebuilt;
+    if (!managed.state && value.engine.prebuilt.state) await managed.save(value.engine.prebuilt.state);
+    if (command === 'publish' && value.config.completion) {
+      // completion 从已封存的发布阶段开始；再次 freeze 会合法地替换 manifest 身份，不能跨此边界重用输入。
+      await context.stage('promote');
+      return (await observePrebuiltCandidate(context.config, managed.state, value.transport)).deployment;
+    }
+    return actual.publishCandidate({ ...context, execution: value.engine.context.execution,
+      prebuilt: { ...managed, executionAt: value.engine.prebuilt.executionAt,
+        save: async state => { await value.engine.prebuilt.save(state); await managed.save(state); } } }, command);
   } };
 });
-import { ReleaseError } from '../../src/node/errors.js';
-import { managedFixture } from './managed-fixture.js';
 
-const owned: Awaited<ReturnType<typeof managedFixture>>[] = [];
-afterEach(async () => { for (const fixture of owned.splice(0)) await fixture.dispose(); boundary.counter = ''; boundary.mode = 'ok'; });
-async function fixture(withAlias = false) {
-  const value = await managedFixture(); owned.push(value);
-  if (value.config.source.mode !== 'managed-commit') throw new Error('managed source required');
-  const config = { ...value.config, delivery: { mode: 'prebuilt', maxFiles: 100, maxBytes: 1_048_576,
-    ...(withAlias ? { versionAlias: { hostnameTemplate: 'fixture-{sha}.vercel.app' } } : {}),
-    concurrencyControl: { mode: 'external-serialization', scope: 'fixture-project' },
-    admission: [{ command: 'node', args: ['-e', 'process.exit(0)'] }] },
-  source: { ...value.config.source, prepare: [{ command: 'node', args: ['-e',
-    'const f=require("node:fs");f.mkdirSync(".vercel/output/static",{recursive:true});f.writeFileSync(".vercel/output/config.json",JSON.stringify({version:3}));f.writeFileSync(".vercel/output/static/index.html","candidate");'] }] } };
-  await writeFile(resolve(value.cwd, 'release.config.json'), JSON.stringify(config));
-  await writeFile(resolve(value.cwd, '.gitignore'), 'tmp/\nstate/\nnode_modules/\n.vercel/\n'); const sha = value.commit();
-  boundary.counter = resolve(value.root, 'create-count.txt');
-  let aliased: string | undefined, promotions = 0, assignments = 0; const paths: string[] = [];
-  const versionBindings = new Map<string, string>();
-  const markers = new Map<string, Record<string, unknown>>(), jobs = new Map<string, string>();
-  const hooks: { promote?: () => void; failPromotion?: boolean; alias?: () => void; versionRead?: () => void; project?: () => Promise<void> } = {};
+const owned: Awaited<ReturnType<typeof prebuiltPhaseFixture>>[] = [];
+const runs = managedRuns();
+afterEach(async () => {
+  try {
+    await runs.close();
+    for (const method of ['git', 'streamGit'] as const) expect(Execution.prototype[method]).not.toHaveBeenCalled();
+  } finally {
+    vi.restoreAllMocks(); boundary.current = undefined;
+    for (const value of owned.splice(0)) await value.dispose();
+  }
+});
+
+async function coordinator<T extends Awaited<ReturnType<typeof prebuiltPhaseFixture>>>(value: T) {
+  owned.push(value); boundary.current = value;
+  let engine = value.engine, candidateSha = value.sha, selectedTransport = value.transport;
+  const engines = [engine], sources = new Map([[value.sha, value.source]]);
+  // 同一云边界与别名绑定跨候选保留；每份制品及部署响应仍独立，绝不复用上一候选的prebuilt状态。
   const transport: ReleaseTransport = {
-    api: async path => {
-      paths.push(path);
-      if (path.startsWith('/v9/projects/')) {
-        await hooks.project?.();
-        return { id: 'prj_fixture', accountId: 'team_fixture', link: null,
-          ...(aliased ? { lastAliasRequest: { type: 'promote', jobStatus: jobs.get(aliased), toDeploymentId: aliased } } : {}) };
-      }
-      if (path.startsWith('/v13/deployments/dpl_candidate')) {
-        const id = path.split('/')[3]?.split('?')[0]; if (!id) throw new Error('deployment ID required');
-        if (!markers.has(id)) markers.set(id, JSON.parse(await readFile(resolve(value.cwd,
-          'state/release-slot/checkout/state/forge-vercel-release/prebuilt/.vercel/output/static/.well-known/forge-prebuilt.json'), 'utf8')));
-        return { id, ownerId: 'team_fixture', projectId: 'prj_fixture', target: 'production', source: 'cli', readyState: 'READY', url: `${id.slice(4)}.vercel.app` };
-      }
-      if (path.startsWith('/v4/aliases/')) {
-        if (!aliased) throw new ReleaseError('ALIAS_MISMATCH');
-        return { alias: 'fixture.example.invalid', projectId: 'prj_fixture', deploymentId: aliased };
-      }
-      throw new Error(`unexpected API request: ${path}`);
-    },
-    buildInfo: async url => {
-      const parsed = new URL(url), id = parsed.hostname === 'fixture.example.invalid' ? aliased
-        : versionBindings.get(parsed.hostname) ?? `dpl_${parsed.hostname.split('.')[0]}`;
-      if (versionBindings.has(parsed.hostname)) hooks.versionRead?.();
-      const marker = id ? markers.get(id) : undefined; if (!marker) throw new Error('unknown controlled deployment');
-      return parsed.pathname === '/.well-known/forge-prebuilt.json' ? marker : { revision: marker.sourceSha };
-    },
-    promote: async id => { promotions++; aliased = id; jobs.set(id, hooks.failPromotion ? 'failed' : 'succeeded'); hooks.promote?.(); },
-    ...(withAlias ? { versionAlias: {
-      read: async (hostname: string) => { const deploymentId = versionBindings.get(hostname);
-        return deploymentId ? { alias: hostname, projectId: 'prj_fixture', deploymentId, routing: 'direct' as const } : undefined; },
-      assign: async (id: string, hostname: string) => { assignments++; versionBindings.set(hostname, id); hooks.alias?.();
-        return { alias: hostname, uid: 'fixtureAlias' }; },
-    } } : {}),
-  };
-  return { ...value, sha, transport, hooks, paths, promotions: () => promotions,
-    assignments: () => assignments, versionBindings,
-    creates: async () => Number(await readFile(boundary.counter, 'utf8')) };
+    api: (...args) => selectedTransport.api(...args), buildInfo: (...args) => selectedTransport.buildInfo(...args),
+    promote: async (...args) => {
+      if (!selectedTransport.promote) throw new Error('controlled promotion required');
+      await selectedTransport.promote(...args);
+    }, ...(value.transport.versionAlias ? { versionAlias: value.transport.versionAlias } : {}) };
+  const unexpected: string[] = [];
+  for (const method of ['git', 'streamGit'] as const) vi.spyOn(Execution.prototype, method).mockImplementation(async () => {
+    const error = new Error(`unexpected phase ${method}`); unexpected.push(error.stack ?? error.message); throw error;
+  });
+  const assertSource = (candidate: typeof value.source) => { expect(candidate).toEqual(sources.get(candidate.sha)); };
+  vi.spyOn(source, 'freezeManagedSource').mockImplementation(async (cwd, path) => {
+    expect(cwd).toBe(value.cwd); expect(path).toBe(value.source.configPath); return value.source;
+  });
+  vi.spyOn(source, 'inspectCommitTree').mockImplementation(async candidate => {
+    expect(candidate.sha).toMatch(/^[a-f0-9]{40}$/u);
+    expect(candidate).toEqual({ ...value.source, sha: candidate.sha }); sources.set(candidate.sha, candidate);
+  });
+  vi.spyOn(source, 'assertSourceFrozen').mockImplementation(async candidate => { assertSource(candidate); });
+  vi.spyOn(source, 'readCommittedConfig').mockImplementation(async (execution, sha, path) => {
+    expect(execution.cwd).toBe(value.cwd); expect(sources.has(sha)).toBe(true); expect(path).toBe(value.source.configPath);
+    return { config: value.config, oid: value.source.configBlobOid, bytes: Buffer.from(JSON.stringify(value.config)) };
+  });
+  vi.spyOn(recovery, 'assertHistoricalSource').mockImplementation(async candidate => { assertSource(candidate); });
+  vi.spyOn(git, 'assertRepository').mockImplementation(async execution => { expect(execution.cwd).toBe(value.cwd); });
+  vi.spyOn(checkout, 'prepareCheckout').mockResolvedValue(undefined);
+  vi.spyOn(checkout, 'prepareEnvironment').mockResolvedValue(undefined);
+  vi.spyOn(checkout, 'assertCheckoutFrozen').mockImplementation(async session => { assertSource(session.slot.source); });
+  vi.mocked(paths.openManagedSlot).mockImplementation(async (candidate, execution, command) => {
+    assertSource(candidate); expect(execution.cwd).toBe(value.cwd);
+    if (command !== 'publish' && command !== 'verify') throw new Error('unexpected phase coordinator command');
+    const slot = value.session.slot;
+    const resume = await admitCompletionSlot(slot.paths, slot.slotId, candidate, command);
+    if (candidate.sha !== candidateSha) {
+      if (!value.config.delivery || value.config.completion) throw new Error('only prebuilt publication phases may change candidate');
+      const next = await prebuiltFixture({ sha: candidate.sha, config: { ...value.config, delivery: value.config.delivery }, root: engine.root,
+        deployment: { id: 'dpl_candidate2', hostname: 'candidate2.vercel.app' } });
+      Object.assign(next.hooks, engine.hooks); engine = next; engines.push(next); candidateSha = candidate.sha;
+      const cloud = next.context.transport; if (!cloud?.promote) throw new Error('controlled phase cloud required');
+      selectedTransport = { ...cloud, promote: async (...args) => { await cloud.promote?.(...args); value.hooks.promote?.(); } };
+      boundary.current = { ...value, engine: next };
+    }
+    await value.next(command, candidate.sha);
+    return { ...value.session.slot, ...(resume ? { completionResume: resume } : {}) };
+  });
+  // 初始阶段 session 只准备目录和锁，不是未完成的公开发布；首个协调器自行写入其真实意图。
+  value.session.state.status = 'closed'; await value.session.persist(); await value.session.slot.lock.release();
+  return { ...value, transport, get session() { return value.session; }, get engine() { return engine; },
+    creates: async () => engines.reduce((total, item) => total + item.counts().creates, 0),
+    unexpected,
+    promotions: () => engines.reduce((total, item) => total + item.counts().promotions, 0),
+    get paths() { return engine.trace.filter(item => item.startsWith('api:')).map(item => item.slice(4)); } };
 }
 
+async function fixture(withAlias = false) { return coordinator(await prebuiltPhaseFixture({ withAlias })); }
+async function completionFixture(mode = 'fail') {
+  boundary.preparing = true;
+  try { return await coordinator(await completionPhaseFixture({ mode })); }
+  finally { boundary.preparing = false; }
+}
 
-export { boundary, fixture };
+export { fixture, completionFixture, runs };

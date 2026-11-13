@@ -1,12 +1,12 @@
 import { fixture } from './helpers/prebuilt-publication-fixture.js';
 import { runRelease } from '../src/node.js';
 import { ReleaseError } from '../src/node/errors.js';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 describe('managed prebuilt candidate recovery through public entry', () => {
-it('persists alias uncertainty, exposes readonly context, and proves the original binding before a new candidate', async () => {
+it('persists alias uncertainty and consumes the public readonly verification proof before resuming the same candidate', async () => {
     const value = await fixture(true);
     value.hooks.alias = () => { throw new ReleaseError('VERCEL_API'); };
     const first = await runRelease({ command: 'publish', cwd: value.cwd, transport: value.transport });
@@ -28,23 +28,17 @@ it('persists alias uncertainty, exposes readonly context, and proves the origina
     expect(await readFile(receipt)).toEqual(before);
     expect(await value.creates()).toBe(1); expect(value.assignments()).toBe(1); expect(value.promotions()).toBe(0);
     delete value.hooks.alias;
-    await writeFile(resolve(value.cwd, 'source.txt'), 'new alias candidate\n'); const nextSha = value.commit();
     expect(verificationRunId).toMatch(/^[a-f0-9-]{36}$/u);
-    let proofCheckedBeforeCreate = false;
-    value.hooks.project = async () => {
-      expect(await value.creates()).toBe(1);
-      const archive = JSON.parse(await readFile(resolve(value.cwd, `state/release-slot/history/${verificationRunId}.json`), 'utf8'));
-      expect(archive).toMatchObject({ stopped: { runId: verificationRunId, command: 'verify' }, outcome: { ok: true } });
-      expect(archive.stopped.prebuiltResolutions).toEqual(expect.arrayContaining([expect.objectContaining({ runId: first.runId,
-        sourceSha: value.sha, configSha256: first.configSha256, artifactSha256: first.prebuilt?.artifactSha256, deploymentId: 'dpl_candidate',
-        versionAlias: { hostname: `fixture-${value.sha}.vercel.app`, verified: true } })]));
-      proofCheckedBeforeCreate = true; delete value.hooks.project;
-    };
+    const archivePath = resolve(value.cwd, `state/release-slot/history/${verificationRunId}.json`);
+    const proofBytes = await readFile(archivePath), archive = JSON.parse(proofBytes.toString('utf8'));
+    expect(archive).toMatchObject({ stopped: { runId: verificationRunId, command: 'verify' }, outcome: { ok: true } });
+    expect(archive.stopped.prebuiltResolutions).toEqual(expect.arrayContaining([expect.objectContaining({ runId: first.runId,
+      sourceSha: value.sha, configSha256: first.configSha256, artifactSha256: first.prebuilt?.artifactSha256, deploymentId: 'dpl_candidate',
+      versionAlias: { hostname: `fixture-${value.sha}.vercel.app`, verified: true } })]));
     const next = await runRelease({ command: 'publish', cwd: value.cwd, transport: value.transport });
-    expect(next, JSON.stringify(next.error)).toMatchObject({ ok: true, candidateSha: nextSha,
-      candidateContext: { deploymentId: 'dpl_candidate2', versionAliasVerified: true } });
-    expect(await value.creates()).toBe(2); expect(value.assignments()).toBe(2); expect(value.promotions()).toBe(1);
-    expect(proofCheckedBeforeCreate).toBe(true);
-    expect(value.versionBindings.get(`fixture-${value.sha}.vercel.app`)).toBe('dpl_candidate');
+    expect(next, JSON.stringify(next.error)).toMatchObject({ ok: true, candidateSha: value.sha,
+      candidateContext: { deploymentId: 'dpl_candidate', versionAliasVerified: true } });
+    expect(await value.creates()).toBe(1); expect(value.assignments()).toBe(1); expect(value.promotions()).toBe(1);
+    expect(await readFile(archivePath)).toEqual(proofBytes);
   }, 300_000);
 });

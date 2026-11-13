@@ -1,18 +1,28 @@
 import { boundary, fixture, runRelease } from './helpers/completion-publication-fixture.js';
 import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { expect, it, vi } from 'vitest';
 import { git } from './helpers/managed-fixture.js';
 import { waitForManagedReady } from './helpers/managed-readiness.js';
 
 it('executes completion after exact production proof under the original lock, native scope and protected metadata', async () => {
+  const checkpoint = (phase: string) => { boundary.phases.push({ phase, at: performance.now(), utc: new Date().toISOString() }); };
+  checkpoint('fixture:requested');
   const value = await fixture({ mode: 'wait' });
+  checkpoint('fixture:ready');
   vi.stubEnv('FORGE_RELEASE_COMPLETION_CONTEXT', '{"productionUrl":"https://forged.invalid"}');
   vi.stubEnv('FORGE_RELEASE_URL', 'https://forged.invalid');
   vi.stubEnv('FORGE_RELEASE_DEPLOYMENT_ID', 'dpl_forged');
+  vi.stubEnv('FORGE_RELEASE_VERSION_URL', 'https://inherited.invalid');
+  vi.stubEnv('FORGE_RELEASE_CONFIG_SHA256', 'f'.repeat(64));
+  vi.stubEnv('FORGE_RELEASE_CANDIDATE_CONTEXT', '{"deploymentId":"dpl_inherited"}');
   // 只界定准备与任务启动请求，不把这个通知当作真实身份或关闭证明；原180秒总时限仍生效。
-  const started = new Promise<void>(accept => { boundary.completionRequested = accept; });
-  const pending = runRelease({ command: 'publish', cwd: value.cwd, transport: value.transport });
+  const started = new Promise<void>(accept => { boundary.completionRequested = () => { checkpoint('completion:requested'); accept(); }; });
+  checkpoint('publish:requested');
+  const pending = runRelease({ command: 'publish', cwd: value.cwd, transport: value.transport }).then(report => {
+    checkpoint('publish:finished'); boundary.steps = report.steps.map(({ name, durationMs, ok }) => ({ name, durationMs, ok })); return report;
+  });
   try {
     try { await waitForManagedReady(pending, async () => (await value.results()).length === 1, { started }); }
     catch (error) {
@@ -25,20 +35,27 @@ it('executes completion after exact production proof under the original lock, na
       } catch (readError) { failures.push(readError); }
       throw new AggregateError(failures, 'completion readiness failed', { cause: error });
     }
+    checkpoint('completion:observed');
     const live = JSON.parse(await readFile(resolve(value.cwd, 'state/release-slot/state.json'), 'utf8'));
     expect(live.completion).toMatchObject({ status: 'running', attempts: [{ status: 'running' }] });
+    checkpoint('concurrent-check:requested');
     const concurrent = await runRelease({ command: 'check', cwd: value.cwd, transport: value.transport });
+    checkpoint('concurrent-check:finished');
     expect(concurrent, JSON.stringify(concurrent.error)).toMatchObject({ ok: false,
       error: { code: 'RECOVERY_REQUIRED', details: { reason: 'OWNER_NOT_INACTIVE', owner: 'active', runId: live.runId } } });
+    checkpoint('running-status:requested');
     const status = await runRelease({ command: 'status', cwd: value.cwd, transport: value.transport });
+    checkpoint('running-status:finished');
     expect(status, JSON.stringify(status.error)).toMatchObject({ ok: false, completion: { status: 'running' } });
     expect(git(resolve(value.cwd, 'state/release-slot/checkout'), 'rev-parse', 'HEAD')).toBe(value.sha);
-  } finally { await writeFile(value.control, 'ok'); }
+  } finally { checkpoint('control:release'); await writeFile(value.control, 'ok'); }
   const report = await pending;
   expect(report, JSON.stringify(report.error)).toMatchObject({ ok: true, stage: 'complete', processes: { status: 'closed' },
     prebuilt: { promoteEffect: 'accepted', promotionVerified: true, versionAlias: { verified: true } },
     completion: { status: 'completed', publicationRunId: report.runId, attempts: [{ status: 'completed', jobs: [{ index: 0, status: 'completed' }] }] } });
   expect(report).not.toHaveProperty('completionInput');
+  expect(JSON.parse(report.steps.find(step => step.name === 'prepare:0')?.stdout ?? '')).toEqual({
+    url: `https://fixture-${value.sha}.vercel.app`, config: report.configSha256, context: '' });
   const observed = await value.results();
   expect(observed).toHaveLength(1);
   expect(observed[0]).toMatchObject({ cwd: resolve(value.cwd, 'state/release-slot/checkout'), lockRunId: report.runId,
@@ -53,31 +70,17 @@ it('executes completion after exact production proof under the original lock, na
   expect(report.completion?.attempts[0]?.jobs[0]?.commandId).toBe(command.id);
   expect(report.steps.find(step => step.name === 'completion:0')).toMatchObject({ ok: true, exitCode: 0 });
   expect(await value.counts()).toEqual({ creates: 1, promotions: 1, assignments: 1 });
-}, 180_000);
-
-it('retries a failed production completion through the public entry without repeating publication', async () => {
-  const value = await fixture({ mode: 'fail' });
-  const failed = await runRelease({ command: 'publish', cwd: value.cwd, transport: value.transport });
-  expect(failed, JSON.stringify(failed.error)).toMatchObject({ ok: false, error: { code: 'COMPLETION_FAILED' },
-    processes: { status: 'closed' }, prebuilt: { createEffect: 'accepted', promoteEffect: 'accepted', promotionVerified: true },
-    completion: { status: 'failed', attempts: [{ status: 'failed', jobs: [{ status: 'failed' }] }] } });
-  const receipt = await readFile(resolve(value.cwd, 'state/release-slot/latest-publish.json'));
-  const status = await runRelease({ command: 'status', cwd: value.cwd, sha: value.sha, transport: value.transport });
-  expect(status, JSON.stringify(status.error)).toMatchObject({ ok: false, completion: { status: 'failed' },
-    processes: { status: 'closed' }, error: { code: 'RECOVERY_REQUIRED', details: { reason: 'COMPLETION_PENDING' } } });
-  expect(git(resolve(value.cwd, 'state/release-slot/checkout'), 'rev-parse', 'HEAD')).toBe(value.sha);
-  expect(await readFile(resolve(value.cwd, 'state/release-slot/latest-publish.json'))).toEqual(receipt);
-  expect(await value.counts()).toEqual({ creates: 1, promotions: 1, assignments: 1 });
+  const receiptPath = resolve(value.cwd, 'state/release-slot/latest-publish.json'), receipt = await readFile(receiptPath);
+  for (const command of ['status', 'verify'] as const) {
+    checkpoint(`finished-${command}:requested`);
+    const result = await runRelease({ command, cwd: value.cwd, transport: value.transport });
+    checkpoint(`finished-${command}:finished`);
+    expect(result, JSON.stringify(result.error)).toMatchObject({ ok: true, candidateSha: value.sha,
+      deployment: { id: 'dpl_candidate' }, completion: { status: 'completed' } });
+  }
+  expect(await readFile(receiptPath)).toEqual(receipt);
   expect(await value.results()).toHaveLength(1);
-  await writeFile(value.control, 'ok');
-  const resumed = await runRelease({ command: 'verify', cwd: value.cwd, sha: value.sha, retryCompletion: true, transport: value.transport });
-  expect(resumed, JSON.stringify(resumed.error)).toMatchObject({ ok: true, candidateSha: value.sha,
-    completion: { status: 'completed', publicationRunId: failed.runId } });
-  expect(resumed.completion?.attempts).toHaveLength(2);
-  expect(resumed.completion?.attempts[0]).toEqual(failed.completion?.attempts[0]);
-  expect(resumed.completion?.attempts[1]).toMatchObject({ runId: resumed.runId, status: 'completed' });
-  expect(await value.results()).toHaveLength(2);
   expect(await value.counts()).toEqual({ creates: 1, promotions: 1, assignments: 1 });
-  expect(await readFile(resolve(value.cwd, 'state/release-slot/latest-publish.json'))).toEqual(receipt);
-  expect(git(resolve(value.cwd, 'state/release-slot/checkout'), 'rev-parse', 'HEAD')).toBe(value.sha);
-}, 300_000);
+  expect(value.ref('dev')).toBe(value.initial); expect(value.ref('main')).toBe(value.initial);
+  checkpoint('test:finished');
+}, 180_000);

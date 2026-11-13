@@ -4,9 +4,6 @@ import { resolve } from 'node:path';
 import process from 'node:process';
 import { releaseErrorCodes } from '@openge/forge-release-vercel';
 import { runRelease, validateReleaseConfig } from '@openge/forge-release-vercel/node';
-import { verifyCompletionConsumer } from './completion-consumer.mjs';
-import { verifyNotStartedConsumer } from './not-started-consumer.mjs';
-import { verifyUnstartedConsumer } from './unstarted-consumer.mjs';
 
 if (!releaseErrorCodes.includes('CANDIDATE_CHANGED') || !releaseErrorCodes.includes('ARTIFACT_CHANGED')
   || !releaseErrorCodes.includes('VERSION_ALIAS_CONFLICT') || typeof runRelease !== 'function') throw new Error('release contracts missing');
@@ -71,7 +68,7 @@ for (const name of ['alpha', 'beta']) {
     if (!(await readFile(resolve(cwd, '.gitignore'), 'utf8')).includes('\r\n') || git('diff', 'HEAD', '--', '.gitignore') !== '') throw new Error('CRLF checkout fixture was not materialized');
   }
   // alpha的同一次公开managed prebuilt检查覆盖CRLF、junction、构建与可移植制品；beta验证CLI workspace。
-  // completion的公开publish/CLI retry保留另一条真实准备链，安装失败/同槽重试另由managed-resume承担。
+  // completion、未启动恢复与退役矩阵由源码专项承担；消费者不重复第二条 managed 准备链。
   const lock = await readFile(resolve(cwd, 'pnpm-lock.yaml'));
   const first = JSON.parse(execute(cwd, process.execPath, name === 'alpha'
     ? [resolve(import.meta.dirname, 'node-check.mjs'), cwd]
@@ -104,9 +101,6 @@ for (const name of ['alpha', 'beta']) {
       || recovered.processes?.status !== 'closed' || recovered.steps.some(step => step.name === 'install' || step.name.startsWith('check:')))
       throw new Error(`tarball managed CLI recovery failed: ${JSON.stringify(recovered.error)}`);
     if (!(await readFile(resolve(cwd, 'state/release-slot/state.json'))).equals(before)) throw new Error('CLI recovery changed stopped history');
-    const assertAbandonedHistory = await verifyUnstartedConsumer({ cwd, binary: binaries['forge-vercel-release'], sha, execute });
-    await verifyNotStartedConsumer({ cwd, binary: binaries['forge-vercel-release'], sha, execute });
-    await assertAbandonedHistory();
   }
   const sourceState = { branch: git('branch', '--show-current'), tracked: git('status', '--porcelain=v1', '--untracked-files=no'), note: await readFile(resolve(cwd, 'user-note'), 'utf8') };
   if (sourceState.branch !== 'dev' || sourceState.tracked !== '' || sourceState.note !== 'preserve') throw new Error(`source changed: ${JSON.stringify(sourceState)}`);
@@ -131,7 +125,7 @@ for (const name of ['alpha', 'beta']) {
     await rmdir(foreign);
   }
   if (name === 'alpha') {
-  const prebuilt = config, prebuiltSha = sha, checked = first;
+   const prebuiltSha = sha, checked = first;
   if (!checked.ok || checked.candidateSha !== prebuiltSha || checked.prebuilt?.sourceSha !== prebuiltSha
     || checked.prebuilt?.fileCount !== 14 || !/^[a-f0-9]{64}$/u.test(checked.prebuilt?.artifactSha256 ?? '')
     || checked.prebuilt?.createEffect !== 'not-attempted' || checked.prebuilt?.promoteEffect !== 'not-attempted'
@@ -149,6 +143,5 @@ for (const name of ['alpha', 'beta']) {
   await rm(executionOutput, { recursive: true });
   const loaded = execute(root, process.execPath, ['-e', 'process.stdout.write(require(process.argv[1]))', resolve(moved, '.vercel/output/functions/alias.func/index.cjs')]);
   if (loaded !== 'public-tarball-layout') throw new Error('public tarball moved link closure failed');
-  await verifyCompletionConsumer({ cwd, config: prebuilt, git, binary: binaries['forge-vercel-release'] });
   }
 }

@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import process from 'node:process';
 
-/** 受控首消息失败使用真实tarball/原生收尾；默认与显式退休由未注入的公开CLI执行。 */
+/** 受控首消息失败与原生收尾；默认/显式退役由未注入CLI执行，兼供源码标准专项复用。 */
 export async function verifyUnstartedConsumer({ cwd, binary, sha, execute }) {
   if (process.platform !== 'win32') return async () => {};
   const worker = spawnSync(process.execPath, ['--experimental-test-module-mocks', resolve(import.meta.dirname, 'unstarted-worker.mjs'), cwd],
@@ -31,5 +31,8 @@ export async function verifyUnstartedConsumer({ cwd, binary, sha, execute }) {
   assert.equal(evidence.final.observation.developmentRef.relation, 'unknown');
   assert.equal(JSON.parse(execute(cwd, process.execPath, args)).retirement?.cessation, 'recorded-empty-unstarted-scope');
   // 调用方随后运行既有公开SDK新尝试；旧归档必须在该新尝试之后仍逐字节保留。
-  return async () => { assert.equal((await readFile(archivePath)).equals(archived), true); };
+  return async () => {
+    assert.equal((await readFile(archivePath)).equals(archived), true);
+    return { failed, retired };
+  };
 }

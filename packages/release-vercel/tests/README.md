@@ -4,27 +4,41 @@
 
 测试按要捕获的失败机制划分。组件测试减少无关流程的重复执行，不把合成状态或边界错误当作完整发布成功；测试数量、覆盖率数字本身不能证明语义等价。
 
+## 发布验收的职责分配
+
+发布验收不要求源码测试与已安装 tarball 重复同一完整发布前缀。重组按以下职责验收，不能因为少跑上游准备而省略目标阶段的错误时点或真实资源收尾：
+
+| 风险 | 唯一或最小完整代表 | 其余矩阵的起点 |
+|---|---|---|
+| Git 双 ref 发布及冻结验收 | `managed-release` 的真实成功发布与公开 verify | 推送故障从真实 push 阶段开始；不重复安装和构建 |
+| prebuilt、版本别名、production proof 和 completion 的完整接线 | `managed-completion` 的真实 Native 成功；真实 Git、冻结安装、prepare、部署 CLI、admission 和 completion 不替换 | `prebuilt-recovery-phase`、`completion-phase` 从各自独立的目录、锁、制品及状态开始 |
+| 发布已接受但响应丢失、同候选重试与跨候选旧别名证明 | 生产发布/观察/归档/恢复函数及真实持久化 | 不重新执行来源准备或创建合成 OS 成功凭据 |
+| completion 的公开失败、回执和 retry 接线 | 协调器回执组件与 `managed-completion-crash` 的真实协调器退出后公开恢复 | 阶段 Native 任务继续验证失败、显式 retry、追加历史和原回执不变 |
+| npm 安装、SDK/CLI 公开入口及打包依赖 | 两个独立输入根的真实 tarball 消费者 | 消费者只承担必要真实接线，不再次展开完整发布/恢复矩阵 |
+
+源码 coverage、真实文件/锁/原子写入、专门的来源准入、真实进程及五个观察批次崩溃窗口仍属于每次 full。组件输入、已安装公开入口、生产副作用及真实停止事实必须分开报告；不能用命中百分比替代上述职责映射。
+
 `managed-checkout-observation` 用真实 Git 配置写入和 Node 命令验证非批次日记、执行前身份及最终闭合。包管理器接线合并到 alpha 真实 tarball 消费者原有的 Native pnpm install：postinstall 读取本次 checkout 的日记，确认身份已持久化后才输出独立整行 marker；首个 check 后验证唯一 install、非批次、exit 0、normal/empty、scope 身份及终止凭证摘要。该验证不额外执行 `pnpm store path`，不增加安装次数，也不修改原 fixture、消费者或生产命令预算。
 
 `managed-directory-observation` 在真实目录枚举和子文件元数据暂停之间执行祖先目录重命名，覆盖 Windows 搜索句柄阻塞安装器的反例，并核对旧扫描被丢弃、在原预算内完整重启。另一个真实反例将祖先替换成外部 junction，必须拒绝观察成功；容量、取消和祖先待处理名称上限继续核对句柄关闭和原 500000 条目门槛。`managed-install-policy` 经真实 Git clone 和真实 pnpm 验证 Windows copy 参数、冻结锁字节、同槽依赖标记、旧硬链接身份及源码不变；POSIX 保留原安装参数。它们不冒充消费者生产发布，也不改变观察截止、三次整扫重试或恢复证据要求。
 
-prebuilt 发布按故障职责重组：`managed-prebuilt-publication` 保留完整 Native 成功/status/verify 与丢失 promotion 响应后不重复发布；`managed-prebuilt-publication-alias` 保留跨候选别名的完整 Native 准入。重复矩阵由 `prebuilt-recovery-phase` 调用生产发布、恢复和归档函数，真实生成制品、独立目录、锁、状态与回执，不再为同一恢复决策反复安装和执行完整协调器。标准本地 full 与 CI 都执行完整文件集合和原始覆盖率；调度权重按重组后的实际耗时调整，worker 上限与安全门禁保持原样。
+prebuilt 发布按故障职责重组：`managed-completion` 保留完整 Native 成功、prepare 的受保护环境以及 status/verify，远端 Git refs 不变；`managed-prebuilt-publication` 和 `managed-prebuilt-publication-alias` 从独立阶段输入经过公开协调器，验证丢失 promotion 响应不重复发布、只读上下文和同候选 alias 证明续发。`managed-prebuilt-publication-cross-candidate` 以同槽不同 SHA、独立制品和部署响应驱动公开 publish，逐次证明生产 guard 先于新 create/assign/promote；归档 proof 缺失且旧目标不可观察、或 proof 校验损坏时，新副作用必须为零。`prebuilt-recovery-phase` 保留独立 guard 矩阵。真实制品、独立目录、锁、状态、回执和归档不替换；阶段来源与命令不冒充完整 Native 发布。`prebuilt-phase-check` 验证两次无云封存及相同制品摘要，避免为 check 再重复完整来源准备。标准本地 full 与 CI 都执行完整文件集合和原始覆盖率；包内权重按实际成本更新，worker 上限与安全门禁保持原样。
 
 | 原故障场景 | 重组后的验证 | 保留的关键断言 |
 |---|---|---|
 | create 响应丢失后来源快进 | `prebuilt-recovery-phase` 的 unknown create | 未知创建仍拒绝新创建，create 一次、promotion 零次 |
 | 历史 promotion 丢响应或明确失败，后续候选改变 production alias | 同文件的 lost-response / failed-job 两项 | 生产 guard 回读原目标并持久化绑定 proof；后续归档继续使用 proof，旧 archive 字节不改写、不重新查询失效的旧 alias |
 | unknown / accepted 的同候选 alias 恢复 | 同文件的两项 alias 矩阵 | 只读验证形成真实归档 proof，原失败 receipt 与 archive 不改写，create/assign/promote 各至多一次 |
-| completion 失败后的新 SHA、无旗标拒绝、完成后不重放 | `completion-phase` 与完整 `managed-completion` 失败后公开 retry | 原封存输入和 SHA 保持、失败 attempt 不改写、明确 retry 后真实 Native 成功才解除 pin，原 publish receipt 不变 |
+| completion 失败后的新 SHA、无旗标拒绝、完成后不重放 | `completion-phase` 与 `managed-completion-receipt` 的公开失败/retry | 原封存输入和 SHA 保持、失败 attempt 不改写、明确 retry 后真实 Native 成功才解除 pin，原 publish receipt 不变；公开协调器保存真实失败、归档并释放原锁 |
 | completion 超时、取消和身份未知 | `managed-completion-native` | 生产 completion 阶段执行真实 Native runner，原期限、身份、终止证明与 UNKNOWN 判定保持 |
 
 阶段夹具的 SHA 与发布结果明确是组件输入，不声称来自真实 Git 提交或云端发布。普通阶段的命令集合为空；completion 阶段的 admission 与任务命令使用原生产 `ManagedSession`，关闭、身份与 terminal hash 必须来自实际执行。未知 Git、Git stream 和应用命令不能穿透受控发布边界。`prebuilt-phase-input/storage` 核对调用方输入、目录归属、实际持久化、锁及输入封存；组件记录不能充当 OS 停止证明。
 
 managed-not-started 验证启动意图已写入、runner 尚未调用时的真实取消，封印绑定运行与命令的独立未启动证明；保留普通 state 提交中断后的只读归并，拒绝旧 UNKNOWN、已有 PID/identity/scope/closure、错运行或未封印输入。managed-checkout-observation 另保留前两个真实 Git scope 已关闭、第三个查询尚未启动的批次取消。停止不会成为正常关闭或发布成功。managed-budget-diagnostics 用测试私有时钟验证原观察期限及无内容进度，以真实非零退出和真实十秒 timeout 验证后续预算异常仍保留命令上下文；所有真实目标都必须观察关闭并回收，时间戳不当作因果证明。
 
-真实 tarball 的未启动消费者只经过公开 SDK 与实装 CLI。测试专用 Node 模块注入仅包装 node:fs/promises.rename：先完成原 state rename，再触发原 AbortController；Git、锁、文件身份、原生进程与关闭保持真实，实验警告继续输出。公开 recover 必须成功，且不执行安装或检查、不改写原 CANCELLED 收据和 state 字节。helper 与 worker 随 package-consumer 维护，普通开发和发布不加载该注入，不依赖历史临时目录或 Codex。
+未启动取消、原状态恢复及显式退役分别由 `managed-not-started`、`managed-checkout-observation`、`unstarted-retirement` 和 `managed-retirement` 的源码专项验证；其中协议合成输入不证明 OS 停止。`managed-unstarted-native` 在 Windows 标准源码套件复用随仓库维护的 unstarted worker/consumer helper，现场准备真实 Git 来源，仅破坏真实 helper 首消息，检查 helpers=1、starts=0、无 PID/identity/scope、provider-failed/empty，再由未注入的公开 CLI 验证普通退役拒绝、显式退役与幂等、UNKNOWN/state/receipt 字节及归档不变，最后真实打开下一代槽位。故障在首条受管命令发生，不重复安装或完整发布；worker 使用标准步骤构建的 dist，自包含且不依赖旧 tmp。tarball 消费者保留一次 SDK managed check 后的实装 CLI recover，核对原 state 字节、零安装和零检查，不重复展开取消和退役矩阵。
 
-completion-config/state/history/input分别验证显式旗标/配置、格式与绑定、追加历史和关闭门禁、真实目录及封存manifest身份；合成journal仅用于协议反例，不作为OS成功证明。managed-completion保留真实独立Git、安装、受管runner/journal和发布协调链的完整成功与失败后公开retry，覆盖生产后目标/metadata、运行中并发拒绝、真实失败及显式追加。completion-phase直接从同一真实锁、归档与封存输入开始验证上表决策，不重复完整来源准备；失败与重试任务仍真实执行。managed-completion-crash让独立协调器在publish收据写入前真实退出，核对真实stop、原意图封存、无成功收据续验及旧archive不变。
+completion-config/state/history/input分别验证显式旗标/配置、格式与绑定、追加历史和关闭门禁、真实目录及封存manifest身份；合成journal仅用于协议反例，不作为OS成功证明。managed-completion保留真实独立Git、安装、受管runner/journal和发布协调链的完整成功，覆盖生产后目标/metadata、运行中并发拒绝与冻结环境。managed-completion-receipt从已验证的发布阶段进入公开协调器，completion失败与retry仍执行真实Native任务，保存真实失败回执、停止凭据、归档和原锁释放。completion-phase验证新SHA拒绝、无旗标拒绝及完成后不重放。managed-completion-crash让独立协调器在publish收据写入前真实退出，核对真实stop、原意图封存、无成功收据续验及旧archive不变；该组件通过私有worker复用既有只读Git查询适配器，查询仍真实执行，但不再次生成完整checkout观察批次。fetch、安装、prepare、部署CLI、admission和completion继续使用原受管执行器；失败任务的exit23、真实normal/empty、terminal摘要与refs不变另有断言，公开recover/verify仍实际执行。完整固定查询批次及其崩溃窗口由managed-completion和managed-checkout-observation-crash承担。
 
 managed-completion的运行中超时用测试私有注入时钟推进原1000ms命令期限，先确认payload已记录真实生产证明，再触发原runner的timeout回调；启动、身份、观察与原生关闭仍用真实期限，停止证明仍来自真实Job。另一个用例保留真实1000ms到期，延迟completion宿主身份交付，核对零payload、原发布副作用和UNKNOWN，不能把清空的Job补造为已验证身份或成功。completion-deadline验证时钟推进、普通定时器透传及清理；不修改宿主时钟或产品计时语义。
 
@@ -34,7 +48,7 @@ completion 阶段的云响应在生产发布阶段验证同一候选后，作为
 
 `managed-terminal` 的运行中超时用真实 payload stdout 证明任务已获准执行，再推进原 5000ms 命令期限，继续要求超时失败、准确终止凭证及错误 scope/owner/provider 拒绝复用。私有时钟只截获该 runner 的第一条匹配期限，后续同为 5000ms 的关闭期限透传普通时钟；不能暂停关闭预算来换取成功。原用例总时限、真实身份及关闭预算保持；真实墙钟的启动身份超时和预算诊断十秒命令超时仍保留。该场景验证实际 Native 超时及停止事实，不把命令启动前 UNKNOWN 视为运行中超时，也不声称测试暂停了真实宿主时钟。
 
-真实tarball的alpha额外通过公开SDK完成受控云发布后的任务失败，再由实装公开CLI明确重试；核对精确context、追加attempt、旧收据字节、create/promote各一次。云API及部署CLI的I/O叶边界只连接自有loopback替身，应用命令、进程、Git、原锁与持久化保持原实现；不操作真实云，不将其声明为线上生产验收。共享helper随package-consumer维护，所有输入在本次私有fixture中现场生成，不依赖ignored诊断脚本或旧.tmp内容。
+真实tarball只承担两个独立输入的SDK/CLI接线，不重复completion发布/失败/retry矩阵。completion-worker、completion-job和loopback传输helper仍随仓库维护，被真实源码崩溃测试复用，不能因smoke减重而删除。所有输入在本次私有fixture中现场生成，不依赖ignored诊断脚本或旧tmp内容，不操作真实云。
 
 Windows崩溃夹具通过[windows-fixture-ancestry.ts](helpers/windows-fixture-ancestry.ts)在单个PowerShell命令内发现自有父链并复核同一PID集合，每次CIM查询都带明确过滤，保留原10秒期限。返回前逐项核对协调器身份、父边、实例身份和完整集合；额外进程、替换、缺失或环均拒绝。[windows-fixture-ancestry.test.ts](windows-fixture-ancestry.test.ts)同时验证协议反例和真实父子进程，不以全机枚举或合成身份代替清理归属证明。
 
@@ -71,7 +85,7 @@ worker 运行已构建的 `dist`，遵循仓库先 build、再测试/打包的�
 
 [managed-budget-fixture.test.ts](managed-budget-fixture.test.ts) 验证预算组件在 Git 不可用时仍可创建真实资源、写入原子元数据，并核对夹具之间的隔离与清理边界。预算夹具每次从空目录生成，不复用旧 `tmp/` 内容。
 
-tarball smoke 使用两个独立仓库：alpha 的同一次公开 Node managed prebuilt check 同时验证 CRLF、内部 junction、精确制品/版本入口上下文及迁移后的链接闭包，再通过实装 CLI recover 验证已停止历史不被重写、未重新安装或执行检查；公开 publish 失败及 CLI retry 保留第二条真实 managed 准备链。beta 通过实装 CLI 执行 workspace check，再提交 managed 配置并验证外来 slot 在安装和应用命令前被拒绝。alpha 核对当前 schema3 宿主证据和真实关闭状态；两者均核对冻结命令环境、锁文件字节、源文件/分支和远端 refs 不变。alpha 保留未跟踪辅助文件，beta 将辅助文件明确写入忽略规则，遵守 workspace 的脏树门禁。真实 postinstall 失败、同 slot/路径重试、失败回执与缓存保留由 managed-resume 专项继续验证。所有云 I/O 连接自有受控边界，不能声明线上生产成功；真实 tarball、两份独立来源与精确版本继续保留。
+tarball smoke 使用两个独立仓库：alpha 的同一次公开 Node managed prebuilt check 同时验证 CRLF、内部 junction、精确制品/版本入口上下文及迁移后的链接闭包，再通过实装 CLI recover 验证已停止历史不被重写、未重新安装或执行检查。beta 通过实装 CLI 执行 workspace check，再提交 managed 配置并验证外来 slot 在安装和应用命令前被拒绝。alpha 核对当前 schema3 宿主证据和真实关闭状态；两者均核对冻结命令环境、锁文件字节、源文件/分支和远端 refs 不变。alpha 保留未跟踪辅助文件，beta 将辅助文件明确写入忽略规则，遵守 workspace 的脏树门禁。真实 postinstall 失败、同 slot/路径重试、失败回执与缓存保留由 managed-resume 专项继续验证。真实 tarball、两份独立来源与精确版本继续保留；发布协议矩阵归源码，不声明线上生产成功。
 
 推送后果矩阵的首次失败由上述阶段worker产生，状态中的intent、身份、scope、终止凭证和失败receipt使用真实生产ManagedSession/原子存储。main拒绝、main已接受但协调器被杀、dev已接受但响应丢失分别保留真实Git时点；失败receipt明确只是阶段输入。丢响应后的第二次发布仍走公开publish，核对归档pendingPush、原终止凭证、dev只推一次和main的新推送。[managed-release.test.ts](managed-release.test.ts) 的双ref代表链保留完整发布成功，再在来源配置改变后通过公开verify执行原冻结验收。协调器失败报告接线由 managed-publication-report 的组件用例承担，真实远端后果与原生停止事实由阶段worker承担；不把阶段receipt当作公开协调器成功，也不在每个远端后果场景重跑整条成功准备链。
 
