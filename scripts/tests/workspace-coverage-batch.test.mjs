@@ -6,7 +6,7 @@ import { setImmediate } from 'node:timers/promises';
 import { createTestWorkerBudget } from '../test-worker-budget.mjs';
 import { ensureTestTemporaryDirectory } from '../test-temporary-directory.mjs';
 import { discoverWorkspacePackageModel } from '../workspace-packages.mjs';
-import { runWorkspaceCoverageBatch } from '../run-workspace-coverage-batch.mjs';
+import { mergeWorkspaceCoverage, runWorkspaceCoverageBatch } from '../run-workspace-coverage-batch.mjs';
 
 test('one coverage collection partitions every source and assertion into its owning package', async () => {
   const { partitionWorkspaceReports } = await import('../run-workspace-coverage-batch.mjs');
@@ -28,16 +28,32 @@ test('coverage partitioning rejects an unowned path instead of silently dropping
     { success: true, numFailedTests: 0, numPassedTests: 0, testResults: [] }), /WORKSPACE_COVERAGE_UNOWNED/u);
 });
 
-test('four-of-four and six-of-eight complete batches pass the existing long-test ordering flag', async () => {
+test('complete two-of-two, four-of-four and six-of-eight batches retain the full long-test ordering flag', async () => {
   for (const [limit, workers, shard, expected] of [[8, 6, undefined, '1'], [8, 6, '1/2', undefined],
     [4, 4, undefined, '1'], [4, 4, '1/2', undefined], [4, 2, undefined, undefined],
-    [8, 8, undefined, undefined], [6, 6, undefined, undefined], [2, 2, undefined, undefined]]) {
+    [8, 8, undefined, undefined], [6, 6, undefined, undefined], [2, 2, undefined, '1'],
+    [2, 2, '1/2', undefined], [2, 1, undefined, undefined], [1, 1, undefined, undefined]]) {
     const stop = new Error('inspect launch before executing a process'); let seen = false;
     const context = { root: resolve('tmp/coverage-order-inspection'), budget: { limit }, run: async spec => {
       seen = true; assert.equal(spec.env.FORGE_CHECK_COVERAGE_FULL_ORDER, expected); assert.equal(spec.workers, workers); throw stop;
     } };
-    await assert.rejects(runWorkspaceCoverageBatch({ packages: [], context, workers, shard }), error => error === stop);
+    await assert.rejects(runWorkspaceCoverageBatch({ packages: [], context, workers, shard,
+      discover: async () => { throw new Error('metadata must not be rediscovered'); } }), error => error === stop);
     assert.equal(seen, true);
+  }
+});
+
+test('coverage entrypoints use supplied metadata and context without rediscovery, but discover missing selections exactly once', async () => {
+  for (const entry of [runWorkspaceCoverageBatch, mergeWorkspaceCoverage]) {
+    const value = { name: 'fixture', packageRoot: resolve('tmp/coverage-discovery/fixture'), manifest: { scripts: { 'test:coverage': 'vitest run --coverage' } } };
+    const stop = new Error('inspect before process'), context = { root: resolve('tmp/coverage-discovery'), budget: { limit: 2 },
+      run: async spec => { assert.deepEqual(JSON.parse(spec.env.FORGE_CHECK_PACKAGE_ROOTS), [value.packageRoot]); throw stop; } };
+    let calls = 0;
+    await assert.rejects(entry({ context, discover: async () => { calls++; return { packages: [value] }; } }), error => error === stop);
+    assert.equal(calls, 1);
+    await assert.rejects(entry({ context, packages: [value], discover: async () => { throw new Error('unexpected metadata discovery'); } }), error => error === stop);
+    await assert.rejects(entry({ context, packages: [{ ...value, manifest: { scripts: { 'test:coverage': 'unsupported' } } }],
+      discover: async () => { throw new Error('unexpected metadata discovery'); } }), /WORKSPACE_COVERAGE_SCRIPT_UNSUPPORTED/u);
   }
 });
 

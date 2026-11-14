@@ -28,7 +28,7 @@ test('consumer-only dependencies are explicit bounded package metadata', async c
 
 for (const hookFails of [false, true]) test(`package verification always removes its directory after the cleanup barrier${hookFails ? ' rejects' : ''}`, async context => {
   const base = resolve('tmp/tests'); await mkdir(base, { recursive: true });
-  const root = await mkdtemp(join(base, 'verification-cleanup-')), verificationRoot = join(root, 'verification');
+  const root = await mkdtemp(join(base, 'verification-cleanup-')), verificationRoot = join(root, 'tmp/verification');
   context.after(() => rm(root, { force: true, recursive: true }));
   let release, entered, primary;
   const barrier = new Promise(accept => { release = accept; });

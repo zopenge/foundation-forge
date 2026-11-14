@@ -4,6 +4,8 @@
 
 测试按要捕获的失败机制划分。组件测试减少无关流程的重复执行，不把合成状态或边界错误当作完整发布成功；测试数量、覆盖率数字本身不能证明语义等价。
 
+`source-observation-errors` 直接向生产来源函数提供严格、完整 argv 和顺序的 Git/stream 协议输入，保留六种配置读取首错、三种冻结观察首错及 remote/worktree/index 异常退出 1 的原错误对象，并在恢复普通输入后重新成功读取。独立真实配置 bytes 与目录每例现场创建；未知、乱序和应用命令在 OS 执行前拒绝，不生成身份或关闭凭据。`source-managed` 继续承担真实不存在路径、环境污染、冻结/变更、HEAD/索引/remote/配置新鲜性、大树 UTF-8、LFS 与非法树专项。`managed-history` 的三个 history/remote/admission 集成不变，仅 HISTORY_STOP 使用独立真实 session/锁/store 直接准备未完成 intent，不再为归档协议重做 Git 来源准入。
+
 ## 发布验收的职责分配
 
 发布验收不要求源码测试与已安装 tarball 重复同一完整发布前缀。重组按以下职责验收，不能因为少跑上游准备而省略目标阶段的错误时点或真实资源收尾：

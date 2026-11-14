@@ -3,9 +3,11 @@ import {
   access,
   copyFile,
   cp,
+  lstat,
   mkdir,
   readFile,
   readdir,
+  realpath,
   rm,
   writeFile,
 } from 'node:fs/promises';
@@ -25,6 +27,7 @@ import {
 } from './package-verification.mjs';
 import { discoverWorkspacePackageModel } from './workspace-packages.mjs';
 import { createTestRunContext } from './test-run-context.mjs';
+import { finishPackageVerification, removePackageVerificationDirectory } from './package-verification-cleanup.mjs';
 
 const ignoredDirectories = new Set(['.git', '.tmp', 'tmp', 'coverage', 'dist', 'node_modules']);
 const execFileAsync = promisify(execFile);
@@ -387,7 +390,7 @@ export const runCleanPackageConsumer = async ({
 };
 
 export const verifyLocalPackages = async ({ repositoryRoot, verificationRoot, tarballCacheRoot, onBuilt,
-  onConsumerReady, onBeforeCleanup, serialConsumerChecks = false, testRun }) => {
+  onConsumerReady, onBeforeCleanup, serialConsumerChecks = false, testRun, signal }) => {
   if (relative(repositoryRoot, verificationRoot).startsWith('..')) {
     throw new Error('package verification directory escaped the repository');
   }
@@ -399,9 +402,13 @@ export const verifyLocalPackages = async ({ repositoryRoot, verificationRoot, ta
     process.stdout.write(`pack:check ${name}: ${((now - phaseStart) / 1_000).toFixed(2)}s\n`);
     phaseStart = now;
   };
-  const removeVerificationRoot = async phase => {
+  let identity;
+  const removeVerificationRoot = async (phase, mode) => {
     const startedAt = new Date().toISOString();
-    try { await rm(verificationRoot, { force: true, recursive: true }); }
+    try {
+      if (phase === 'initial cleanup') await rm(verificationRoot, { force: true, recursive: true });
+      else await removePackageVerificationDirectory({ repositoryRoot, directory: verificationRoot, identity, testRun, signal, mode });
+    }
     finally {
       reportPhase(phase);
       process.stdout.write(`${JSON.stringify({ event: 'package-verification-cleanup', phase,
@@ -409,6 +416,9 @@ export const verifyLocalPackages = async ({ repositoryRoot, verificationRoot, ta
     }
   };
   await removeVerificationRoot('initial cleanup');
+  await mkdir(verificationRoot, { recursive: true });
+  const created = await lstat(verificationRoot, { bigint: true });
+  identity = { dev: String(created.dev), ino: String(created.ino), canonicalPath: await realpath(verificationRoot) };
   try {
     const model = await discoverWorkspacePackageModel({ repositoryRoot });
     await verifyRepositoryHygiene(repositoryRoot);
@@ -418,7 +428,7 @@ export const verifyLocalPackages = async ({ repositoryRoot, verificationRoot, ta
     await preparePackagesForPacking({ model });
     reportPhase('build');
     testRun ??= await onBuilt?.(model);
-    if (!testRun) { testRun = await createTestRunContext({ packages: model.packages }); own = true; }
+    if (!testRun) { testRun = await createTestRunContext({ packages: model.packages, signal }); own = true; }
     const { extractedPackages, tarballs } = await packPackages(model, verificationRoot);
     await verifyBrowserBoundaries(extractedPackages);
     reportPhase('tarballs and browser boundaries');
@@ -443,14 +453,9 @@ export const verifyLocalPackages = async ({ repositoryRoot, verificationRoot, ta
     }
     reportPhase('tarball cache');
   } catch (error) { failures.push(error); }
-  try { if (own) await testRun.finalize(); }
-  catch (error) { failures.push(error); }
-  // 共享context的后台检查排空后再删大目录；门闩或审计失败也不能跳过清理。
-  try { await onBeforeCleanup?.(failures[0], failures.length !== 0); }
-  catch (error) { failures.push(error); }
-  reportPhase('checks drained');
-  try { await removeVerificationRoot('cleanup'); }
-  catch (error) { failures.push(error); }
+  await finishPackageVerification({ failures, own, testRun, signal, onBeforeCleanup: async (...args) => {
+    try { await onBeforeCleanup?.(...args); } finally { reportPhase('checks drained'); }
+  }, remove: mode => removeVerificationRoot('cleanup', mode) });
   if (failures.length === 1) throw failures[0];
   if (failures.length > 1) throw new AggregateError(failures, 'package verification and cleanup failed', { cause: failures[0] });
 };

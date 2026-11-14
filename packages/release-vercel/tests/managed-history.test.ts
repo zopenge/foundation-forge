@@ -1,6 +1,6 @@
 import { readFile, rename, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { git, managedFixture } from './helpers/managed-fixture.js';
 import { freezeManagedSource } from '../src/node/source.js';
 import { openManagedSlot } from '../src/node/managed-paths.js';
@@ -8,9 +8,11 @@ import { createManagedSession } from '../src/node/managed-process.js';
 import { archiveManagedDisposition, dispositionPath } from '../src/node/managed-disposition.js';
 import { assertManagedRemoteSettled } from '../src/node/managed-remote-state.js';
 import { randomUUID } from 'node:crypto';
+import { Execution } from '../src/node/execution.js';
+import { managedSessionFixture } from './helpers/managed-session-fixture.js';
 
-const fixtures: Awaited<ReturnType<typeof managedFixture>>[] = [];
-afterEach(async () => { for (const f of fixtures.splice(0)) await f.dispose(); });
+const fixtures: { dispose(): Promise<void> }[] = [];
+afterEach(async () => { vi.restoreAllMocks(); for (const f of fixtures.splice(0)) await f.dispose(); });
 async function fixture() {
   const f = await managedFixture(); fixtures.push(f);
   const source = await freezeManagedSource(f.cwd, 'release.config.json', f.execution);
@@ -37,10 +39,13 @@ it('blocks the next local admission when prior history was removed after a compl
   await expect(openManagedSlot(f.source, f.execution)).rejects.toMatchObject({ code: 'SLOT_STATE' });
 });
 it('never authorizes release by dropping an incomplete command from the historical state', async () => {
-  const f = await fixture();
-  f.next.state.processes.push({ id: randomUUID(), name: 'unresolved-command', status: 'intent', observationComplete: false, descendants: [] });
-  await f.next.persist();
-  await expect(archiveManagedDisposition(f.current.paths, f.next.state, { ...f.next.state, processes: [] }, () => f.current.lock.assertOwned()))
+  const run = vi.spyOn(Execution.prototype, 'run').mockImplementation(async () => { throw new Error('history stop must not prepare Git'); });
+  const f = await managedSessionFixture(); fixtures.push(f);
+  const session = await createManagedSession(f.slot, 'check');
+  session.state.processes.push({ id: randomUUID(), name: 'unresolved-command', status: 'intent', observationComplete: false, descendants: [] });
+  await session.persist();
+  await expect(archiveManagedDisposition(f.slot.paths, session.state, { ...session.state, processes: [] }, () => f.slot.lock.assertOwned()))
     .rejects.toMatchObject({ code: 'SLOT_STATE', details: { reason: 'HISTORY_STOP' } });
-  await f.current.lock.release();
+  await f.slot.lock.release();
+  expect(run).not.toHaveBeenCalled();
 });

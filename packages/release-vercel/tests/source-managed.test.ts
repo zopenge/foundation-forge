@@ -3,26 +3,11 @@ import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { freezeManagedSource, assertSourceFrozen, inspectCommitTree, readCommittedConfig } from '../src/node/source.js';
-import { ReleaseError } from '../src/node/errors.js';
 import { git, managedFixture } from './helpers/managed-fixture.js';
 
 const fixtures: Awaited<ReturnType<typeof managedFixture>>[] = [];
 afterEach(async () => { vi.unstubAllEnvs(); for (const f of fixtures.splice(0)) await f.dispose(); });
 const fixture = async () => { const f = await managedFixture(); fixtures.push(f); return f; };
-it.each([
-  new ReleaseError('GIT_FAILED', { exitCode: null, termination: 'start-failure' }),
-  new ReleaseError('GIT_FAILED', { exitCode: 128, termination: 'termination-failure' }),
-  new ReleaseError('GIT_FAILED', { exitCode: 128, termination: 'exit' }),
-  new ReleaseError('COMMAND_TIMEOUT', { step: 'git' }),
-  new ReleaseError('CANCELLED'),
-  new ReleaseError('PROCESS_STATE_UNKNOWN'),
-])('preserves committed-config observation failure $code with $details', async failure => {
-  const f = await fixture();
-  const observation = vi.spyOn(f.execution, 'git').mockRejectedValueOnce(failure);
-  try { await expect(readCommittedConfig(f.execution, f.sha, 'release.config.json')).rejects.toBe(failure); }
-  finally { observation.mockRestore(); }
-  await expect(readCommittedConfig(f.execution, f.sha, 'release.config.json')).resolves.toMatchObject({ config: f.config });
-});
 it('classifies a genuinely absent committed-config path after a normal Git exit', async () => {
   const f = await fixture();
   await expect(readCommittedConfig(f.execution, f.sha, 'absent.json')).rejects.toMatchObject({ code: 'SOURCE_UNSUPPORTED', details: { reason: 'CONFIG_NOT_COMMITTED' } });
@@ -49,27 +34,6 @@ it.each(['index', 'tracked', 'head', 'remote', 'remote-removed', 'config'])('rej
   else { await writeFile(resolve(f.cwd, 'source.txt'), 'changed'); if (mode !== 'tracked') git(f.cwd, 'add', '-u');
     if (mode === 'head') git(f.cwd, 'commit', '-m', 'later'); }
   await expect(assertSourceFrozen(source, f.execution)).rejects.toMatchObject({ code: 'SOURCE_CHANGED' });
-});
-it.each(['GIT_FAILED', 'COMMAND_TIMEOUT', 'PROCESS_STATE_UNKNOWN'] as const)('preserves %s when frozen-source observation fails', async code => {
-  const f = await fixture(); const source = await freezeManagedSource(f.cwd, 'release.config.json', f.execution);
-  const failure = new ReleaseError(code, { step: 'git', ...(code === 'GIT_FAILED' ? { exitCode: null, termination: 'termination-failure' } : {}) });
-  const observation = vi.spyOn(f.execution, 'git').mockRejectedValueOnce(failure);
-  try { await expect(assertSourceFrozen(source, f.execution)).rejects.toBe(failure); }
-  finally { observation.mockRestore(); }
-  await expect(assertSourceFrozen(source, f.execution)).resolves.toBeUndefined();
-});
-it.each(['remote', 'worktree', 'index'])('preserves abnormal closure with exit code one during %s observation', async point => {
-  const f = await fixture(); const source = await freezeManagedSource(f.cwd, 'release.config.json', f.execution);
-  const failure = new ReleaseError('GIT_FAILED', { step: 'git', exitCode: 1, termination: 'termination-failure' });
-  const original = f.execution.git.bind(f.execution);
-  const observation = vi.spyOn(f.execution, 'git').mockImplementation(args => {
-    const targeted = point === 'remote' ? args[0] === 'config' && args[1] === '--get-regexp'
-      : args[0] === 'diff' && args.includes('--cached') === (point === 'index');
-    return targeted ? Promise.reject(failure) : original(args);
-  });
-  try { await expect(assertSourceFrozen(source, f.execution)).rejects.toBe(failure); }
-  finally { observation.mockRestore(); }
-  await expect(assertSourceFrozen(source, f.execution)).resolves.toBeUndefined();
 });
 it('rejects an untracked configuration even when it matches the candidate', async () => {
   const f = await fixture(); await writeFile(resolve(f.cwd, 'other.json'), JSON.stringify(f.config));

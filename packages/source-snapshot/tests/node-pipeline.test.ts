@@ -11,7 +11,7 @@ import {
 } from '../src/node.js';
 import type { PreparedRepositorySnapshot, RepositorySnapshotPlanOptions, PublishSourceSnapshotOptions } from '../src/node.js';
 import { parseSourceTextDetails } from '../src/text-format.js';
-import { addCommittedFile, addFixtureSubmodule, createRepository, runGit } from './node-fixtures.js';
+import { addFixtureSubmodule, createRepository, runGit } from './node-fixtures.js';
 
 const roots: string[] = [];
 const preparations: PreparedRepositorySnapshot[] = [];
@@ -41,8 +41,7 @@ const publishRepository = async (input: RepositorySnapshotPlanOptions & PublishS
 };
 afterEach(async () => { await Promise.all(preparations.splice(0).map(prepared => prepared.dispose())); await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }))); });
 test('plans tracked and untracked source with caller-owned policy and grouping', async () => {
-  const source = await createRepository(); roots.push(source);
-  await addCommittedFile(source, 'src/a.ts');
+  const source = await createRepository({ files: { 'src/a.ts': 'export const value = 1\n' } }); roots.push(source);
   await mkdir(join(source, 'src'), { recursive: true });
   await writeFile(join(source, 'src', 'b.ts'), 'export const b = 1\n', 'utf8');
   await writeFile(join(source, '.env.local'), 'SECRET=value\n', 'utf8');
@@ -57,8 +56,7 @@ test('plans tracked and untracked source with caller-owned policy and grouping',
 });
 
 test('plans an explicitly allowed checked-out submodule head and records gitlink provenance', async () => {
-  const source = await createRepository(); const sub = await createRepository(); roots.push(source, sub);
-  await addCommittedFile(sub, 'nested.ts');
+  const source = await createRepository(); const sub = await createRepository({ files: { 'nested.ts': 'export const value = 1\n' } }); roots.push(source, sub);
   await addFixtureSubmodule(source, sub);
   await runGit(source, ['commit', '--quiet', '-am', 'submodule']);
   const parentGitlink = (await runGit(source, ['rev-parse', 'HEAD:modules/lib'])).trim();
@@ -101,8 +99,7 @@ test('blocks unknown file types and high-confidence secrets without echoing secr
 });
 
 test('exports a ready repository, verifies publication and returns NO_CHANGES on repeat', async () => {
-  const source = await createRepository(); roots.push(source);
-  await addCommittedFile(source, 'src/a.ts');
+  const source = await createRepository({ files: { 'src/a.ts': 'export const value = 1\n' } }); roots.push(source);
   const target = await createOutside('snapshot-pipeline-target-');
   const state = await createOutside('snapshot-pipeline-state-');
   const exportOptions = { ...options(source), targetRoot: target, lockPath: join(state, 'publish.lock'), ownerId: 'fixture-owner', protectedTopLevelDirectories: ['notes'] };

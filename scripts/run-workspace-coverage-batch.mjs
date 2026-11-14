@@ -35,8 +35,8 @@ export function partitionWorkspaceReports(packages, coverage, result) {
   return rows;
 }
 
-async function coveragePackages(packages) {
-  const model = await discoverWorkspacePackageModel({ repositoryRoot });
+async function coveragePackages(packages, needsModel, discover) {
+  const model = !packages || needsModel ? await discover({ repositoryRoot }) : undefined;
   const selected = (packages ?? model.packages)
     .filter(value => value.manifest.scripts?.['test:coverage']);
   for (const value of selected) if (value.manifest.scripts['test:coverage'] !== 'vitest run --coverage') throw new Error(`WORKSPACE_COVERAGE_SCRIPT_UNSUPPORTED: ${value.name}`);
@@ -71,11 +71,12 @@ async function publishWorkspaceCoverage(selected, context, logRoot, result, work
     await publishCoverageReports({ reports: outputs, root: context.root, summary });
 }
 
-export async function runWorkspaceCoverageBatch({ packages, context, signal, shard, workers = context?.budget.limit ?? testWorkerLimit() } = {}) {
+export async function runWorkspaceCoverageBatch({ packages, context, signal, shard, workers = context?.budget.limit ?? testWorkerLimit(),
+  discover = discoverWorkspacePackageModel } = {}) {
   workers = testWorkerLimit(workers);
   if (context && workers > context.budget.limit) throw new Error('WORKSPACE_COVERAGE_WORKERS');
   const selection = shard === undefined ? undefined : parseCoverageShard(shard);
-  const { model, selected } = await coveragePackages(packages);
+  const { model, selected } = await coveragePackages(packages, !context, discover);
   const own = !context;
   context ??= await createTestRunContext({ packages: model.packages, signal });
   const started = performance.now();
@@ -88,7 +89,7 @@ export async function runWorkspaceCoverageBatch({ packages, context, signal, sha
     await context.run({ name: 'workspace coverage', workers, command: process.execPath,
       args,
       cwd: repositoryRoot, logRoot, env: { ...process.env, FORGE_CHECK_COVERAGE_SHARD: selection ? '1' : undefined,
-        FORGE_CHECK_COVERAGE_FULL_ORDER: !selection && ((context.budget.limit === 4 && workers === 4)
+        FORGE_CHECK_COVERAGE_FULL_ORDER: !selection && ((context.budget.limit === 2 && workers === 2) || (context.budget.limit === 4 && workers === 4)
           || (context.budget.limit === 8 && workers === 6)) ? '1' : undefined,
         FORGE_CHECK_PACKAGE_ROOTS: JSON.stringify(selected.map(value => value.packageRoot)) } });
     const result = JSON.parse(await readFile(resolve(logRoot, 'results.json'), 'utf8'));
@@ -103,8 +104,8 @@ export async function runWorkspaceCoverageBatch({ packages, context, signal, sha
   return partial;
 }
 
-export async function mergeWorkspaceCoverage({ packages, context, blobsDirectory, expected } = {}) {
-  const { model, selected } = await coveragePackages(packages);
+export async function mergeWorkspaceCoverage({ packages, context, blobsDirectory, expected, discover = discoverWorkspacePackageModel } = {}) {
+  const { model, selected } = await coveragePackages(packages, !context, discover);
   const own = !context;
   context ??= await createTestRunContext({ packages: model.packages });
   let result;

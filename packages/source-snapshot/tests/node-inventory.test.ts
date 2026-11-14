@@ -2,14 +2,13 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, expect, test } from 'vitest';
 import { collectSourceInventory } from '../src/node.js';
-import { addCommittedFile, addFixtureSubmodule, createRepository, removeRepository, runGit } from './node-fixtures.js';
+import { addFixtureSubmodule, createRepository, removeRepository, runGit } from './node-fixtures.js';
 const roots: string[] = [];
-const makeRoot = async (): Promise<string> => { const root = await createRepository(); roots.push(root); return root; };
+const makeRoot = async (files: Readonly<Record<string, string>> = {}): Promise<string> => { const root = await createRepository({ files }); roots.push(root); return root; };
 afterEach(async () => { await Promise.all(roots.splice(0).map(removeRepository)); });
 
 test('collects tracked and untracked non-ignored files with repository state', async () => {
-  const root = await makeRoot();
-  await addCommittedFile(root, 'src/tracked.ts');
+  const root = await makeRoot({ 'src/tracked.ts': 'export const value = 1\n' });
   await writeFile(join(root, 'untracked.ts'), 'export {}\n', 'utf8');
   await mkdir(join(root, 'ignored')); await writeFile(join(root, 'ignored/hidden.ts'), '', 'utf8');
   const inventory = await collectSourceInventory({ sourceRoot: root });
@@ -22,8 +21,7 @@ test('collects tracked and untracked non-ignored files with repository state', a
 });
 
 test('recurses initialized submodules and records parent gitlink', async () => {
-  const root = await makeRoot(); const sub = await makeRoot();
-  await addCommittedFile(sub, 'nested.ts');
+  const root = await makeRoot(); const sub = await makeRoot({ 'nested.ts': 'export const value = 1\n' });
   await addFixtureSubmodule(root, sub);
   await runGit(root, ['commit', '--quiet', '-am', 'submodule']);
   await writeFile(join(root, 'modules/lib/untracked.ts'), '', 'utf8');
@@ -37,8 +35,7 @@ test('recurses initialized submodules and records parent gitlink', async () => {
 });
 
 test('blocks an initialized submodule whose head differs from the parent gitlink', async () => {
-  const root = await makeRoot(); const sub = await makeRoot();
-  await addCommittedFile(sub, 'nested.ts');
+  const root = await makeRoot(); const sub = await makeRoot({ 'nested.ts': 'export const value = 1\n' });
   await addFixtureSubmodule(root, sub);
   await runGit(root, ['commit', '--quiet', '-am', 'submodule']);
   await writeFile(join(root, 'modules/lib/nested.ts'), 'changed\n', 'utf8');
@@ -48,8 +45,7 @@ test('blocks an initialized submodule whose head differs from the parent gitlink
 });
 
 test('allows an initialized submodule head mismatch only when explicitly requested', async () => {
-  const root = await makeRoot(); const sub = await makeRoot();
-  await addCommittedFile(sub, 'nested.ts');
+  const root = await makeRoot(); const sub = await makeRoot({ 'nested.ts': 'export const value = 1\n' });
   await addFixtureSubmodule(root, sub);
   await runGit(root, ['commit', '--quiet', '-am', 'submodule']);
   await writeFile(join(root, 'modules/lib/nested.ts'), 'changed\n', 'utf8');
@@ -60,8 +56,7 @@ test('allows an initialized submodule head mismatch only when explicitly request
 });
 
 test('blocks declared but uninitialized submodules rather than silently skipping them', async () => {
-  const root = await makeRoot(); const sub = await makeRoot();
-  await addCommittedFile(sub, 'nested.ts');
+  const root = await makeRoot(); const sub = await makeRoot({ 'nested.ts': 'export const value = 1\n' });
   await addFixtureSubmodule(root, sub);
   await runGit(root, ['commit', '--quiet', '-am', 'submodule']);
   await runGit(root, ['submodule', 'deinit', '-f', 'modules/lib']);

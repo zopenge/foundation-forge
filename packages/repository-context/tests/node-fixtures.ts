@@ -14,7 +14,7 @@ export interface TemporaryRepository {
 
 export { createTestTaskScope } from '../../../scripts/test-task-scope.mjs';
 
-export const createTemporaryRepository = async (): Promise<TemporaryRepository> => {
+export const createTemporaryRepository = async ({ standardLibrary = false }: { standardLibrary?: boolean } = {}): Promise<TemporaryRepository> => {
   const rootDir = join(repositoryRoot, 'tmp', 'tests', `repository-${randomUUID()}`);
   const indexRoot = join(rootDir, 'tmp', 'repository-context');
   const tsconfigPath = join(rootDir, 'tsconfig.json');
@@ -36,6 +36,7 @@ export const createTemporaryRepository = async (): Promise<TemporaryRepository> 
       target: 'ES2023',
       strict: true,
       noEmit: true,
+      ...(!standardLibrary ? { noLib: true } : {}),
     },
     include: ['src/**/*.ts'],
   }, null, 2)}\n`, 'utf8')]);
