@@ -6,7 +6,7 @@
 
 | 你要解决的问题 | 能力域 |
 | --- | --- |
-| Peer 连接、发现、libp2p 或 WebSocket rendezvous | [网络](packages/networking/README.md) |
+| HTTP(S) 显式代理、Peer 连接、发现、libp2p 或 WebSocket rendezvous | [网络](packages/networking/README.md) |
 | 稳定 JSON、JSON Lines、SSE 分帧与解析 | [数据格式与流式协议](packages/data-formats/README.md) |
 | 路径安全、完整性、归档、生成物、配置包 | [制品与文件安全](packages/artifacts/README.md) |
 | Git 文件发现、上下文规划、文本完整性、确定性源码快照 | [仓库工具](packages/repository-tooling/README.md) |

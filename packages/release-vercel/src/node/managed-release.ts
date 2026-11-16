@@ -76,7 +76,7 @@ export async function runManagedRelease(options: RunReleaseOptions): Promise<Rel
         : previousPublish && typeof previousPublish.sha === 'string' && typeof previousPublish.runId === 'string' && typeof previousPublish.configSha256 === 'string' ? { latestPublish: { sha: previousPublish.sha, runId: previousPublish.runId, configSha256: previousPublish.configSha256 } } : {}) });
     await prepareCheckout(session); await prepareEnvironment(session);
     const assertFrozen = async () => { await assertSourceFrozen(frozen, original); await assertCheckoutFrozen(currentSession); };
-    result = await publishCandidate({ execution: session.execution, config: source.config, sha: source.sha, signal: options.signal, transport: options.transport,
+    result = await publishCandidate({ execution: session.execution, config: source.config, sha: source.sha, signal: options.signal, transport: options.transport, buildInfoHttp: options.buildInfoHttp,
       effects: session.state.effects, assertFrozen,
       prebuilt: managedPrebuiltContext(session),
       mutationGuard: async effect => { await assertFrozen(); await currentSession.assertClosed(); await currentSession.budget.sample(); await currentSession.slot.lock.assertOwned();
@@ -86,7 +86,7 @@ export async function runManagedRelease(options: RunReleaseOptions): Promise<Rel
             if (previous.some(item => item.runId === proof.runId)) return;
             if (previous.length >= 1000) throw new ReleaseError('BUDGET_EXCEEDED', { reason: 'PREBUILT_RESOLUTION_LIMIT' });
             currentSession.state.prebuiltResolutions = [...previous, proof]; await currentSession.persist();
-          }); },
+          }, options.buildInfoHttp); },
       stage: async value => { currentSession.state.stage = value; await currentSession.persist(); },
       checkpoint: async pending => { if (pending) currentSession.state.pendingPush = pending; else delete currentSession.state.pendingPush; await currentSession.persist(); } }, options.command === 'publish' ? 'publish' : 'check');
     await runCompletion(session, options, assertFrozen);

@@ -1,3 +1,5 @@
+import type { NodeHttpTransportOptions } from '@openge/forge-http-transport';
+
 export type ReleaseCommand = 'check' | 'publish' | 'status' | 'verify' | 'recover' | 'retire' | 'login';
 export interface ReleaseCheck {
   readonly command: string;
@@ -188,5 +190,6 @@ export interface RunReleaseOptions {
   readonly abandonUnstarted?: boolean;
   readonly signal?: AbortSignal;
   readonly transport?: ReleaseTransport;
+  readonly buildInfoHttp?: NodeHttpTransportOptions;
   readonly onLoginOutput?: (text: string) => void;
 }

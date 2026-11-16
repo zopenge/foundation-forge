@@ -1,4 +1,5 @@
 import { setTimeout as delay } from 'node:timers/promises';
+import type { NodeHttpTransportOptions } from '@openge/forge-http-transport';
 import type { PrebuiltReleaseState, ReleaseConfig, ReleaseDeployment, ReleaseTransport, VersionAliasAssignment, VersionAliasBinding, VersionAliasTransport } from '../contracts.js';
 import { assertActive, record, ReleaseError } from './errors.js';
 import type { Execution } from './execution.js';
@@ -55,12 +56,12 @@ export async function assignPrebuiltVersionAliasOnce(config: ReleaseConfig, depl
     throw new ReleaseError('VERCEL_API', { reason: 'VERSION_ALIAS_RESPONSE' });
   return { alias: hostname, uid: value.uid, ...(typeof value.oldDeploymentId === 'string' ? { oldDeploymentId: value.oldDeploymentId } : {}) };
 }
-export function createPrebuiltTransport(execution: Execution, config: ReleaseConfig, writing: boolean): ReleaseTransport {
+export function createPrebuiltTransport(execution: Execution, config: ReleaseConfig, writing: boolean, http?: NodeHttpTransportOptions): ReleaseTransport {
   if (writing && !process.env.VERCEL_TOKEN) throw new ReleaseError('AUTH_REQUIRED', { reason: 'PREBUILT_TOKEN_REQUIRED' });
   let versionAlias: VersionAliasTransport | undefined;
   if (config.delivery?.versionAlias) versionAlias = { read: (hostname, signal) => readPrebuiltVersionAlias(config, hostname, signal),
     ...(writing ? { assign: (id: string, hostname: string, signal: AbortSignal) => assignPrebuiltVersionAliasOnce(config, id, hostname, signal) } : {}) };
-  return { ...createTransport(execution), promote: (id, signal) => promotePrebuiltOnce(config, id, signal), ...(versionAlias ? { versionAlias } : {}) };
+  return { ...createTransport(execution, http), promote: (id, signal) => promotePrebuiltOnce(config, id, signal), ...(versionAlias ? { versionAlias } : {}) };
 }
 export class PrebuiltVerification {
   constructor(readonly config: ReleaseConfig, readonly transport: ReleaseTransport, readonly signal?: AbortSignal) {}

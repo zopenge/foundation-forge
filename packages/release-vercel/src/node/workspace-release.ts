@@ -66,7 +66,7 @@ export async function runWorkspaceRelease(options: RunReleaseOptions): Promise<R
         const current = options.config === undefined ? await readConfig(path) : validateReleaseConfig(options.config);
         if (await digest(current) !== configSha256) throw new ReleaseError('CANDIDATE_CHANGED', { reason: 'CONFIG_CHANGED' });
       };
-      result = await publishCandidate({ execution, config, sha: candidateSha, signal: options.signal, transport: options.transport, effects, assertFrozen,
+      result = await publishCandidate({ execution, config, sha: candidateSha, signal: options.signal, transport: options.transport, buildInfoHttp: options.buildInfoHttp, effects, assertFrozen,
         mutationGuard: async () => { await assertFrozen(); await releaseLock?.assertOwned(); return undefined; }, stage: async () => {}, checkpoint: async () => {} }, options.command);
     }
   } catch (error) { failure = diagnostic(error); }

@@ -3,14 +3,29 @@ import { syncBuiltinESMExports } from 'node:module';
 import { basename, dirname, resolve } from 'node:path';
 import { URL, pathToFileURL } from 'node:url';
 import process from 'node:process';
+import { mock } from 'node:test';
 import { completionRpcTransport } from './completion-rpc.mjs';
 
 const [apiUrl, cwd, endpoint, counter, mode, binary] = process.argv.slice(2);
 if (!apiUrl?.startsWith('file:') || !cwd || !endpoint || !counter || !['publish', 'crash-publish-receipt', 'verify-retry', 'cli-verify-retry'].includes(mode))
   throw new Error('completion fixture arguments');
+const transport = completionRpcTransport(endpoint, (code, details) => new ReleaseError(code, details));
+if (mode === 'cli-verify-retry') {
+  // 仅替换公开HTTP适配叶边界；真实CLI、限长读取、解析及发布/恢复流程仍执行安装产物。
+  mock.module('@openge/forge-http-transport/node', { namedExports: {
+    createNodeHttpTransport: () => ({
+      fetch: async (input, options) => {
+        const target = typeof input === 'string' ? input : input.url ?? input.href;
+        const value = await transport.buildInfo(target, options?.signal);
+        return new globalThis.Response(JSON.stringify(value), { status: 200, headers: { 'content-type': 'application/json' } });
+      },
+      describeRoute: () => ({ route: 'direct', bypassed: false }),
+      close: async () => {},
+    }),
+  } });
+}
 const { runRelease, ReleaseError } = await import(apiUrl);
 const { Execution } = await import(new URL('./node/execution.js', apiUrl));
-const transport = completionRpcTransport(endpoint, (code, details) => new ReleaseError(code, details));
 const execute = Execution.prototype.run;
 const createScript = `
 const f=require('node:fs');const [counter,flag,global,...args]=process.argv.slice(1);
@@ -54,12 +69,7 @@ if (mode === 'crash-publish-receipt') {
 }
 if (mode === 'cli-verify-retry') {
   if (!binary) throw new Error('CLI fixture binary missing');
-  // CLI fixture不配置versionAlias，因此其只读云边界仅使用原vercel-api与build-info通道。
-  globalThis.fetch = async (url, options) => {
-    const target = typeof url === 'string' ? url : url.url ?? url.href;
-    const value = await transport.buildInfo(target, options?.signal);
-    return new globalThis.Response(JSON.stringify(value), { status: 200, headers: { 'content-type': 'application/json' } });
-  };
+  // CLI fixture不配置versionAlias，只读云边界沿受控RPC，未替换全局fetch。
   process.argv = [process.execPath, binary, 'verify', '--cwd', cwd, '--retry-completion'];
   await import(pathToFileURL(binary).href);
 } else {

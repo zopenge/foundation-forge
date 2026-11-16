@@ -12,7 +12,7 @@ import { hasVerifiedManagedClosure } from './managed-closure.js';
 import { assertCompletionInput } from './completion-input.js';
 
 /** 沿用原锁、runner 和日志，只追加业务尝试；本地停止不是业务成功。 */
-export async function runCompletion(session: ManagedSession, options: Pick<RunReleaseOptions, 'transport' | 'retryCompletion'>,
+export async function runCompletion(session: ManagedSession, options: Pick<RunReleaseOptions, 'transport' | 'retryCompletion' | 'buildInfoHttp'>,
   assertFrozen: () => Promise<void>): Promise<void> {
   const { source } = session.slot, config = source.config;
   if (session.command === 'check') return;
@@ -29,7 +29,7 @@ export async function runCompletion(session: ManagedSession, options: Pick<RunRe
   if (selected.status !== 'completed' && selected.attempts.length >= 32) throw new ReleaseError('BUDGET_EXCEEDED', { reason: 'COMPLETION_ATTEMPT_LIMIT' });
   const prebuiltContext = managedPrebuiltContext(session);
   if (!prebuiltContext || !config.delivery) throw new ReleaseError('SOURCE_UNSUPPORTED');
-  const transport = options.transport ?? createPrebuiltTransport(session.execution, config, false);
+  const transport = options.transport ?? createPrebuiltTransport(session.execution, config, false, options.buildInfoHttp);
   const guard = async () => {
     await session.slot.lock.assertOwned(); await assertFrozen(); await session.assertClosed(); await session.budget.sample();
     const candidate = session.state.prebuilt;

@@ -1,3 +1,4 @@
+import type { NodeHttpTransportOptions } from '@openge/forge-http-transport';
 import type { ReleaseTransport } from '../contracts.js';
 import type { ManagedReceipt, ManagedState, PrebuiltEffectResolution } from './managed-state-contracts.js';
 import type { ManagedSession } from './managed-session-contracts.js';
@@ -21,10 +22,10 @@ async function originalIntent(session: ManagedSession, receipt: ManagedReceipt):
 }
 
 /** 显式verify成功后单独保存原意图的只读证明，不改写publish收据或历史unknown。 */
-export async function recordVerifiedAlias(session: ManagedSession, receipt: ManagedReceipt, transport?: ReleaseTransport): Promise<void> {
+export async function recordVerifiedAlias(session: ManagedSession, receipt: ManagedReceipt, transport?: ReleaseTransport, http?: NodeHttpTransportOptions): Promise<void> {
   if (!pendingAlias(receipt)) return;
   const original = await originalIntent(session, receipt);
-  const proof = await assertPrebuiltEffectObserved(original, session.execution, transport);
+  const proof = await assertPrebuiltEffectObserved(original, session.execution, transport, http);
   if (!proof?.versionAlias?.verified) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'VERSION_ALIAS_UNRESOLVED' });
   session.state.prebuiltResolutions = [proof]; await session.persist();
 }

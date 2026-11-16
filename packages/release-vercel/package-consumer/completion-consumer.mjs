@@ -56,7 +56,7 @@ export async function verifyCompletionConsumer({ cwd, config, git, binary }) {
   const server = await serveCompletionTransport(transport);
   const run = mode => new Promise((accept, reject) => {
     const started = Date.now();
-    const child = spawn(process.execPath, [resolve(import.meta.dirname, 'completion-worker.mjs'),
+    const child = spawn(process.execPath, ['--experimental-test-module-mocks', resolve(import.meta.dirname, 'completion-worker.mjs'),
       import.meta.resolve('@openge/forge-release-vercel/node'), cwd, server.endpoint, counter, mode, binary],
     { cwd, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], signal: globalThis.AbortSignal.timeout(240_000) });
     let stdout = '', stderr = '', failure;

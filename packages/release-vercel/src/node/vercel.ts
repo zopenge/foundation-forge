@@ -1,10 +1,12 @@
 import { setTimeout as delay } from 'node:timers/promises';
+import type { NodeHttpTransportOptions } from '@openge/forge-http-transport';
 import type { ReleaseConfig, ReleaseDeployment, ReleaseTransport } from '../contracts.js';
 import { assertActive, record, ReleaseError } from './errors.js';
 import { Execution, vercelInvocation } from './execution.js';
 import { assertGitSource, linkedRepository, type LinkedRepository } from './git-source.js';
+import { readBuildInfo } from './build-info-http.js';
 
-export function createTransport(execution: Execution): ReleaseTransport {
+export function createTransport(execution: Pick<Execution, 'run' | 'config'>, http?: NodeHttpTransportOptions): ReleaseTransport {
   return {
     api: async (path, signal) => {
       const invocation = vercelInvocation(['api', path, '--method', 'GET', '--raw', '--non-interactive']);
@@ -12,23 +14,7 @@ export function createTransport(execution: Execution): ReleaseTransport {
         'VERCEL_API', undefined, signal, false);
       try { return JSON.parse(stdout) as unknown; } catch { throw new ReleaseError('VERCEL_API', { reason: 'INVALID_JSON' }); }
     },
-    buildInfo: async (url, signal) => {
-      const response = await fetch(url, { method: 'GET', signal, redirect: 'error', credentials: 'omit', cache: 'no-store',
-        headers: { 'cache-control': 'no-cache', accept: 'application/json' } });
-      if (!response.ok || !response.body) { await response.body?.cancel(); throw new ReleaseError('BUILD_INFO', { status: response.status }); }
-      const reader = response.body.getReader();
-      const chunks: Uint8Array[] = []; let length = 0;
-      try {
-        while (true) {
-          const chunk = await reader.read(); if (chunk.done) break;
-          length += chunk.value.byteLength;
-          if (length > execution.config.limits.maxOutputBytes) throw new ReleaseError('BUILD_INFO', { reason: 'OUTPUT_LIMIT' });
-          chunks.push(chunk.value);
-        }
-      } finally { await reader.cancel(); reader.releaseLock(); }
-      try { return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown; }
-      catch { throw new ReleaseError('BUILD_INFO', { reason: 'INVALID_JSON' }); }
-    },
+    buildInfo: (url, signal) => readBuildInfo(url, signal, execution.config.limits.maxOutputBytes, http),
   };
 }
 export async function request<T>(operation: (signal: AbortSignal) => Promise<T>, timeoutMs: number, signal: AbortSignal | undefined): Promise<T> {
