@@ -1,11 +1,12 @@
 # 网络能力
 
-这一组 package 提供领域中立的 Peer Network contract，以及显式选择的 libp2p 和 WebSocket rendezvous 实现。
+这一组 package 提供领域中立的 HTTP(S) 传输、Peer Network contract，以及显式选择的 libp2p 和 WebSocket rendezvous 实现。
 
 ## 怎么选
 
 | 需求 | 使用 package |
 | --- | --- |
+| 显式直连/HTTP 代理的 Node fetch、NO_PROXY 与脱敏错误分类 | [`@openge/forge-http-transport`](http-transport.md) |
 | 统一的 Peer endpoint、连接、消息、发现、分帧和调度 contract | [`@openge/forge-peer-network`](peer-network.md) |
 | 基于 libp2p 的 Node、浏览器或 relay Provider | [`@openge/forge-peer-network-libp2p`](peer-network-libp2p.md) |
 | WebSocket rendezvous client、运行时中立 hub 或 Node server | [`@openge/forge-peer-network-websocket`](peer-network-websocket.md) |

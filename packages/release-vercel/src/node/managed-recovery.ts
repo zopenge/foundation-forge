@@ -173,11 +173,11 @@ async function runManagedVerification(options: RunReleaseOptions): Promise<Relea
     }
     const assertFrozen = async () => { await assertHistoricalSource(source, options.signal); await assertCheckoutFrozen(current); };
     await assertFrozen();
-    deployment = await publishCandidate({ execution: session.execution, config: source.config, sha: source.sha, signal: options.signal, transport: options.transport,
+    deployment = await publishCandidate({ execution: session.execution, config: source.config, sha: source.sha, signal: options.signal, transport: options.transport, buildInfoHttp: options.buildInfoHttp,
       effects: session.state.effects, prebuilt: managedPrebuiltContext(session), assertFrozen, mutationGuard: async () => { throw new ReleaseError('SOURCE_UNSUPPORTED'); },
       stage: async stage => { current.state.stage = stage; await current.persist(); }, checkpoint: async () => { throw new ReleaseError('SOURCE_UNSUPPORTED'); } }, 'verify');
     await runCompletion(session, options, assertFrozen);
-    await recordVerifiedAlias(session, selected.receipt, options.transport);
+    await recordVerifiedAlias(session, selected.receipt, options.transport, options.buildInfoHttp);
     await session.assertClosed(); await session.budget.sample(); session.state.stage = 'complete';
   } catch (error) { failure = diagnostic(error); }
   if (session) {
@@ -243,12 +243,12 @@ export async function runManagedReceiptCommand(options: RunReleaseOptions): Prom
     stage = 'deployment';
     if (source.config.delivery) {
       const found = await observePrebuiltCandidate(source.config, prebuilt ?? receipt.report.prebuilt,
-        options.transport ?? createPrebuiltTransport(execution, source.config, false), options.signal);
+        options.transport ?? createPrebuiltTransport(execution, source.config, false, options.buildInfoHttp), options.signal);
       deployment = found.deployment; prebuilt = found.observed;
       effects.deploymentCreate = prebuilt.createEffect; effects.deploymentPromote = prebuilt.promoteEffect;
       if (prebuilt.versionAlias) effects.versionAliasAssign = prebuilt.versionAlias.effect;
     } else {
-      const verify = new VercelVerification(source.config, options.transport ?? createTransport(execution), options.signal);
+      const verify = new VercelVerification(source.config, options.transport ?? createTransport(execution, options.buildInfoHttp), options.signal);
       await verify.project(); deployment = await verify.find(source.sha);
     }
     if (observation.processes === 'unknown') throw new ReleaseError('PROCESS_STATE_UNKNOWN');

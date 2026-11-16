@@ -127,6 +127,12 @@ importers:
         specifier: 3.3.3
         version: 3.3.3
 
+  packages/http-transport:
+    dependencies:
+      undici:
+        specifier: 7.30.1
+        version: 7.30.1
+
   packages/json-lines: {}
 
   packages/path-safety: {}
@@ -209,6 +215,9 @@ importers:
       '@openge/forge-command-runner':
         specifier: workspace:^
         version: link:../command-runner
+      '@openge/forge-http-transport':
+        specifier: workspace:^
+        version: link:../http-transport
       '@openge/forge-process-control':
         specifier: workspace:^
         version: link:../process-control

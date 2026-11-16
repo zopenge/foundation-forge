@@ -54,6 +54,7 @@
     "@emnapi/runtime": "1.11.3",
     "@openge/forge-artifact-integrity": "workspace:^",
     "@openge/forge-command-runner": "workspace:^",
+    "@openge/forge-http-transport": "workspace:^",
     "@openge/forge-process-control": "workspace:^",
     "@openge/forge-process-control-node": "workspace:^",
     "koffi": "3.3.3",

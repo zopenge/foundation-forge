@@ -1,3 +1,4 @@
+import type { NodeHttpTransportOptions } from '@openge/forge-http-transport';
 import type { PrebuiltReleaseState, ReleaseConfig, ReleaseTransport } from '../contracts.js';
 import type { ManagedState, PrebuiltEffectResolution } from './managed-state-contracts.js';
 import type { Execution } from './execution.js';
@@ -27,11 +28,11 @@ export function hasUnresolvedPrebuiltEffect(state: ManagedState): boolean {
     || (candidate.promoteEffect === 'accepted' && !candidate.promotionVerified)
     || candidate.versionAlias?.effect === 'unknown' || (candidate.versionAlias?.effect === 'accepted' && !candidate.versionAlias.verified));
 }
-export async function assertPrebuiltEffectObserved(state: ManagedState, execution: Execution, transport?: ReleaseTransport): Promise<PrebuiltEffectResolution | undefined> {
+export async function assertPrebuiltEffectObserved(state: ManagedState, execution: Execution, transport?: ReleaseTransport, http?: NodeHttpTransportOptions): Promise<PrebuiltEffectResolution | undefined> {
   if (!hasUnresolvedPrebuiltEffect(state)) return;
   const candidate = state.prebuilt; if (!candidate) return;
   if (!candidate.deploymentId) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'PREBUILT_CREATE_UNKNOWN', runId: state.runId });
-  const verify = new PrebuiltVerification(state.source.config, transport ?? createPrebuiltTransport(execution, state.source.config, false), execution.signal);
+  const verify = new PrebuiltVerification(state.source.config, transport ?? createPrebuiltTransport(execution, state.source.config, false, http), execution.signal);
   await verify.project(undefined, true); await verify.candidate(candidate);
   let versionAlias: PrebuiltEffectResolution['versionAlias'];
   if (candidate.versionAlias && candidate.versionAlias.effect !== 'not-attempted') {

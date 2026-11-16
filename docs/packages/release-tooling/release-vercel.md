@@ -128,6 +128,8 @@ const report = await runRelease({
 
 runRelease 支持 command、cwd、configPath、workspace 专用 config 对象、sha、signal、transport、onLoginOutput，以及 retire 专用 runId、abandonUnstarted。managed 必须用已提交文件。transport 替换 API/buildInfo 及可选的 prebuilt promote 外部边界，必须响应取消、关闭自有资源，且不得重试提升写入；onLoginOutput 显示脱敏认证指引。公开签名不携带第三方实现类型。
 
+Node 调用方可另传 `buildInfoHttp`，类型为 [`forge-http-transport`](../networking/http-transport.md) 的 `NodeHttpTransportOptions`，例如 `{ route: 'proxy', environment: proxyEnvironmentSnapshot }`。它只影响匿名 build-info/制品 marker 读取；默认显式 direct，不读取宿主代理环境。每次读取后关闭连接，覆盖成功、取消、超限、HTTP/JSON 错误。重定向不跟随。完整自定义 transport 优先于该选项。网络参数不写入持久 release config、摘要或回执，不改变 Vercel CLI/API 写入、认证、重试与发布状态机。
+
 ## 恢复与资源所有权
 
 受管锁覆盖准备、安装、检查、推送、等待和验收。显式装配 Windows x64 Job Object 或 Linux/glibc x64 subreaper/wait/pidfd Provider。runner 的 manual 门先取得 scope-ready，再持久保存真实身份、scopeId 和 run/command/nonce 绑定，复核预算、路径和锁后放行。只有匹配的 OS scope closed/normal/empty 证明允许同一运行继续下一命令。受控取消或超时可单独证明资源已停止：必须有明确终止请求、Provider 的 terminated/empty 终态，以及精确 scope、binding 和 root identity；命令仍失败或取消，后续新运行重新经过完整门禁。owner-lost、provider-failed、意外遗留后代、身份变化和崩溃缺口不自动升级为安全停止。

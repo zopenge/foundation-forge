@@ -9,7 +9,7 @@ import { publishPrebuiltCandidate } from './prebuilt-publication.js';
 export async function publishCandidate(context: ExecutionContext, command: 'check' | 'publish' | 'status' | 'verify'): Promise<ReleaseDeployment | undefined> {
   if (context.config.delivery?.mode === 'prebuilt') return publishPrebuiltCandidate(context, command);
   const { execution, config, sha, signal, effects } = context;
-  const verify = new VercelVerification(config, context.transport ?? createTransport(execution), signal);
+  const verify = new VercelVerification(config, context.transport ?? createTransport(execution, context.buildInfoHttp), signal);
   let result: ReleaseDeployment | undefined;
   const values = { FORGE_RELEASE_COMMAND: command, FORGE_RELEASE_SHA: sha };
   if (command === 'check' || command === 'publish') {
