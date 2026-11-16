@@ -10,6 +10,8 @@ export async function verifyCapture() {
   try {
     const server = join(root, 'server'), ui = join(root, 'ui');
     await mkdir(server); await mkdir(ui);
+    await mkdir(join(server, 'empty', 'nested'), { recursive: true });
+    await mkdir(join(ui, 'unused'));
     const raw = Uint8Array.from([0, 255, 239, 187, 191, 13, 10]);
     await writeFile(join(server, 'app.bin'), raw); await writeFile(join(ui, 'index.html'), 'ui');
     const options = {
@@ -29,6 +31,9 @@ export async function verifyCapture() {
     assert.deepEqual(captured.readFile('server/app.bin'), raw);
     const verified = await verifyArtifactFiles({ ...options, manifestBytes, expectedContent: captured.content });
     assert.deepEqual(verified.content, captured.content);
+    await writeFile(join(ui, 'unused', 'extra'), 'extra');
+    await assert.rejects(captureArtifactFiles(options), { code: 'INVALID_SOURCE' });
+    await rm(join(ui, 'unused', 'extra'));
     await writeFile(join(server, 'app.bin'), new Uint8Array(raw.length));
     await assert.rejects(verifyArtifactFiles({ ...options, manifestBytes, expectedContent: captured.content }), { code: 'INTEGRITY_MISMATCH' });
     assert.deepEqual(captured.readFile('server/app.bin'), raw);

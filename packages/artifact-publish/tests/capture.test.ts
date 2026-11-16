@@ -90,12 +90,52 @@ describe('independent raw artifact capture', () => {
       .rejects.toMatchObject({ code: 'INTEGRITY_MISMATCH' });
   });
 
-  it.each(['extra-file', 'empty-directory'])('enforces exact closure for %s while declared mode reads only selected files', async kind => {
-    if (kind === 'extra-file') await writeFile(resolve(source, 'other'), 'other');
-    else await mkdir(resolve(source, 'empty'));
+  it('enforces exact closure for extra files while declared mode reads only selected files', async () => {
+    await writeFile(resolve(source, 'other'), 'other');
     await expect(capture(options())).rejects.toMatchObject({ code: 'INVALID_SOURCE' });
     const input = options(); first(input.sources).closure = 'declared';
     expect((await capture(input)).readFile('server/app.bin')).toEqual(raw);
+  });
+
+  it('accepts nested empty directories without changing payload identity during capture and verification', async () => {
+    const baseline = await capture(options());
+    await mkdir(resolve(source, 'empty', 'nested'), { recursive: true });
+    const input = { ...options(), maxEntries: 6 };
+    const result = await capture(input);
+    expect(result.content).toEqual(baseline.content);
+    expect(result.manifestBytes).toEqual(baseline.manifestBytes);
+    expect(result.payloadByteLength).toBe(raw.length);
+    expect(result.manifest.files).toHaveLength(1);
+    expect(result.readFile('server/app.bin')).toEqual(raw);
+    expect((await verify({ ...input, manifestBytes: baseline.manifestBytes, expectedContent: baseline.content })).content).toEqual(baseline.content);
+  });
+
+  it('counts nested empty directories in both exact scans', async () => {
+    await mkdir(resolve(source, 'empty', 'nested'), { recursive: true });
+    await expect(capture({ ...options(), maxEntries: 5 })).rejects.toMatchObject({ code: 'BUDGET_EXCEEDED' });
+  });
+
+  it('rejects an undeclared file inside an otherwise empty subtree', async () => {
+    await mkdir(resolve(source, 'empty', 'nested'), { recursive: true });
+    await writeFile(resolve(source, 'empty', 'nested', 'extra.bin'), 'extra');
+    await expect(capture(options())).rejects.toMatchObject({ code: 'INVALID_SOURCE' });
+  });
+
+  it('rejects a link inside an otherwise empty subtree', async () => {
+    await mkdir(resolve(source, 'empty'));
+    const other = resolve(directory, 'other'); await mkdir(other);
+    await symlink(other, resolve(source, 'empty', 'alias'), process.platform === 'win32' ? 'junction' : 'dir');
+    await expect(capture(options())).rejects.toMatchObject({ code: 'INVALID_SOURCE' });
+  });
+
+  it('preserves the declared case policy for empty directory aliases', async () => {
+    await mkdir(resolve(source, 'Empty'), { recursive: true });
+    await mkdir(resolve(source, 'empty'), { recursive: true });
+    const distinct = await realpath(resolve(source, 'Empty')) !== await realpath(resolve(source, 'empty'));
+    const input = { ...options(), pathCaseSensitivity: 'case-insensitive' };
+    if (distinct) await expect(capture(input)).rejects.toMatchObject({ code: 'INVALID_SOURCE' });
+    else expect((await capture(input)).readFile('server/app.bin')).toEqual(raw);
+    expect((await capture(options())).readFile('server/app.bin')).toEqual(raw);
   });
 
   it.each(['case-file', 'case-parent', 'file-parent'])('rejects %s aliases after logical mapping', async kind => {
