@@ -1,11 +1,7 @@
-import type { PrebuiltReleaseState, ReleaseCommand, ReleaseCompletionState, ReleaseConfig, ReleaseReport, ReleaseStage, ReleaseTransport } from '../contracts.js';
-import type { OwnedLock } from './lock.js';
-import type { CommandObserver, CommandResult, CommandRunner, CommandSpec, CommandTerminationReason } from '@openge/forge-command-runner';
+import type { PrebuiltReleaseState, ReleaseCommand, ReleaseCompletionState, ReleaseConfig, ReleaseReport, ReleaseStage } from '../contracts.js';
+import type { CommandTerminationReason } from '@openge/forge-command-runner';
 import type { ProcessScopeClosure } from '@openge/forge-process-control';
-import type { Execution } from './execution.js';
 import type { RetirementHost } from './retirement-host.js';
-import type { BudgetMonitor } from './managed-budget.js';
-import type { CommandPreparationReport } from './managed-startup-timing.js';
 
 export interface FrozenSource {
   readonly root: string;
@@ -76,50 +72,4 @@ export interface ManagedAnchor {
   readonly schemaVersion: 2; readonly slotId: string; readonly slotPath: string; readonly configPath: string;
   readonly sourceRoot: string;
   readonly latestPublish?: { readonly sha: string; readonly runId: string; readonly configSha256: string };
-}
-export interface ManagedStateStore {
-  read(): Promise<ManagedState | undefined>;
-  writeState(state: ManagedState, beforeCommit?: (prepared: MetadataFile) => Promise<void>): Promise<void>;
-  readReceipt(kind: 'check' | 'publish'): Promise<ManagedReceipt | undefined>;
-  writeReceipt(kind: 'check' | 'publish', receipt: ManagedReceipt): Promise<void>;
-  writeAnchor(anchor: ManagedAnchor): Promise<void>;
-}
-export interface ManagedSlot {
-  readonly slotId: string; readonly paths: ManagedPaths; readonly source: FrozenSource;
-  readonly lock: OwnedLock; readonly store: ManagedStateStore;
-  assertMetadataOwned(): Promise<void>;
-  readonly runId: string; readonly coordinator: RecordedIdentity;
-  readonly completionResume?: { readonly prebuilt: PrebuiltReleaseState; readonly completion: ReleaseCompletionState; readonly input: CompletionInputBinding };
-}
-export interface ExecutionResult extends CommandResult { readonly preparation?: CommandPreparationReport }
-export interface ExecutionLifecycle {
-  execute(runner: CommandRunner, name: string, spec: CommandSpec, observer?: CommandObserver): Promise<ExecutionResult>;
-  observeCheckout?<T>(operation: () => Promise<T>): Promise<T>;
-}
-export interface ManagedSession {
-  readonly slot: ManagedSlot;
-  readonly command: 'check' | 'publish' | 'verify';
-  readonly state: ManagedState;
-  readonly budget: BudgetMonitor;
-  readonly execution: Execution;
-  readonly steps: ReleaseReport['steps'];
-  persist(): Promise<void>;
-  assertClosed(): Promise<void>;
-  assertStopped(): Promise<void>;
-  executionAt(cwd: string): Execution;
-}
-export interface ExecutionContext {
-  readonly execution: Execution; readonly config: ReleaseConfig; readonly sha: string;
-  readonly signal: AbortSignal | undefined; readonly transport: ReleaseTransport | undefined;
-  readonly effects: ReleaseReport['effects'];
-  readonly prebuilt?: {
-    state: PrebuiltReleaseState | undefined;
-    reserve(bytes: number): Promise<void>;
-    executionAt(cwd: string): Execution;
-    save(state: PrebuiltReleaseState): Promise<void>;
-  } | undefined;
-  assertFrozen(): Promise<void>;
-  mutationGuard(effect?: 'developmentPush' | 'releasePush'): Promise<'already-current' | undefined>;
-  stage(stage: ReleaseStage): Promise<void>;
-  checkpoint(pending?: 'developmentPush' | 'releasePush'): Promise<void>;
 }

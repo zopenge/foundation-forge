@@ -3,7 +3,7 @@ export { ArtifactPublicationError } from './errors.js';
 export { bindArtifactOperation } from './operations/binding.js';
 export { performArtifactOperation, observeArtifactOperation } from './operations/operation.js';
 export { ArtifactOperationError } from './operations/errors.js';
-export type { ArtifactContentIdentity, ArtifactIdentity, ArtifactProvenance } from './content-identity.js';
+export type { ArtifactContentIdentity, ArtifactIdentity, ArtifactProvenance } from './content-contracts.js';
 export { createArtifactContentManifest } from './content-manifest.js';
 export type { ArtifactContentManifest, ArtifactContentManifestFile, PreparedArtifactContentManifest } from './content-manifest.js';
 export type {

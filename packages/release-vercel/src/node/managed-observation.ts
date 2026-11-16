@@ -1,4 +1,4 @@
-import type { FrozenSource, ManagedCommand, RecordedIdentity } from './release-context.js';
+import type { FrozenSource, ManagedCommand, RecordedIdentity } from './managed-state-contracts.js';
 import { hasNoStartWitness } from './managed-closure.js';
 
 /** 仅固定 checkout 检查可声明此计划；逐条执行仍验证实际完整 argv。 */

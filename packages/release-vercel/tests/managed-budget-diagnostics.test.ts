@@ -5,7 +5,7 @@ import { observeBudget } from '../src/node/managed-budget.js';
 import { ReleaseError } from '../src/node/errors.js';
 import { createManagedSession } from '../src/node/managed-process.js';
 import { managedSessionFixture } from './helpers/managed-session-fixture.js';
-import type { ManagedSession } from '../src/node/release-context.js';
+import type { ManagedSession } from '../src/node/managed-session-contracts.js';
 import { managedCommandIdentities } from '../src/node/managed-observation.js';
 import { identityReader } from '../src/node/process-identities.js';
 import { closeFixtureIdentity } from './helpers/close-fixture-process.js';

@@ -1,4 +1,4 @@
-import type { FrozenSource } from './release-context.js';
+import type { FrozenSource } from './managed-state-contracts.js';
 
 /** 输出可直接粘贴到宿主默认 shell 的单次恢复命令，不使用 JSON 转义充当 shell 引号。 */
 export function recoveryCommand(command: string, source: Pick<FrozenSource, 'root' | 'configPath'>): string {

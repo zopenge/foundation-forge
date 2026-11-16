@@ -1,5 +1,7 @@
 import type { PrebuiltReleaseState, ReleaseReport } from '../contracts.js';
-import type { ExecutionContext, FrozenSource, ManagedSession, PrebuiltEffectResolution } from './release-context.js';
+import type { ExecutionContext } from './publication-context.js';
+import type { FrozenSource, PrebuiltEffectResolution } from './managed-state-contracts.js';
+import type { ManagedSession } from './managed-session-contracts.js';
 import { record, ReleaseError } from './errors.js';
 import { candidateId, candidateOrigin } from './prebuilt-vercel.js';
 import { measureManagedUsage } from './managed-io.js';

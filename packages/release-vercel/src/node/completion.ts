@@ -1,6 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import type { ReleaseCompletionAttempt, ReleaseCompletionJobResult, ReleaseCompletionState, RunReleaseOptions } from '../contracts.js';
-import type { ManagedSession } from './release-context.js';
+import type { ManagedSession } from './managed-session-contracts.js';
 import { ReleaseError } from './errors.js';
 import { diagnostic } from './workspace-release.js';
 import { assertRecordedPrebuiltArtifact } from './prebuilt-artifact.js';

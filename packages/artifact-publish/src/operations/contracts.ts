@@ -1,5 +1,5 @@
 import type { ArtifactPublicationTarget, ArtifactRequestContext, ArtifactTransportClosure } from '../contracts.js';
-import type { ArtifactIdentity } from '../content-identity.js';
+import type { ArtifactIdentity } from '../content-contracts.js';
 
 export type ArtifactOperationCapability = 'artifact-upload' | 'deployment-create' | 'deployment-ready' | 'activation';
 export interface ArtifactOperationInput {

@@ -1,5 +1,5 @@
 import type { ArtifactBytes, ArtifactObjectDescriptor, ArtifactPublicationOptions } from '../contracts.js';
-import type { ArtifactIdentity } from '../content-identity.js';
+import type { ArtifactIdentity } from '../content-contracts.js';
 
 export interface ArtifactFileDescriptor extends ArtifactObjectDescriptor {
   readonly path: string;

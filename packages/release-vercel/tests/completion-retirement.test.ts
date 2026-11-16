@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import * as gitBoundary from '../src/node/git.js';
-import * as sourceBoundary from '../src/node/source.js';
+import { Execution } from '../src/node/execution.js';
 import { createManagedSession } from '../src/node/managed-process.js';
 import { selectManagedPublication } from '../src/node/managed-recovery.js';
 import { createCompletionState } from '../src/node/completion-state.js';
@@ -11,7 +11,6 @@ import { captureRetirementSnapshot, retirementDigest, sealRetirementRecord } fro
 import { managedSessionFixture } from './helpers/managed-session-fixture.js';
 import { readCompletionSnapshots } from '../src/node/completion-history.js';
 
-vi.mock('../src/node/source.js', async original => ({ ...await original<typeof sourceBoundary>() }));
 vi.mock('../src/node/git.js', async original => ({ ...await original<typeof gitBoundary>() }));
 const fixtures: Awaited<ReturnType<typeof managedSessionFixture>>[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const value of fixtures.splice(0)) await value.dispose(); });
@@ -48,7 +47,16 @@ it('selects the anchor-bound retired original intent without manufacturing a mis
   const path = resolve(slot.paths.slotRoot, `retired/${state.runId}.json`), bytes = `${JSON.stringify(record)}\n`;
   await writeFile(path, bytes); await slot.lock.release();
   vi.spyOn(gitBoundary, 'assertRepository').mockResolvedValue(undefined);
-  vi.spyOn(sourceBoundary, 'readCommittedConfig').mockResolvedValue({ config: source.config, bytes: Buffer.from(JSON.stringify(source.config)), oid: source.configBlobOid });
+  // 历史来源解析仍执行真实实现；组件只提供绑定到候选的配置 blob。
+  vi.spyOn(Execution.prototype, 'git').mockImplementation(async function (this: Execution, args) {
+    expect(this.cwd).toBe(source.root);
+    expect(args).toEqual(['rev-parse', '--verify', '--quiet', `${source.sha}:${source.configPath}`]);
+    return source.configBlobOid;
+  });
+  vi.spyOn(Execution.prototype, 'streamGit').mockImplementation(async function (this: Execution, args, consume) {
+    expect(this.cwd).toBe(source.root); expect(args).toEqual(['cat-file', 'blob', source.configBlobOid]);
+    consume(Buffer.from(JSON.stringify(source.config)));
+  });
   const selected = await selectManagedPublication(fixture.cwd, source.configPath, source.sha);
   expect(selected.report).toMatchObject({ ok: false, runId: state.runId, completion: { status: 'running' },
     error: { code: 'RECOVERY_REQUIRED', details: { reason: 'ARCHIVED_PUBLICATION_INTENT' } } });

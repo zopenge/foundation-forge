@@ -7,7 +7,7 @@ import { classifyRemoteRef, runManagedReceiptCommand, selectManagedPublication }
 import { committedFixtureSource } from './helpers/committed-fixture-source.js';
 import { openManagedSlot } from '../src/node/managed-paths.js';
 import { git, managedFixture } from './helpers/managed-fixture.js';
-import type { ManagedReceipt, ManagedState } from '../src/node/release-context.js';
+import type { ManagedReceipt, ManagedState } from '../src/node/managed-state-contracts.js';
 import type { ReleaseTransport } from '../src/contracts.js';
 import { runRelease } from '../src/node.js';
 import { assertManagedRemoteSettled } from '../src/node/managed-remote-state.js';

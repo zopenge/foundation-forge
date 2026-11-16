@@ -4,7 +4,8 @@ import { dirname, relative, resolve } from 'node:path';
 import { Execution } from './execution.js';
 import { createManagedExecution } from './managed-execution.js';
 import { record, ReleaseError } from './errors.js';
-import type { FrozenSource, ManagedPaths, ManagedSlot } from './release-context.js';
+import type { FrozenSource, ManagedPaths } from './managed-state-contracts.js';
+import type { ManagedSlot } from './managed-slot-contracts.js';
 import { assertPathChain, fileIdentity, measureManagedUsage, pathExists, readBoundedJson, sameIdentity, within } from './managed-io.js';
 import { gitBlob, gitRecords } from './git-stream.js';
 import { acquireLock } from './lock.js';
@@ -17,7 +18,7 @@ import { metadataReserveBytes } from './managed-metadata.js';
 import { archiveManagedDisposition, hasManagedDisposition } from './managed-disposition.js';
 import { assertManagedHistory } from './managed-history.js';
 import { admitCompletionSlot } from './completion-history.js';
-import type { ManagedSession } from './release-context.js';
+import type { ManagedSession } from './managed-session-contracts.js';
 
 export async function assertManagementUntracked(source: FrozenSource, execution: Execution): Promise<void> {
   assertNoGitContext();

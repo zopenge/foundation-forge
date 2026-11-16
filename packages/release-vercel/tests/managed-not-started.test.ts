@@ -9,7 +9,7 @@ import { hasVerifiedManagedClosure, hasVerifiedManagedStop } from '../src/node/m
 import { managedSessionFixture } from './helpers/managed-session-fixture.js';
 import { parseManagedState } from '../src/node/managed-state.js';
 import { checkoutObservationPlan, matchesObservationBinding } from '../src/node/managed-observation.js';
-import type { ManagedCommand } from '../src/node/release-context.js';
+import type { ManagedCommand } from '../src/node/managed-state-contracts.js';
 import { restoreManagedTerminal } from '../src/node/managed-terminal.js';
 
 // 统计真实 runner 的调用，不替换其启动、身份、Job 或关闭实现。

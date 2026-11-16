@@ -1,5 +1,5 @@
 import { unlink } from 'node:fs/promises';
-import type { ManagedPaths, ManagedState } from './release-context.js';
+import type { ManagedPaths, ManagedState } from './managed-state-contracts.js';
 import type { OwnedLock } from './lock.js';
 import { record, ReleaseError } from './errors.js';
 import { assertManagedPaths, assertManagementUntracked } from './managed-paths.js';

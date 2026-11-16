@@ -1,6 +1,6 @@
 import type { PrebuiltReleaseState, ReleaseCompletionContext, ReleaseCompletionState } from '../contracts.js';
 import { releaseErrorCodes } from '../contracts.js';
-import type { FrozenSource } from './release-context.js';
+import type { FrozenSource } from './managed-state-contracts.js';
 import { record, ReleaseError } from './errors.js';
 import { candidateId, candidateOrigin } from './prebuilt-vercel.js';
 import { prebuiltCandidateContext, versionAliasOrigin } from './version-alias.js';

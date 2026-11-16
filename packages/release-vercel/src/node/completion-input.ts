@@ -1,6 +1,6 @@
 import { lstat } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import type { CompletionInputBinding, FileIdentity } from './release-context.js';
+import type { CompletionInputBinding, FileIdentity } from './managed-state-contracts.js';
 import { record, ReleaseError } from './errors.js';
 import { assertPathChain, sameIdentity } from './managed-io.js';
 import { assertMetadataFile, inspectMetadataFile } from './managed-metadata.js';

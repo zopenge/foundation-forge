@@ -1,6 +1,6 @@
 import { opendir } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import type { ManagedHistoryReference, ManagedPaths, ManagedState } from './release-context.js';
+import type { ManagedHistoryReference, ManagedPaths, ManagedState } from './managed-state-contracts.js';
 import { assertPathChain, pathExists, readBoundedJson } from './managed-io.js';
 import { assertMetadataFile, assertMetadataPaths, inspectMetadataFile } from './managed-metadata.js';
 import { parseManagedDisposition } from './managed-disposition.js';

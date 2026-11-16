@@ -10,7 +10,7 @@ import { ReleaseError } from '../src/node/errors.js';
 import { commandComponentSession } from './helpers/component-session.js';
 import { committedFixtureSource } from './helpers/committed-fixture-source.js';
 import { git, managedFixture } from './helpers/managed-fixture.js';
-import type { ManagedSession } from '../src/node/release-context.js';
+import type { ManagedSession } from '../src/node/managed-session-contracts.js';
 
 const fixtures: { fixture: Awaited<ReturnType<typeof managedFixture>>; session?: ManagedSession;
   restore?: () => void; independentScopes?: number }[] = [];

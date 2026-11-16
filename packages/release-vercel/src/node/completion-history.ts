@@ -1,15 +1,18 @@
 import { resolve } from 'node:path';
 import type { ReleaseCompletionState } from '../contracts.js';
-import type { FrozenSource, ManagedPaths, ManagedSession, ManagedSlot, ManagedState } from './release-context.js';
+import type { FrozenSource, ManagedPaths, ManagedState } from './managed-state-contracts.js';
+import type { ManagedSession } from './managed-session-contracts.js';
+import type { ManagedSlot } from './managed-slot-contracts.js';
 import { assertActive, record, ReleaseError } from './errors.js';
 import { parseCompletionState } from './completion-state.js';
 import { hasVerifiedManagedClosure, hasVerifiedManagedStop } from './managed-closure.js';
 import { assertManagedHistory, captureManagedHistory, historyFileLimit } from './managed-history.js';
 import { readManagedDisposition } from './managed-disposition.js';
-import { parseRetirementRecord, readRetirementRecord, type RetirementRecord } from './retirement-record.js';
+import { parseRetirementRecord, readRetirementRecord } from './retirement-record.js';
+import type { RetirementRecord } from './retirement-contracts.js';
 import { parseManagedState } from './managed-state.js';
 import { assertMetadataFile } from './managed-metadata.js';
-import { assertHistoricalSource } from './managed-recovery.js';
+import { assertHistoricalSource } from './source.js';
 import { recoveryCommand } from './release-commands.js';
 import { parseCompletionInput } from './completion-input.js';
 

@@ -6,7 +6,7 @@ import { createManagedSession } from '../src/node/managed-process.js';
 import { managedSessionFixture as managedFixture } from './helpers/managed-session-fixture.js';
 import { identityReader } from '../src/node/process-identities.js';
 import { closeFixtureIdentity } from './helpers/close-fixture-process.js';
-import type { ManagedSession } from '../src/node/release-context.js';
+import type { ManagedSession } from '../src/node/managed-session-contracts.js';
 import * as retirementHost from '../src/node/retirement-host.js';
 import { restoreManagedTerminal } from '../src/node/managed-terminal.js';
 import { randomUUID } from 'node:crypto';

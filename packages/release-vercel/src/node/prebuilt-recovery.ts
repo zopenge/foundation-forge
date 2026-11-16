@@ -1,5 +1,5 @@
 import type { PrebuiltReleaseState, ReleaseConfig, ReleaseTransport } from '../contracts.js';
-import type { ManagedState, PrebuiltEffectResolution } from './release-context.js';
+import type { ManagedState, PrebuiltEffectResolution } from './managed-state-contracts.js';
 import type { Execution } from './execution.js';
 import { createPrebuiltTransport, PrebuiltVerification } from './prebuilt-vercel.js';
 import { assertActive, ReleaseError } from './errors.js';

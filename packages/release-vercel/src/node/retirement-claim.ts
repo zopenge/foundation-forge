@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { link, unlink } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import type { ManagedPaths, ManagedState } from './release-context.js';
+import type { ManagedPaths, ManagedState } from './managed-state-contracts.js';
 import { assertPathChain, fileIdentity, readBoundedJson, sameIdentity } from './managed-io.js';
 import { currentCoordinator } from './process-identities.js';
 import { record, ReleaseError } from './errors.js';

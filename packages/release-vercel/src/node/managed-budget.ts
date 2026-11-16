@@ -1,5 +1,5 @@
 import type { ManagedSourceConfig, ReleaseBudget } from '../contracts.js';
-import type { ManagedPaths } from './release-context.js';
+import type { ManagedPaths } from './managed-state-contracts.js';
 import { performance } from 'node:perf_hooks';
 import { ReleaseError } from './errors.js';
 import { measureManagedUsage, measureManagedUsageOnce, type ManagedUsageProgress } from './managed-io.js';

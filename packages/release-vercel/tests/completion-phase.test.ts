@@ -3,16 +3,16 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { completionPhaseFixture } from './helpers/completion-phase-fixture.js';
 import { admitCompletionSlot } from '../src/node/completion-history.js';
-import * as recovery from '../src/node/managed-recovery.js';
+import * as sourceBinding from '../src/node/source.js';
 
-vi.mock('../src/node/managed-recovery.js', async original => ({ ...await original<typeof recovery>() }));
+vi.mock('../src/node/source.js', async original => ({ ...await original<typeof sourceBinding>() }));
 const owned: Awaited<ReturnType<typeof completionPhaseFixture>>[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const value of owned.splice(0)) await value.dispose(); });
 
 it('pins the sealed original SHA, requires explicit retry, and releases only a proved Native completion', async () => {
   const value = await completionPhaseFixture({ mode: 'fail' }); owned.push(value);
   const { paths, slotId, source } = value.session.slot;
-  vi.spyOn(recovery, 'assertHistoricalSource').mockImplementation(async historical => { expect(historical).toEqual(source); });
+  vi.spyOn(sourceBinding, 'assertHistoricalSource').mockImplementation(async historical => { expect(historical).toEqual(source); });
   await expect(value.run()).rejects.toMatchObject({ code: 'COMPLETION_FAILED' });
   await value.session.assertClosed();
   const firstAttempt = structuredClone(value.session.state.completion?.attempts[0]);

@@ -1,4 +1,4 @@
-import type { ManagedPaths } from './release-context.js';
+import type { ManagedPaths } from './managed-state-contracts.js';
 import type { RetirementHost } from './retirement-host.js';
 import { createHash } from 'node:crypto';
 import { open, realpath } from 'node:fs/promises';

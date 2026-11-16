@@ -1,7 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import type { ReleaseRecoveryObservation, ReleaseReport } from '../contracts.js';
-import type { ManagedPaths, ManagedState } from './release-context.js';
+import type { ManagedPaths, ManagedState } from './managed-state-contracts.js';
 import { record, ReleaseError } from './errors.js';
 import { assertPathChain, atomicJson, readBoundedJson, readBoundedText } from './managed-io.js';
 import { assertMetadataFile, assertMetadataPaths, inspectMetadataFile, metadataDigest, type MetadataFile } from './managed-metadata.js';

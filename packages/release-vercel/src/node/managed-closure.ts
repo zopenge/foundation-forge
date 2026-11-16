@@ -1,4 +1,4 @@
-import type { ManagedCommand } from './release-context.js';
+import type { ManagedCommand } from './managed-state-contracts.js';
 
 /** SDK 在调用 runner 前观察到取消；该见证不声称存在 OS 进程或关闭事实。 */
 export function hasNoStartWitness(command: ManagedCommand): boolean {

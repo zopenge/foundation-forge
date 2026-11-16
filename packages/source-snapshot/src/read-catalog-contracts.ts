@@ -1,6 +1,6 @@
 import type { SnapshotObject } from './contracts.js';
 import type { SnapshotReadProfile } from './content-contracts.js';
-import type { SnapshotReadIndexFile } from './read-index.js';
+import type { SnapshotReadIndexFile } from './read-index-contracts.js';
 
 /** 阅读目录的中立合同；所有 I/O、认证与发布时机由消费者控制。 */
 export interface ReadCatalogOptions {

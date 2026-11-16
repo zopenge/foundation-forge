@@ -6,7 +6,8 @@ import { acquireLock } from '../../src/node/lock.js';
 import { assertManagedPaths } from '../../src/node/managed-paths.js';
 import { createManagedStateStore } from '../../src/node/managed-state.js';
 import { currentCoordinator } from '../../src/node/process-identities.js';
-import type { FrozenSource, ManagedSlot } from '../../src/node/release-context.js';
+import type { FrozenSource } from '../../src/node/managed-state-contracts.js';
+import type { ManagedSlot } from '../../src/node/managed-slot-contracts.js';
 import type { ReleaseConfig } from '../../src/contracts.js';
 import { managedBudgetFixture } from './managed-budget-fixture.js';
 

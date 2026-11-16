@@ -1,6 +1,8 @@
 import { realpath } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import type { FileIdentity, FrozenSource, ManagedAnchor, ManagedPaths, ManagedReceipt, ManagedSession, ManagedSlot, ManagedState } from './release-context.js';
+import type { FileIdentity, FrozenSource, ManagedAnchor, ManagedPaths, ManagedReceipt, ManagedState } from './managed-state-contracts.js';
+import type { ManagedSession } from './managed-session-contracts.js';
+import type { ManagedSlot } from './managed-slot-contracts.js';
 import { assertActive, record, ReleaseError } from './errors.js';
 import { assertPathChain, pathExists, readBoundedJson, within } from './managed-io.js';
 import { assertManagedPaths } from './managed-paths.js';
@@ -8,8 +10,8 @@ import { parseManagedReceipt, parseManagedState } from './managed-state.js';
 import { validateReleaseConfig } from './config.js';
 import { Execution } from './execution.js';
 import { createManagedExecution } from './managed-execution.js';
-import { assertRepository, normalizeRepository, remoteRefs } from './git.js';
-import { configDigest, readCommittedConfig, relativeConfigPath } from './source.js';
+import { normalizeRepository, remoteRefs } from './git.js';
+import { assertHistoricalSource, relativeConfigPath } from './source.js';
 import { identityReader } from './process-identities.js';
 import type { PrebuiltReleaseState, ReleaseBudget, ReleaseCompletionState, ReleaseDeployment, ReleaseDiagnostic, ReleaseRecoveryObservation, ReleaseRefRelation, ReleaseReport, ReleaseStage, RunReleaseOptions } from '../contracts.js';
 import { diagnostic } from './workspace-release.js';
@@ -342,14 +344,6 @@ export function frozenSource(value: unknown, location: ManagedLocation): FrozenS
     || typeof item.fetchUrl !== 'string' || config.source.mode !== 'managed-commit' || resolve(location.root, config.source.slotPath) !== location.paths.slotRoot
     || config.git.repository !== location.repository || normalizeRepository(item.fetchUrl, location.root) !== normalizeRepository(config.git.repository, location.root)) throw new ReleaseError('SLOT_STATE', { reason: 'FROZEN_SOURCE' });
   return { root: location.root, configPath: location.configPath, sha: item.sha, config, configBlobOid: item.configBlobOid, configSha256: item.configSha256, fetchUrl: item.fetchUrl };
-}
-export async function assertHistoricalSource(source: FrozenSource, signal?: AbortSignal): Promise<void> {
-  const execution = createManagedExecution(source.root, source.config, signal, []);
-  try { await assertRepository(execution, source.config); }
-  catch { assertActive(signal); throw new ReleaseError('SOURCE_CHANGED', { reason: 'REPOSITORY_IDENTITY' }); }
-  const committed = await readCommittedConfig(execution, source.sha, source.configPath);
-  if (committed.oid !== source.configBlobOid || await configDigest(committed.config) !== source.configSha256
-    || await configDigest(source.config) !== source.configSha256) throw new ReleaseError('SLOT_STATE', { reason: 'CONFIG_BLOB_BINDING' });
 }
 /** 缺少正常收据时只读原意图；descriptor 永远是失败，绝不补造原发布成功。 */
 async function completionIntentReceipt(location: ManagedLocation, selected: NonNullable<ManagedAnchor['latestPublish']>, signal: AbortSignal | undefined,

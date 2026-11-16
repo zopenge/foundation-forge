@@ -62,7 +62,6 @@ const fixture = async ({ maxBytes = 2 ** 31 } = {}) => {
   // 只替换 Git 来源/远端组件输入。状态解析、文件身份、锁、lease、PID 查询及原子写入仍真实执行。
   vi.spyOn(sourceBoundary, 'freezeManagedSource').mockResolvedValue(f.source);
   vi.spyOn(sourceBoundary, 'inspectCommitTree').mockResolvedValue(undefined);
-  vi.spyOn(sourceBoundary, 'readCommittedConfig').mockResolvedValue({ config: f.config, bytes, oid: f.source.configBlobOid });
   vi.spyOn(gitBoundary, 'assertRepository').mockResolvedValue(undefined);
   vi.spyOn(gitBoundary, 'remoteRefs').mockImplementation(async () => ({ ...refs }));
   const git = vi.spyOn(Execution.prototype, 'git').mockImplementation(async args => {
@@ -70,6 +69,7 @@ const fixture = async ({ maxBytes = 2 ** 31 } = {}) => {
     if (JSON.stringify(args) === JSON.stringify(['merge-base', '--is-ancestor', f.sha, successor])) return '';
     if (JSON.stringify(args) === JSON.stringify(['merge-base', '--is-ancestor', f.sha, initial])) throw new ReleaseError('GIT_FAILED', { exitCode: 1 });
     if (JSON.stringify(args) === JSON.stringify(['merge-base', '--is-ancestor', initial, f.sha])) return '';
+    if (JSON.stringify(args) === JSON.stringify(['rev-parse', '--verify', '--quiet', `${f.sha}:${f.source.configPath}`])) return f.source.configBlobOid;
     if (JSON.stringify(args) === JSON.stringify(['rev-parse', '--verify', `${f.sha}:.gitignore`])) return ignoreOid;
     if (args.length === 7 && JSON.stringify(args.slice(0, 6)) === JSON.stringify(['-c', 'core.quotepath=false', 'check-ignore', '--no-index', '-v', '--'])
       && ['state/release-slot/', 'state/forge-vercel-release/managed.json'].includes(args[6] ?? '')) return `.gitignore:2:state/\t${args[6]}`;
@@ -80,6 +80,7 @@ const fixture = async ({ maxBytes = 2 ** 31 } = {}) => {
     if (JSON.stringify(args) === JSON.stringify(['ls-files', '--cached', '--with-tree=HEAD', '-z', '--', pathspec])) return;
     if (JSON.stringify(args) === JSON.stringify(['ls-tree', '-rz', f.sha, '--', 'state/release-slot'])) return;
     if (JSON.stringify(args) === JSON.stringify(['cat-file', 'blob', ignoreOid])) { consume(ignore); return; }
+    if (JSON.stringify(args) === JSON.stringify(['cat-file', 'blob', f.source.configBlobOid])) { consume(bytes); return; }
     throw new Error(`unexpected retirement component Git stream: ${JSON.stringify(args)}`);
   });
   const options = { command: 'retire' as const, cwd: f.cwd, runId: state.runId, transport };

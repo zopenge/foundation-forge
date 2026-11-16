@@ -6,7 +6,7 @@ import { afterEach, expect, it } from 'vitest';
 import { hasVerifiedManagedClosure } from '../src/node/managed-closure.js';
 import { inspectManagedRecovery } from '../src/node/managed-recovery.js';
 import { restoreManagedTerminal } from '../src/node/managed-terminal.js';
-import type { ManagedPaths, ManagedState } from '../src/node/release-context.js';
+import type { ManagedPaths, ManagedState } from '../src/node/managed-state-contracts.js';
 import { managedFixture } from './helpers/managed-fixture.js';
 import { managedRuns } from './helpers/managed-runs.js';
 

@@ -1,5 +1,5 @@
 import { realpath } from 'node:fs/promises';
-import type { FrozenSource } from '../../src/node/release-context.js';
+import type { FrozenSource } from '../../src/node/managed-state-contracts.js';
 import type { Execution } from '../../src/node/execution.js';
 import { configDigest, readCommittedConfig } from '../../src/node/source.js';
 

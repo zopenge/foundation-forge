@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import type { ManagedSession } from './release-context.js';
+import type { ManagedSession } from './managed-session-contracts.js';
 import { createManagedExecution } from './managed-execution.js';
 import { assertCandidate, assertRepository } from './git.js';
 import { assertSourceFrozen, readCommittedConfig } from './source.js';

@@ -1,4 +1,4 @@
-import type { ArtifactIdentity } from './content-identity.js';
+import type { ArtifactIdentity } from './content-contracts.js';
 
 export interface ArtifactObjectDescriptor {
   readonly key: string;

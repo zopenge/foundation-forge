@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { expect, it } from 'vitest';
 import type { PrebuiltReleaseState, ReleaseCompletionAttempt, ReleaseCompletionState } from '../src/contracts.js';
-import type { FrozenSource, ManagedCommand, ManagedState } from '../src/node/release-context.js';
+import type { FrozenSource, ManagedCommand, ManagedState } from '../src/node/managed-state-contracts.js';
 import { createCompletionState } from '../src/node/completion-state.js';
 import { assertCompletionRetryStopped, selectCompletionSnapshots } from '../src/node/completion-history.js';
 import { configDigest } from '../src/node/source.js';

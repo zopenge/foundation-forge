@@ -11,7 +11,7 @@ export { scanSourceSecrets } from './secrets.js';
 export { stageSourceTextFile, buildSourceTextPackage, reconstructSourceText } from './packing.js';
 export { createTextSnapshotManifest } from './text-manifest.js';
 export { collectSnapshotObjectRequirements, readSnapshotText } from './text-reader.js';
-export type * from './read-index.js';
+export type * from './read-index-contracts.js';
 export { buildSnapshotReadIndex, buildSnapshotReadView, buildSnapshotReadProfileView } from './read-index.js';
 export { validateSnapshotRelations, validateSnapshotEvidence } from './analysis-metadata.js';
 export * from './read-catalog.js';

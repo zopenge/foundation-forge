@@ -5,7 +5,7 @@ import { createManagedSession } from '../src/node/managed-process.js';
 import { managedSessionFixture as managedFixture } from './helpers/managed-session-fixture.js';
 import { currentCoordinator, identityReader } from '../src/node/process-identities.js';
 import { closeFixtureIdentity } from './helpers/close-fixture-process.js';
-import type { ManagedSession } from '../src/node/release-context.js';
+import type { ManagedSession } from '../src/node/managed-session-contracts.js';
 import { inspectManagedRecovery } from '../src/node/managed-recovery.js';
 import { ReleaseError } from '../src/node/errors.js';
 

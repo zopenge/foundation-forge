@@ -4,8 +4,8 @@ import { validateReleaseConfig } from './config.js';
 import { record } from './errors.js';
 import { parseManagedReceipt, parseManagedState } from './managed-state.js';
 import { validRetirementHost } from './retirement-host.js';
-import type { FrozenSource } from './release-context.js';
-import type { RetirementSnapshot } from './retirement-record.js';
+import type { FrozenSource } from './managed-state-contracts.js';
+import type { RetirementSnapshot } from './retirement-contracts.js';
 
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u;
 const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);

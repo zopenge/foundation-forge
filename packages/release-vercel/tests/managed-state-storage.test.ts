@@ -5,7 +5,7 @@ import { managedSessionFixture } from './helpers/managed-session-fixture.js';
 import { assertManagedPaths } from '../src/node/managed-paths.js';
 import { fileIdentity } from '../src/node/managed-io.js';
 import { createManagedSession } from '../src/node/managed-process.js';
-import type { ManagedReceipt } from '../src/node/release-context.js';
+import type { ManagedReceipt } from '../src/node/managed-state-contracts.js';
 
 // 存储组件直接准备独立真实目录、身份、原始锁和原子store；不声明Git来源或发布成功。
 // 首次准入/来源索引/固定slot及重绑定由managed-state集成矩阵继续验证。

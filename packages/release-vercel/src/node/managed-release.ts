@@ -1,7 +1,9 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { ReleaseDeployment, ReleaseDiagnostic, ReleaseReport, ReleaseStage, RunReleaseOptions } from '../contracts.js';
-import type { FrozenSource, ManagedSession, ManagedSlot } from './release-context.js';
+import type { FrozenSource } from './managed-state-contracts.js';
+import type { ManagedSession } from './managed-session-contracts.js';
+import type { ManagedSlot } from './managed-slot-contracts.js';
 import { assertActive, record, ReleaseError } from './errors.js';
 import { createManagedExecution } from './managed-execution.js';
 import { assertSourceFrozen, freezeManagedSource, inspectCommitTree } from './source.js';

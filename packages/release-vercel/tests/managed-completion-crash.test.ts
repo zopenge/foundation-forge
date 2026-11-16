@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 import { hasVerifiedManagedStop } from '../src/node/managed-closure.js';
 import { inspectManagedRecovery, readManagedLocation } from '../src/node/managed-recovery.js';
-import type { ManagedState } from '../src/node/release-context.js';
+import type { ManagedState } from '../src/node/managed-state-contracts.js';
 import { serveCompletionTransport } from '../package-consumer/completion-rpc.mjs';
 import { completionFixture } from './helpers/completion-fixture.js';
 import { fixtureExec } from './helpers/fixture-exec.js';

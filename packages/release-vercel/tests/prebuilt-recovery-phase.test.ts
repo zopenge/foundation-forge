@@ -4,16 +4,16 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { ReleaseError } from '../src/node/errors.js';
 import { assertManagedRemoteSettled } from '../src/node/managed-remote-state.js';
 import { recordVerifiedAlias, resumeVerifiedAlias } from '../src/node/prebuilt-resumption.js';
-import * as recovery from '../src/node/managed-recovery.js';
+import * as sourceBinding from '../src/node/source.js';
 import { Execution } from '../src/node/execution.js';
 import { prebuiltPhaseFixture } from './helpers/prebuilt-phase-fixture.js';
 
-vi.mock('../src/node/managed-recovery.js', async original => ({ ...await original<typeof recovery>() }));
+vi.mock('../src/node/source.js', async original => ({ ...await original<typeof sourceBinding>() }));
 const owned: Awaited<ReturnType<typeof prebuiltPhaseFixture>>[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const value of owned.splice(0)) await value.dispose(); });
 async function fixture(withAlias = false) {
   const value = await prebuiltPhaseFixture({ withAlias }); owned.push(value);
-  vi.spyOn(recovery, 'assertHistoricalSource').mockImplementation(async source => { expect(source).toEqual(value.source); });
+  vi.spyOn(sourceBinding, 'assertHistoricalSource').mockImplementation(async source => { expect(source).toEqual(value.source); });
   vi.spyOn(Execution.prototype, 'run').mockImplementation(async () => { throw new Error('phase protocol must not launch application commands'); });
   vi.spyOn(Execution.prototype, 'git').mockImplementation(async () => { throw new Error('phase protocol must not launch Git'); });
   return value;

@@ -1,28 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, open, rename, unlink } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import type { ReleaseRecoveryObservation } from '../contracts.js';
-import type { FileIdentity, ManagedPaths, ManagedState } from './release-context.js';
+import type { ManagedPaths, ManagedState } from './managed-state-contracts.js';
+import type { RetirementRecord, RetirementSnapshot } from './retirement-contracts.js';
 import { assertPathChain, fileIdentity, measureManagedUsage, readBoundedJson, readBoundedText, sameIdentity } from './managed-io.js';
 import { record, ReleaseError } from './errors.js';
-import { hasSubsequentBoot, validRetirementHost, type RetirementHost } from './retirement-host.js';
+import { hasSubsequentBoot, validRetirementHost } from './retirement-host.js';
 import { isUnstartedRetirementSnapshot } from './unstarted-retirement.js';
 
-export interface RetirementSnapshot {
-  readonly state: string; readonly lock: string; readonly anchor: string; readonly owner: string;
-  readonly check: string | null; readonly publish: string | null;
-  readonly identities: Readonly<Record<'state' | 'lock' | 'anchor' | 'owner', FileIdentity>>;
-}
-export interface RetirementRecord {
-  readonly schemaVersion: 1; readonly kind: 'interrupted-run-retirement';
-  readonly runId: string; readonly slotId: string;
-  readonly snapshot: RetirementSnapshot; readonly snapshotSha256: string;
-  readonly origin: 'recorded-run-host';
-  readonly host: RetirementHost; readonly preparedAt: string;
-  readonly checksum: string;
-  readonly final?: { readonly host: RetirementHost; readonly retiredAt: string; readonly observation: ReleaseRecoveryObservation;
-    readonly cessation?: 'recorded-empty-unstarted-scope' };
-}
 export const retirementDigest = (value: unknown) => createHash('sha256').update(JSON.stringify(value) ?? 'undefined').digest('hex');
 export const sealRetirementRecord = (value: Omit<RetirementRecord, 'checksum'>): RetirementRecord => ({ ...value, checksum: retirementDigest({ ...value, checksum: undefined }) });
 const archiveLimit = 8_388_608;
