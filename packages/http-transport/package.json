@@ -1,6 +1,6 @@
 {
   "name": "@openge/forge-http-transport",
-  "version": "0.1.0-rc.0",
+  "version": "0.1.0",
   "description": "Explicit isolated Node HTTP(S) fetch transport and neutral error classification",
   "type": "module",
   "main": "./dist/index.js",
