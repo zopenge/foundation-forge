@@ -1,7 +1,8 @@
 import { createManagedExecution } from '../../src/node/managed-execution.js';
 import { assertManagedPaths } from '../../src/node/managed-paths.js';
 import { createManagedStateStore } from '../../src/node/managed-state.js';
-import type { ManagedSession, ManagedSlot } from '../../src/node/release-context.js';
+import type { ManagedSession } from '../../src/node/managed-session-contracts.js';
+import type { ManagedSlot } from '../../src/node/managed-slot-contracts.js';
 import { readOnlyGit } from './component-command-runtime.mjs';
 
 /** 协议组件保留目录身份、原始锁及真实存储；来源跟踪准入在独立集成边界验证。 */

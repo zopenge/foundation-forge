@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
 import type { ManagedSourceConfig } from '../../src/contracts.js';
-import type { ManagedPaths } from '../../src/node/release-context.js';
+import type { ManagedPaths } from '../../src/node/managed-state-contracts.js';
 import { atomicJson, fileIdentity } from '../../src/node/managed-io.js';
 import { assertManagedPaths } from '../../src/node/managed-paths.js';
 import { acquireLock } from '../../src/node/lock.js';

@@ -1,7 +1,7 @@
 import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ReleaseConfig, ReleaseDeployment, ReleaseReport, ReleaseTransport } from '../src/contracts.js';
-import type { ExecutionContext } from '../src/node/release-context.js';
+import type { ExecutionContext } from '../src/node/publication-context.js';
 import { ReleaseError } from '../src/node/errors.js';
 import { assertCandidate } from '../src/node/git.js';
 import { publishCandidate } from '../src/node/publication.js';

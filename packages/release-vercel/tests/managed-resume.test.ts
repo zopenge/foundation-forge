@@ -5,7 +5,7 @@ import { promisify } from 'node:util';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { managedFixture } from './helpers/managed-fixture.js';
 import { managedRuns } from './helpers/managed-runs.js';
-import type { ManagedSession } from '../src/node/release-context.js';
+import type { ManagedSession } from '../src/node/managed-session-contracts.js';
 import { ReleaseError } from '../src/node/errors.js';
 import { commandComponentSession, protocolComponentSlot, publicationComponentSession } from './helpers/component-session.js';
 

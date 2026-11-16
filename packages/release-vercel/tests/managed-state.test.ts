@@ -4,7 +4,7 @@ import { afterEach, expect, it } from 'vitest';
 import { freezeManagedSource } from '../src/node/source.js';
 import { openManagedSlot } from '../src/node/managed-paths.js';
 import { git, managedFixture } from './helpers/managed-fixture.js';
-import type { ManagedSlot } from '../src/node/release-context.js';
+import type { ManagedSlot } from '../src/node/managed-slot-contracts.js';
 
 const fixtures: Awaited<ReturnType<typeof managedFixture>>[] = [];
 afterEach(async () => { for (const f of fixtures.splice(0)) await f.dispose(); });

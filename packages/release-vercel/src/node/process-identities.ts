@@ -1,5 +1,5 @@
 import { createPosixProcessControl, createPosixProcessIdentityReader, createWindowsProcessControl, createWindowsNativeProcessIdentityReader } from '@openge/forge-process-control-node';
-import type { RecordedIdentity } from './release-context.js';
+import type { RecordedIdentity } from './managed-state-contracts.js';
 import { assertActive, ReleaseError } from './errors.js';
 
 export const processControl = () => process.platform === 'win32' ? createWindowsProcessControl({ listenerBackend: 'netstat', identityReader: identityReader() }) : createPosixProcessControl({ listenerBackend: 'lsof' });

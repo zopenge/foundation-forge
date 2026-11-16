@@ -1,6 +1,6 @@
 import { calculateBytesIntegrity } from '@openge/forge-artifact-integrity';
 import { validatePortableRelativePath } from '@openge/forge-path-safety';
-import type { ArtifactContentIdentity } from './content-identity.js';
+import type { ArtifactContentIdentity } from './content-contracts.js';
 import { ArtifactPublicationError } from './errors.js';
 
 interface ContentFile {

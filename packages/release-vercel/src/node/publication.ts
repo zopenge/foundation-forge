@@ -1,5 +1,5 @@
 import type { ReleaseDeployment } from '../contracts.js';
-import type { ExecutionContext } from './release-context.js';
+import type { ExecutionContext } from './publication-context.js';
 import { assertActive, ReleaseError } from './errors.js';
 import { fetchAndAssertFastForward } from './git.js';
 import { createTransport, VercelVerification } from './vercel.js';

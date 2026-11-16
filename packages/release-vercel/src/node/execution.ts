@@ -7,7 +7,7 @@ import { createPosixProcessControl, createPosixProcessIdentityReader, createWind
 import type { ReleaseCheck, ReleaseConfig, ReleaseErrorCode, ReleaseStep } from '../contracts.js';
 import { assertActive, redact, ReleaseError } from './errors.js';
 import { LiveOutput } from './live-output.js';
-import type { ExecutionLifecycle, ExecutionResult } from './release-context.js';
+import type { ExecutionLifecycle, ExecutionResult } from './execution-lifecycle.js';
 import { managedOwnedScopeProvider } from './owned-command-runner.js';
 import { ExecutionIdentityReady } from './execution-identity-ready.js';
 

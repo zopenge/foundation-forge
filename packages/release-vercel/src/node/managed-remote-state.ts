@@ -1,12 +1,13 @@
 import { opendir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { Execution } from './execution.js';
-import type { FrozenSource, ManagedPaths, ManagedState, PrebuiltEffectResolution } from './release-context.js';
+import type { FrozenSource, ManagedPaths, ManagedState, PrebuiltEffectResolution } from './managed-state-contracts.js';
 import { assertPathChain, pathExists, readBoundedJson } from './managed-io.js';
 import { readManagedDisposition } from './managed-disposition.js';
 import { readRetirementRecord } from './retirement-record.js';
 import { parseManagedState } from './managed-state.js';
-import { assertHistoricalSource, frozenSource, observeRefsForDisposition, readManagedLocation } from './managed-recovery.js';
+import { frozenSource, observeRefsForDisposition, readManagedLocation } from './managed-recovery.js';
+import { assertHistoricalSource } from './source.js';
 import { record, ReleaseError } from './errors.js';
 import { assertManagedHistory } from './managed-history.js';
 import type { ReleaseTransport } from '../contracts.js';

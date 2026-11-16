@@ -1,11 +1,12 @@
 import type { ReleaseReport } from '../contracts.js';
-import type { FrozenSource, ManagedAnchor, ManagedPaths, ManagedReceipt, ManagedState, ManagedStateStore } from './release-context.js';
+import type { FrozenSource, ManagedAnchor, ManagedPaths, ManagedReceipt, ManagedState } from './managed-state-contracts.js';
+import type { ManagedStateStore } from './managed-slot-contracts.js';
 import { record, ReleaseError } from './errors.js';
 import { atomicJson, readBoundedJson } from './managed-io.js';
 import { validateReleaseConfig } from './config.js';
 import { resolve } from 'node:path';
 import { hasNoStartWitness, hasVerifiedManagedClosure, hasVerifiedManagedStop } from './managed-closure.js';
-import type { ManagedCommand } from './release-context.js';
+import type { ManagedCommand } from './managed-state-contracts.js';
 import { validRetirementHost } from './retirement-host.js';
 import { metadataReserveBytes } from './managed-metadata.js';
 import { checkoutObservationPlan } from './managed-observation.js';

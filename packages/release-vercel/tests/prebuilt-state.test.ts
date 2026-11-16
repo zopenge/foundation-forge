@@ -1,7 +1,7 @@
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parseManagedReceipt, parseManagedState } from '../src/node/managed-state.js';
-import type { ManagedState, PrebuiltEffectResolution } from '../src/node/release-context.js';
+import type { ManagedState, PrebuiltEffectResolution } from '../src/node/managed-state-contracts.js';
 import { assertPrebuiltEffectObserved, hasUnresolvedPrebuiltEffect, matchesPrebuiltResolution } from '../src/node/prebuilt-recovery.js';
 import { Execution } from '../src/node/execution.js';
 import { prebuiltConfiguration } from './helpers/prebuilt-configuration.js';

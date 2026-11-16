@@ -1,7 +1,7 @@
 import { lstat, open, opendir, readlink, realpath, rename, statfs, unlink } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
-import type { FileIdentity, ManagedPaths, MetadataFile } from './release-context.js';
+import type { FileIdentity, ManagedPaths, MetadataFile } from './managed-state-contracts.js';
 import { record, ReleaseError } from './errors.js';
 
 export const within = (root: string, path: string): boolean => {

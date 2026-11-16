@@ -1,5 +1,5 @@
 import type { PrebuiltReleaseState, ReleaseDeployment } from '../contracts.js';
-import type { ExecutionContext } from './release-context.js';
+import type { ExecutionContext } from './publication-context.js';
 import { assertActive, record, ReleaseError } from './errors.js';
 import { vercelInvocation } from './execution.js';
 import { assertPrebuiltArtifact, freezePrebuiltArtifact } from './prebuilt-artifact.js';

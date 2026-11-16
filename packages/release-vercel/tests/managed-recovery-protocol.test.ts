@@ -5,16 +5,14 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { runRelease } from '../src/node.js';
 import { Execution } from '../src/node/execution.js';
 import { ReleaseError } from '../src/node/errors.js';
-import * as sourceBoundary from '../src/node/source.js';
 import * as gitBoundary from '../src/node/git.js';
 import { openManagedSlot } from '../src/node/managed-paths.js';
 import { createManagedSession } from '../src/node/managed-process.js';
 import { inspectManagedRecovery, selectManagedPublication } from '../src/node/managed-recovery.js';
-import type { ManagedReceipt, ManagedState } from '../src/node/release-context.js';
+import type { ManagedReceipt, ManagedState } from '../src/node/managed-state-contracts.js';
 import type { ReleaseTransport } from '../src/contracts.js';
 import { managedSessionFixture } from './helpers/managed-session-fixture.js';
 
-vi.mock('../src/node/source.js', async importOriginal => ({ ...await importOriginal<typeof sourceBoundary>() }));
 vi.mock('../src/node/git.js', async importOriginal => ({ ...await importOriginal<typeof gitBoundary>() }));
 
 const fixtures: Awaited<ReturnType<typeof managedSessionFixture>>[] = [];
@@ -45,10 +43,6 @@ const fixture = async () => {
     configPath: f.source.configPath, latestPublish: { sha: f.sha, runId: f.slot.runId, configSha256: f.source.configSha256 } });
   await f.slot.lock.release();
   const bytes = Buffer.from(JSON.stringify(f.config)), initial = '1'.repeat(40);
-  vi.spyOn(sourceBoundary, 'readCommittedConfig').mockImplementation(async (execution, sha, path) => {
-    expect(execution.cwd).toBe(f.cwd); expect(sha).toBe(f.sha); expect(path).toBe(f.source.configPath);
-    return { config: f.config, bytes, oid: f.source.configBlobOid };
-  });
   vi.spyOn(gitBoundary, 'assertRepository').mockImplementation(async execution => { expect(execution.cwd).toBe(f.cwd); });
   vi.spyOn(gitBoundary, 'remoteRefs').mockImplementation(async execution => {
     expect(execution.cwd).toBe(f.cwd); return { dev: initial, main: initial };
@@ -58,6 +52,7 @@ const fixture = async () => {
   await writeFile(resolve(f.cwd, '.gitignore'), ignore);
   const git = vi.spyOn(Execution.prototype, 'git').mockImplementation(async function (this: Execution, args) {
     expect(this.cwd).toBe(f.cwd);
+    if (JSON.stringify(args) === JSON.stringify(['rev-parse', '--verify', '--quiet', `${f.sha}:${f.source.configPath}`])) return f.source.configBlobOid;
     if (JSON.stringify(args) === JSON.stringify(['merge-base', '--is-ancestor', initial, f.sha])) return '';
     if (JSON.stringify(args) === JSON.stringify(['merge-base', '--is-ancestor', f.sha, initial])) throw new ReleaseError('GIT_FAILED', { exitCode: 1 });
     if (JSON.stringify(args) === JSON.stringify(['rev-parse', '--verify', `${f.sha}:.gitignore`])) return ignoreOid;
@@ -71,6 +66,7 @@ const fixture = async () => {
     if (JSON.stringify(args) === JSON.stringify(['ls-files', '--cached', '--with-tree=HEAD', '-z', '--', pathspec])) return;
     if (JSON.stringify(args) === JSON.stringify(['ls-tree', '-rz', f.sha, '--', 'state/release-slot'])) return;
     if (JSON.stringify(args) === JSON.stringify(['cat-file', 'blob', ignoreOid])) { consume(ignore); return; }
+    if (JSON.stringify(args) === JSON.stringify(['cat-file', 'blob', f.source.configBlobOid])) { consume(bytes); return; }
     throw new Error(`unexpected recovery component Git stream: ${JSON.stringify(args)}`);
   });
   return { ...f, state: session.state, receipt, initial, git, execution: new Execution(f.cwd, f.config, undefined, []) };

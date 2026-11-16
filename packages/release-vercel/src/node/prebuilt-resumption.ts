@@ -1,5 +1,6 @@
 import type { ReleaseTransport } from '../contracts.js';
-import type { ManagedReceipt, ManagedSession, ManagedState, PrebuiltEffectResolution } from './release-context.js';
+import type { ManagedReceipt, ManagedState, PrebuiltEffectResolution } from './managed-state-contracts.js';
+import type { ManagedSession } from './managed-session-contracts.js';
 import { ReleaseError } from './errors.js';
 import { assertManagedHistory } from './managed-history.js';
 import { readManagedDisposition } from './managed-disposition.js';

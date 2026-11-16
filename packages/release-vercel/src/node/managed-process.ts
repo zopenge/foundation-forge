@@ -1,7 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { basename, resolve } from 'node:path';
 import type { CommandObserver, CommandRunner, CommandSpec, RunningCommand } from '@openge/forge-command-runner';
-import type { ExecutionLifecycle, ExecutionResult, ManagedCommand, ManagedSession, ManagedSlot, ManagedState } from './release-context.js';
+import type { ExecutionLifecycle, ExecutionResult } from './execution-lifecycle.js';
+import type { ManagedCommand, ManagedState } from './managed-state-contracts.js';
+import type { ManagedSession } from './managed-session-contracts.js';
+import type { ManagedSlot } from './managed-slot-contracts.js';
 import type { ReleaseStep } from '../contracts.js';
 import { record, ReleaseError } from './errors.js';
 import { within } from './managed-io.js';

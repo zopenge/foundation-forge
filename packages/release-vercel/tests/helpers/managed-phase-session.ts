@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { ManagedReceipt } from '../../src/node/release-context.js';
+import type { ManagedReceipt } from '../../src/node/managed-state-contracts.js';
 import { createManagedSession } from '../../src/node/managed-process.js';
 import { createManagedStateStore } from '../../src/node/managed-state.js';
 import { archiveManagedDisposition } from '../../src/node/managed-disposition.js';

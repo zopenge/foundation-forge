@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ReleaseError } from '../src/node/errors.js';
-import type { ManagedSession } from '../src/node/release-context.js';
+import type { ManagedSession } from '../src/node/managed-session-contracts.js';
 import { prepareEnvironment } from '../src/node/managed-checkout.js';
 import { git, managedFixture } from './helpers/managed-fixture.js';
 import { managedRuns } from './helpers/managed-runs.js';

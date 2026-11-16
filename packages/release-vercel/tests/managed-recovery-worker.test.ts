@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { createNodeCommandRunner } from '@openge/forge-command-runner/node';
 import { runRelease } from '../src/node.js';
 import type { ReleaseReport, ReleaseTransport } from '../src/contracts.js';
-import type { RecordedIdentity } from '../src/node/release-context.js';
+import type { RecordedIdentity } from '../src/node/managed-state-contracts.js';
 import { Execution } from '../src/node/execution.js';
 import { identityReader, processControl } from '../src/node/process-identities.js';
 import { managedOwnedScopeProvider } from '../src/node/owned-command-runner.js';

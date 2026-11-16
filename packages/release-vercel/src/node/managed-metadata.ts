@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import { lstat, open, rename, statfs, unlink } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import type { ManagedPaths, MetadataFile } from './release-context.js';
-export type { MetadataFile } from './release-context.js';
+import type { ManagedPaths, MetadataFile } from './managed-state-contracts.js';
+export type { MetadataFile } from './managed-state-contracts.js';
 import { assertPathChain, fileIdentity, pathExists, readBoundedText, sameIdentity } from './managed-io.js';
 import { ReleaseError } from './errors.js';
 

@@ -3,12 +3,13 @@ import { isAbsolute, relative, resolve } from 'node:path';
 import { calculateBytesIntegrity } from '@openge/forge-artifact-integrity';
 import type { ReleaseConfig } from '../contracts.js';
 import type { Execution } from './execution.js';
-import { ReleaseError } from './errors.js';
-import type { FrozenSource } from './release-context.js';
+import { assertActive, ReleaseError } from './errors.js';
+import type { FrozenSource } from './managed-state-contracts.js';
 import { assertRepository } from './git.js';
 import { gitBlob, gitRecords } from './git-stream.js';
 import { validateReleaseConfig } from './config.js';
 import { assertNoGitContext } from './git-context.js';
+import { createManagedExecution } from './managed-execution.js';
 
 export const configDigest = async (config: ReleaseConfig): Promise<string> =>
   (await calculateBytesIntegrity(new TextEncoder().encode(JSON.stringify(config)))).sha256;
@@ -31,6 +32,15 @@ export async function readCommittedConfig(execution: Execution, sha: string, pat
   try { value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as unknown; }
   catch { throw new ReleaseError('CONFIG_READ', { reason: 'COMMITTED_JSON' }); }
   return { config: validateReleaseConfig(value), oid, bytes };
+}
+/** 历史源只核验仓库身份和已提交配置，不要求当前工作区仍停在原候选。 */
+export async function assertHistoricalSource(source: FrozenSource, signal?: AbortSignal): Promise<void> {
+  const execution = createManagedExecution(source.root, source.config, signal, []);
+  try { await assertRepository(execution, source.config); }
+  catch { assertActive(signal); throw new ReleaseError('SOURCE_CHANGED', { reason: 'REPOSITORY_IDENTITY' }); }
+  const committed = await readCommittedConfig(execution, source.sha, source.configPath);
+  if (committed.oid !== source.configBlobOid || await configDigest(committed.config) !== source.configSha256
+    || await configDigest(source.config) !== source.configSha256) throw new ReleaseError('SLOT_STATE', { reason: 'CONFIG_BLOB_BINDING' });
 }
 async function assertTrackedClean(execution: Execution): Promise<void> {
   for (const args of [['diff', '--quiet', '--'], ['diff', '--cached', '--quiet', '--']]) {

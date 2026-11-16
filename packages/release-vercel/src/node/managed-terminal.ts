@@ -1,6 +1,7 @@
 import { resolve } from 'node:path';
 import { unlink } from 'node:fs/promises';
-import type { ManagedCommand, ManagedPaths, ManagedSlot, ManagedState } from './release-context.js';
+import type { ManagedCommand, ManagedPaths, ManagedState } from './managed-state-contracts.js';
+import type { ManagedSlot } from './managed-slot-contracts.js';
 import { record, ReleaseError } from './errors.js';
 import { assertMetadataFile, assertMetadataPaths, inspectMetadataFile, metadataDigest, sameMetadataFile, terminalLimit, writeReservedMetadata, type MetadataFile } from './managed-metadata.js';
 import { readRetirementHost, validRetirementHost, type RetirementHost } from './retirement-host.js';

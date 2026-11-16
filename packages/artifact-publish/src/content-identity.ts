@@ -1,17 +1,5 @@
 import { ArtifactPublicationError } from './errors.js';
-
-export interface ArtifactContentIdentity {
-  readonly manifestSha256: string;
-}
-
-export interface ArtifactProvenance {
-  readonly gitRevision: string;
-}
-
-export interface ArtifactIdentity {
-  readonly content: ArtifactContentIdentity;
-  readonly provenance?: ArtifactProvenance;
-}
+import type { ArtifactIdentity } from './content-contracts.js';
 
 /** 只冻结来源声明；真实清单、输入字节与追溯真实性由适配器核验。 */
 export function snapshotArtifactIdentity(input: ArtifactIdentity): ArtifactIdentity {

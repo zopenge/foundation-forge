@@ -1,4 +1,4 @@
-import type { SnapshotReadIndex } from './read-index.js';
+import type { SnapshotReadIndex } from './read-index-contracts.js';
 
 /** 渲染与行数统计共用逐行迭代，统计时不创建完整 Markdown 副本。 */
 export function* readIndexLines(index: SnapshotReadIndex): Generator<string> {

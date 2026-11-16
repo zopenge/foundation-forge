@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { ensureTestTemporaryDirectory } from '../../../../scripts/test-temporary-directory.mjs';
 import type { PrebuiltReleaseState, ReleaseReport, ReleaseTransport } from '../../src/contracts.js';
-import type { ExecutionContext } from '../../src/node/release-context.js';
+import type { ExecutionContext } from '../../src/node/publication-context.js';
 import { Execution } from '../../src/node/execution.js';
 import { assertActive, ReleaseError } from '../../src/node/errors.js';
 import { prebuiltConfiguration } from './prebuilt-configuration.js';
