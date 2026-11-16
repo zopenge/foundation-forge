@@ -23,6 +23,8 @@ describe('HTTP transport classification', () => {
     expect(classifyHttpTransportError(new DOMException('secret', 'AbortError'))).toEqual({ category: 'cancelled', retryable: false });
     expect(classifyHttpTransportError(new DOMException('secret', 'TimeoutError'))).toEqual({ category: 'timeout', retryable: true });
     expect(classifyHttpTransportError({ code: 'UND_ERR_ABORTED', message: 'Proxy response (407) !== 200 when HTTP Tunneling' })).toEqual({ category: 'proxy-auth', retryable: false });
+    expect(classifyHttpTransportError({ code: 'UND_ERR_ABORTED', message: 'Proxy response (401) !== 200 when HTTP Tunneling' })).toEqual({ category: 'proxy-auth', retryable: false });
+    expect(classifyHttpTransportError({ code: 'UND_ERR_ABORTED', message: 'Proxy response (403) !== 200 when HTTP Tunneling' })).toEqual({ category: 'proxy-auth', retryable: false });
     expect(classifyHttpTransportError({ code: 'UND_ERR_ABORTED', message: 'Proxy response (502) !== 200 when HTTP Tunneling' })).toEqual({ category: 'proxy-connect', retryable: true });
   });
 

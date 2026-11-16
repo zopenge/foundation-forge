@@ -22,7 +22,7 @@ try {
 } finally { await transport.close(); }
 ```
 
-`fetch` has the native call shape (`Request | URL | string`, optional `RequestInit`, streaming native `Response`). It supports Request overrides, streaming uploads with `duplex: 'half'`, abort signals, headers, status, URL, cloning and body readers. This is a server HTTP(S) adapter, not a full browser Fetch implementation: no cookie jar, browser cache or CORS. Non-HTTP(S) URLs fail. All redirects remain responses, even if the input requests following them. Origin 4xx/5xx, including origin 407, remain responses; CONNECT proxy 407 is a transport error. No request is automatically retried, redirected or rerouted.
+`fetch` has the native call shape (`Request | URL | string`, optional `RequestInit`, streaming native `Response`). It supports Request overrides, streaming uploads with `duplex: 'half'`, abort signals, headers, status, URL, cloning and body readers. This is a server HTTP(S) adapter, not a full browser Fetch implementation: no cookie jar, browser cache or CORS. Non-HTTP(S) URLs fail. All redirects remain responses, even if the input requests following them. Origin 4xx/5xx, including origin 401/403/407, remain responses; CONNECT proxy 401/403/407 are nonretryable `proxy-auth` transport errors. No request is automatically retried, redirected or rerouted.
 
 ## Options and routes
 

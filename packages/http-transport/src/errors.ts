@@ -31,7 +31,7 @@ function ownCategory(error: object): HttpTransportErrorCategory | undefined {
   if (code === 'UND_ERR_ABORTED') {
     const message = field(error, 'message');
     const status = typeof message === 'string' ? /^Proxy response \((\d{3})\) !== 200 when HTTP Tunneling$/u.exec(message)?.[1] : undefined;
-    if (status) return status === '407' ? 'proxy-auth' : 'proxy-connect';
+    if (status) return ['401', '403', '407'].includes(status) ? 'proxy-auth' : 'proxy-connect';
   }
   if (name === 'AbortError' || code === 'ABORT_ERR' || code === 'UND_ERR_ABORTED') return 'cancelled';
   if (name === 'TimeoutError') return 'timeout';
