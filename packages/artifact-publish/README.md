@@ -5,9 +5,14 @@ Provider-neutral publication of immutable objects, byte verification, and last-s
 ## Entries
 
 - `@openge/forge-artifact-publish`: object publication, content manifests, durable operation binding/execution/observation, contracts, and structured errors. No Node-only imports.
-- `@openge/forge-artifact-publish/node`: `publishArtifactFiles`, `createCommandArtifactOperation`, and Node-specific types. Node.js 22.14+; excluded from browser resolution.
+- `@openge/forge-artifact-publish/node`: `captureArtifactFiles`, `verifyArtifactFiles`, `publishArtifactFiles`, `createCommandArtifactOperation`, and Node-specific types. Node.js 22.14+; excluded from browser resolution.
 
 An explicit Provider supplies storage; Core never selects one or reads credentials from the environment.
+
+Raw file capture maps explicit source roots into one canonical logical manifest,
+without storage, Git, or deployment. Each root chooses exact closure or declared
+files only. Snapshots keep private bytes and return copies; they do not provide an
+atomic directory seal or durable persistence. See the [capture contract](../../docs/packages/artifacts/artifact-capture.md).
 
 ## Use
 

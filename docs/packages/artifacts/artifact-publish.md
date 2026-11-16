@@ -7,9 +7,11 @@
 | 入口 | 公开能力 |
 | --- | --- |
 | `@openge/forge-artifact-publish` | `publishArtifactRelease`、`activateArtifactRelease`、制品操作绑定/执行/观察、公开契约及结构化错误；不导入 Node 模块 |
-| `@openge/forge-artifact-publish/node` | `publishArtifactFiles`、`createCommandArtifactOperation`、文件及命令适配类型；browser 条件拒绝导入 |
+| `@openge/forge-artifact-publish/node` | `captureArtifactFiles`、`verifyArtifactFiles`、`publishArtifactFiles`、`createCommandArtifactOperation` 及类型；browser 条件拒绝导入 |
 
 非对象存储的部署创建与状态观察使用独立的[制品操作契约](artifact-operations.md)，不伪装成对象 PUT。
+
+独立于上传的原始文件捕获、逻辑路径映射、闭包与字节副本语义见[制品字节捕获](artifact-capture.md)。
 
 `ArtifactObjectDescriptor` 包含 `key`、`byteLength`、`sha256`、`contentType`、`cacheControl`。SHA-256 是不带前缀的 64 位十六进制；收据规范化为小写。发布计划为每个对象追加 `Uint8Array bytes`；文件计划追加便携相对 `path`。所有计划还需 `content: { manifestSha256 }`、以 `/` 结尾的 `immutablePrefix`、带字节的小型 `pointer`；真实 Git 来源可通过可选 `provenance: { gitRevision }` 单独记录。
 
