@@ -1,5 +1,12 @@
 # @openge/forge-artifact-publish-cos
 
+## 0.1.5
+
+### Patch Changes
+
+- Updated dependencies [69684a7]
+  - @openge/forge-artifact-publish@0.4.1
+
 ## 0.1.4
 
 ### Patch Changes

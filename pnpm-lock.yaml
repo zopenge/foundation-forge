@@ -80,7 +80,7 @@ importers:
   packages/artifact-publish-cos:
     dependencies:
       '@openge/forge-artifact-publish':
-        specifier: workspace:0.4.0
+        specifier: workspace:0.4.1
         version: link:../artifact-publish
       '@openge/forge-path-safety':
         specifier: workspace:0.1.1
