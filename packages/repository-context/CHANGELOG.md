@@ -1,5 +1,12 @@
 # @openge/forge-repository-context
 
+## 2.0.2
+
+### Patch Changes
+
+- Updated dependencies [ccd1f46]
+  - @openge/forge-source-snapshot@0.3.2
+
 ## 2.0.1
 
 ### Patch Changes

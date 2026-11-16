@@ -80,7 +80,7 @@ importers:
   packages/artifact-publish-cos:
     dependencies:
       '@openge/forge-artifact-publish':
-        specifier: workspace:0.3.0
+        specifier: workspace:0.3.1
         version: link:../artifact-publish
       '@openge/forge-path-safety':
         specifier: workspace:0.1.1
@@ -228,7 +228,7 @@ importers:
         specifier: workspace:0.2.0
         version: link:../generated-artifacts
       '@openge/forge-source-snapshot':
-        specifier: workspace:0.3.1
+        specifier: workspace:0.3.2
         version: link:../source-snapshot
       typescript:
         specifier: 6.0.3
