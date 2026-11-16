@@ -10,6 +10,7 @@ import { activateArtifactRelease, createArtifactContentManifest, publishArtifact
 import { publishArtifactFiles } from '@openge/forge-artifact-publish/node';
 import { verifyMultiArtifact } from './multi-artifact.mjs';
 import { verifyWorkerd } from './workerd.mjs';
+import { verifyCapture } from './capture.mjs';
 
 const artifact = (key, text) => {
   const bytes = Buffer.from(text);
@@ -93,6 +94,7 @@ assert.equal(browser.status, 0, browser.stdout + browser.stderr);
 
 await verifyMultiArtifact();
 await verifyWorkerd();
+await verifyCapture();
 
 const types = spawnSync(process.execPath, [process.env.PACKAGE_CONSUMER_TYPESCRIPT,
   '--module', 'NodeNext', '--target', 'ES2023', '--lib', 'ES2023,DOM', '--strict', '--noEmit',

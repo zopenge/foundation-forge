@@ -1,8 +1,8 @@
 import { bindArtifactOperation, observeArtifactOperation, performArtifactOperation } from '@openge/forge-artifact-publish';
 import type { ArtifactOperationBinding, ArtifactOperationJournal, ArtifactOperationObserver,
   ArtifactOperationReceipt, ArtifactOperationTransport } from '@openge/forge-artifact-publish';
-import { createCommandArtifactOperation } from '@openge/forge-artifact-publish/node';
-import type { CommandArtifactOperationOptions } from '@openge/forge-artifact-publish/node';
+import { captureArtifactFiles, createCommandArtifactOperation, verifyArtifactFiles } from '@openge/forge-artifact-publish/node';
+import type { ArtifactFileCaptureOptions, CapturedArtifactFiles, CommandArtifactOperationOptions } from '@openge/forge-artifact-publish/node';
 
 declare const transport: ArtifactOperationTransport;
 declare const journal: ArtifactOperationJournal;
@@ -18,3 +18,8 @@ const observer = { target: transport.target, capability: transport.capability, c
 } satisfies ArtifactOperationObserver;
 export const recovery: ArtifactOperationReceipt = await observeArtifactOperation(observer, binding, journal, options);
 export const cli: ArtifactOperationTransport = await createCommandArtifactOperation(command);
+declare const captureOptions: ArtifactFileCaptureOptions;
+export const captured: CapturedArtifactFiles = await captureArtifactFiles(captureOptions);
+export const raw: Uint8Array = captured.readFile('payload.bin');
+export const verified: CapturedArtifactFiles = await verifyArtifactFiles({ ...captureOptions,
+  manifestBytes: captured.manifestBytes, expectedContent: captured.content });
