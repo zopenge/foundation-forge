@@ -157,7 +157,7 @@ describe('HTTP failures and strict security', () => {
     }
   });
 
-  it('retains ordinary 401/407/500 responses and never follows redirects even on Request input', async () => {
+  it('retains ordinary 401/403/407/500 responses and never follows redirects even on Request input', async () => {
     const paths: string[] = [];
     const server = own(await origin((request, response) => {
       paths.push(request.url ?? '');
@@ -166,13 +166,13 @@ describe('HTTP failures and strict security', () => {
       response.end('business');
     }));
     const client = transport({ route: 'direct' });
-    for (const status of [401, 407, 500, 302]) {
+    for (const status of [401, 403, 407, 500, 302]) {
       const response = await client.fetch(new Request(`${server.url}/${status}`, { redirect: 'follow' }));
       expect(response.status).toBe(status);
       expect(response.redirected).toBe(false);
       expect(await response.text()).toBe('business');
     }
-    expect(paths).toEqual(['/401', '/407', '/500', '/302']);
+    expect(paths).toEqual(['/401', '/403', '/407', '/500', '/302']);
   });
 
   it('authenticates only to the proxy and never copies credentials into public errors', async () => {
@@ -193,14 +193,30 @@ describe('HTTP failures and strict security', () => {
     expect(Object.getOwnPropertyNames(error as Error)).not.toContain('cause');
   });
 
-  it.each([403, 502])('classifies CONNECT %s and does not retry or fallback', async status => {
+  it.each([
+    [401, 'proxy-auth', false], [403, 'proxy-auth', false],
+    [407, 'proxy-auth', false], [502, 'proxy-connect', true],
+  ] as const)('classifies CONNECT %s and does not retry or fallback', async (status, categoryName, retryable) => {
     let calls = 0;
     const server = own(await origin((_request, response) => { calls++; response.end('direct would work'); }));
     const gateway = own(await proxy(server.port, { status }));
     const client = transport({ route: 'proxy', proxyUrl: gateway.url });
-    expect(await category(client.fetch(server.url, { method: 'POST', body: 'do not repeat' }))).toEqual({ category: 'proxy-connect', retryable: true });
+    expect(await category(client.fetch(server.url, { method: 'POST', body: 'do not repeat' }))).toEqual({ category: categoryName, retryable });
     expect(gateway.requests).toHaveLength(1);
     expect(calls).toBe(0);
+  });
+
+  it.each([401, 403])('does not make a later CONNECT %s rejection retryable after proxy success', async status => {
+    let calls = 0;
+    const server = own(await origin((_request, response) => { calls++; response.end('proxied'); }));
+    const options = { status: 200 };
+    const gateway = own(await proxy(server.port, options));
+    const client = transport({ route: 'proxy', proxyUrl: gateway.url });
+    expect(await (await client.fetch(server.url)).text()).toBe('proxied');
+    options.status = status;
+    expect(await category(client.fetch(`http://origin.test:${server.port}`))).toEqual({ category: 'proxy-auth', retryable: false });
+    expect(gateway.requests).toEqual([`127.0.0.1:${server.port}`, `origin.test:${server.port}`]);
+    expect(calls).toBe(1);
   });
 
   it('rejects untrusted origin and proxy certificates without making them retryable', async () => {

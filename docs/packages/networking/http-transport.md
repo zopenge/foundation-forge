@@ -37,7 +37,7 @@ connectTimeoutMs 是正整数 TCP/TLS 连接期限，默认 10 秒；CONNECT 响
 
 ## 请求与生命周期
 
-fetch 具有原生调用形状：Request/URL/string 与 RequestInit，返回原生流式 Response；支持 Request 参数覆盖、流式上传（duplex half）、取消、headers、status、url、clone 与正文读取。它是服务端 HTTP(S) 适配器，不实现浏览器 cookie、缓存或 CORS。任何要求 follow 的输入仍返回原重定向；origin 4xx/5xx（含 407）完整保留，CONNECT 代理 407 单独分类。所有请求均不自动重试、不跟随重定向、不切路线。
+fetch 具有原生调用形状：Request/URL/string 与 RequestInit，返回原生流式 Response；支持 Request 参数覆盖、流式上传（duplex half）、取消、headers、status、url、clone 与正文读取。它是服务端 HTTP(S) 适配器，不实现浏览器 cookie、缓存或 CORS。任何要求 follow 的输入仍返回原重定向；origin 4xx/5xx（含 401/403/407）完整保留，CONNECT 代理 401/403/407 统一归为不可重试的 proxy-auth 认证/授权拒绝。所有请求均不自动重试、不跟随重定向、不切路线。
 
 正文保留背压，不缓存整个响应。默认请求 identity；gzip/deflate/Brotli 响应流式解压，移除原编码与编码长度头。未知编码保留线字节；超过五层支持编码保守失败。消费方负责限制实际读取字节数。
 
