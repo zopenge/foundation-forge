@@ -61,6 +61,13 @@ it('rejects a file added after the first closure scan', async () => {
   await expect(captureArtifactFiles(options())).rejects.toMatchObject({ code: 'INVALID_SOURCE' });
 });
 
+it('rechecks previously empty subtrees after reading payload bytes', async () => {
+  await mkdir(resolve(root, 'empty', 'nested'), { recursive: true });
+  tracked.afterRead = () => writeFile(resolve(root, 'empty', 'nested', 'later'), 'new');
+  await expect(captureArtifactFiles(options())).rejects.toMatchObject({ code: 'INVALID_SOURCE' });
+  for (const handle of tracked.handles) await expect(handle.stat()).rejects.toMatchObject({ code: 'EBADF' });
+});
+
 it('rejects cancellation after a real read and closes handles', async () => {
   const controller = new AbortController();
   tracked.afterRead = async () => { controller.abort(); };

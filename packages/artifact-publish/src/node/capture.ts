@@ -21,7 +21,7 @@ async function capture(options: ArtifactFileCaptureOptions, budget: OperationBud
   if (metadata.bytes.byteLength > options.maxManifestBytes) throw new ArtifactPublicationError('BUDGET_EXCEEDED');
   const policies = new Map(metadata.manifest.files.map(file => [file.path, file]));
   const visits = { count: 0, max: options.maxEntries };
-  for (const source of options.sources) await verifySourceClosure(source, visits, budget);
+  for (const source of options.sources) await verifySourceClosure(source, visits, budget, options.pathCaseSensitivity);
   const records: ControlledFileCapture[] = [], files = new Map<string, Uint8Array>(), manifestFiles: ArtifactContentManifestFile[] = [];
   const physicalPaths = new Set<string>();
   let total = 0;
@@ -36,7 +36,7 @@ async function capture(options: ArtifactFileCaptureOptions, budget: OperationBud
     if (!policy) throw new ArtifactPublicationError('INVALID_PLAN');
     manifestFiles.push({ ...policy, byteLength: record.bytes.byteLength, sha256: integrity.sha256 });
   }
-  for (const source of options.sources) await verifySourceClosure(source, visits, budget);
+  for (const source of options.sources) await verifySourceClosure(source, visits, budget, options.pathCaseSensitivity);
   for (const record of records) await record.verify();
   const prepared = await createArtifactContentManifest({ schemaVersion: 1, files: manifestFiles });
   budget.assertActive();
