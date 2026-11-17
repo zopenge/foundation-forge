@@ -7,14 +7,50 @@ import { assertManagedPaths } from './managed-paths.js';
 import type { BudgetSampleTiming } from './managed-startup-timing.js';
 
 export interface BudgetObservation { readonly bytes: number; readonly freeBytes: number; readonly observedAt: number }
+interface ScanAttemptRecord {
+  readonly attempt: number;
+  readonly started: number;
+  ended?: number;
+  outcome: 'pending' | 'resolved' | 'rejected';
+  retried: boolean;
+  entriesVisited: number;
+  phase: ManagedUsageProgress['phase'];
+  failure?: Readonly<Record<string, string>>;
+}
+const scanFailureReasons = new Set(['IO_OBSERVATION', 'DIRECTORY_REPLACED', 'OBSERVATION_DEADLINE', 'OBSERVATION_FAILED',
+  'ROOT_REPLACED', 'LINK_REPLACED', 'ENTRY_LIMIT', 'EXTERNAL_LINK', 'LINK_TARGET_UNKNOWN', 'LINK_ANCESTOR_TYPE',
+  'LINK_RESOLUTION_LIMIT', 'ANCHOR_TYPE', 'FILE_TYPE', 'SIZE_OVERFLOW', 'VOLUME_SIZE', 'CHECKOUT_UNCONFIRMED']);
+const scanFailureReason = (value: unknown): string => typeof value === 'string' && scanFailureReasons.has(value) ? value : 'OTHER';
+function scanFailure(error: unknown): Readonly<Record<string, string>> {
+  const details = error instanceof ReleaseError ? error.details : {};
+  const failure: Record<string, string> = { reason: scanFailureReason(details.reason) };
+  if (details.ioCode !== undefined) failure.ioCode = typeof details.ioCode === 'string'
+    && ['ENOENT', 'ENOTDIR', 'ELOOP', 'EACCES', 'EPERM'].includes(details.ioCode) ? details.ioCode : 'OTHER';
+  if (typeof details.change === 'string' && ['identity', 'link', 'type', 'namespace'].includes(details.change)) failure.change = details.change;
+  if (typeof details.scope === 'string' && ['slot-root', 'checkout-root', 'checkout-metadata', 'checkout-entry', 'slot-entry'].includes(details.scope)) failure.scope = details.scope;
+  if (details.rescanBlockedBy !== undefined) failure.rescanBlockedBy = scanFailureReason(details.rescanBlockedBy);
+  return failure;
+}
 export async function observeBudget(paths: ManagedPaths, config: ManagedSourceConfig, scan = measureManagedUsageOnce): Promise<BudgetObservation> {
   const controller = new AbortController();
   const started = performance.now(), budgetMs = 30_000 + config.sampleIntervalMs;
   const progress: ManagedUsageProgress = { entriesVisited: 0, phase: 'path-guard' };
   let scanAttempts = 0;
+  const attempts: ScanAttemptRecord[] = [];
+  const snapshotAttempts = (now: number) => attempts.map(attempt => ({
+    attempt: attempt.attempt, startedOffsetMs: attempt.started - started,
+    ...(attempt.ended === undefined ? {} : { endedOffsetMs: attempt.ended - started }),
+    elapsedMs: (attempt.ended ?? now) - attempt.started, outcome: attempt.outcome, retried: attempt.retried,
+    entriesVisited: attempt.outcome === 'pending' ? progress.entriesVisited : attempt.entriesVisited,
+    phase: attempt.outcome === 'pending' ? progress.phase : attempt.phase,
+    ...(attempt.failure ? { failure: { ...attempt.failure } } : {}),
+  }));
+  let deadlineSnapshot: ReturnType<typeof snapshotAttempts> | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_accept, reject) => {
     timer = setTimeout(() => {
+      // 原截止边界先复制证据；同步abort监听和迟到settlement不能回改本次快照。
+      deadlineSnapshot = snapshotAttempts(performance.now());
       const error = new ReleaseError('BUDGET_UNKNOWN', { reason: 'OBSERVATION_DEADLINE', budgetMs,
         elapsedMs: Math.floor(performance.now() - started), observedAt: new Date().toISOString(),
         scanAttempts, entriesVisited: progress.entriesVisited, phase: progress.phase });
@@ -23,9 +59,20 @@ export async function observeBudget(paths: ManagedPaths, config: ManagedSourceCo
   });
   const observation = async () => {
     await assertManagedPaths(paths);
-    const value = await measureManagedUsage(paths, controller.signal, (paths, signal, progress) => {
+    const value = await measureManagedUsage(paths, controller.signal, async (paths, signal, progress) => {
+      const previous = attempts.at(-1);
+      // 只有原重扫流程确实开始下一轮，才记录前轮已重试；不重判错误或guard。
+      if (previous) previous.retried = true;
       scanAttempts++; if (progress) { progress.entriesVisited = 0; progress.phase = 'scan'; }
-      return scan(paths, signal, progress);
+      const attempt: ScanAttemptRecord = { attempt: scanAttempts, started: performance.now(), outcome: 'pending',
+        retried: false, entriesVisited: 0, phase: 'scan' };
+      attempts.push(attempt);
+      try { const value = await scan(paths, signal, progress); attempt.outcome = 'resolved'; return value; }
+      catch (error) { attempt.outcome = 'rejected'; attempt.failure = scanFailure(error); throw error; }
+      finally {
+        attempt.ended = performance.now();
+        if (progress) { attempt.entriesVisited = progress.entriesVisited; attempt.phase = progress.phase; }
+      }
     }, progress);
     return { ...value, observedAt: Date.now() };
   };
@@ -34,7 +81,8 @@ export async function observeBudget(paths: ManagedPaths, config: ManagedSourceCo
     const observed = error instanceof ReleaseError ? error : new ReleaseError('BUDGET_UNKNOWN', { reason: 'OBSERVATION_FAILED' });
     if (observed.code === 'BUDGET_UNKNOWN') throw new ReleaseError(observed.code, { budgetMs,
       elapsedMs: Math.floor(performance.now() - started), observedAt: new Date().toISOString(),
-      scanAttempts, entriesVisited: progress.entriesVisited, phase: progress.phase, ...observed.details });
+      scanAttempts, entriesVisited: progress.entriesVisited, phase: progress.phase, ...observed.details,
+      scanAttemptDiagnostics: deadlineSnapshot ?? snapshotAttempts(performance.now()) });
     throw observed;
   }
   finally { clearTimeout(timer); }
