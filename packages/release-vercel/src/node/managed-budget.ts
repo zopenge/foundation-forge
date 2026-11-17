@@ -5,9 +5,12 @@ import { ReleaseError } from './errors.js';
 import { measureManagedUsage, measureManagedUsageOnce, type ManagedUsageProgress } from './managed-io.js';
 import { assertManagedPaths } from './managed-paths.js';
 import type { BudgetSampleTiming } from './managed-startup-timing.js';
+import { ScanFailureWitness } from './managed-scan-witness.js';
 
 export interface BudgetObservation { readonly bytes: number; readonly freeBytes: number; readonly observedAt: number }
 interface ScanAttemptRecord {
+  readonly witness: ScanFailureWitness;
+  selectedError?: unknown;
   readonly attempt: number;
   readonly started: number;
   ended?: number;
@@ -37,14 +40,18 @@ export async function observeBudget(paths: ManagedPaths, config: ManagedSourceCo
   const progress: ManagedUsageProgress = { entriesVisited: 0, phase: 'path-guard' };
   let scanAttempts = 0;
   const attempts: ScanAttemptRecord[] = [];
-  const snapshotAttempts = (now: number) => attempts.map(attempt => ({
-    attempt: attempt.attempt, startedOffsetMs: attempt.started - started,
-    ...(attempt.ended === undefined ? {} : { endedOffsetMs: attempt.ended - started }),
-    elapsedMs: (attempt.ended ?? now) - attempt.started, outcome: attempt.outcome, retried: attempt.retried,
-    entriesVisited: attempt.outcome === 'pending' ? progress.entriesVisited : attempt.entriesVisited,
-    phase: attempt.outcome === 'pending' ? progress.phase : attempt.phase,
-    ...(attempt.failure ? { failure: { ...attempt.failure } } : {}),
-  }));
+  const snapshotAttempts = (now: number) => attempts.map(attempt => {
+    const failureWitness = attempt.witness.snapshot(attempt.selectedError, attempt.outcome === 'rejected');
+    return {
+      attempt: attempt.attempt, startedOffsetMs: attempt.started - started,
+      ...(attempt.ended === undefined ? {} : { endedOffsetMs: attempt.ended - started }),
+      elapsedMs: (attempt.ended ?? now) - attempt.started, outcome: attempt.outcome, retried: attempt.retried,
+      entriesVisited: attempt.outcome === 'pending' ? progress.entriesVisited : attempt.entriesVisited,
+      phase: attempt.outcome === 'pending' ? progress.phase : attempt.phase,
+      ...(attempt.failure ? { failure: { ...attempt.failure } } : {}),
+      ...(Object.keys(failureWitness).length ? { failureWitness } : {}),
+    };
+  });
   let deadlineSnapshot: ReturnType<typeof snapshotAttempts> | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_accept, reject) => {
@@ -64,11 +71,13 @@ export async function observeBudget(paths: ManagedPaths, config: ManagedSourceCo
       // 只有原重扫流程确实开始下一轮，才记录前轮已重试；不重判错误或guard。
       if (previous) previous.retried = true;
       scanAttempts++; if (progress) { progress.entriesVisited = 0; progress.phase = 'scan'; }
-      const attempt: ScanAttemptRecord = { attempt: scanAttempts, started: performance.now(), outcome: 'pending',
-        retried: false, entriesVisited: 0, phase: 'scan' };
+      const attemptStarted = performance.now();
+      const attempt: ScanAttemptRecord = { attempt: scanAttempts, started: attemptStarted, outcome: 'pending',
+        retried: false, entriesVisited: 0, phase: 'scan', witness: new ScanFailureWitness(attemptStarted) };
+      if (progress) progress.failureWitness = attempt.witness;
       attempts.push(attempt);
       try { const value = await scan(paths, signal, progress); attempt.outcome = 'resolved'; return value; }
-      catch (error) { attempt.outcome = 'rejected'; attempt.failure = scanFailure(error); throw error; }
+      catch (error) { attempt.outcome = 'rejected'; attempt.failure = scanFailure(error); attempt.selectedError = error; throw error; }
       finally {
         attempt.ended = performance.now();
         if (progress) { attempt.entriesVisited = progress.entriesVisited; attempt.phase = progress.phase; }
