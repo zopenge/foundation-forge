@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import type { FileIdentity, ManagedPaths, MetadataFile } from './managed-state-contracts.js';
 import { record, ReleaseError } from './errors.js';
+import type { ScanFailureWitness } from './managed-scan-witness.js';
 
 export const within = (root: string, path: string): boolean => {
   const value = relative(root, path); return value === '' || (!isAbsolute(value) && value !== '..' && !value.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`));
@@ -97,6 +98,7 @@ async function assertInternalLink(root: string, path: string, active: () => void
   }
 }
 export interface ManagedUsageProgress {
+  failureWitness?: ScanFailureWitness;
   entriesVisited: number;
   phase: 'path-guard' | 'scan' | 'root' | 'entry' | 'link' | 'directory-open' | 'directory-read' | 'anchor' | 'volume' | 'complete';
 }
@@ -141,12 +143,13 @@ export async function measureManagedUsageOnce(paths: ManagedPaths, signal?: Abor
   let bytes = 0, entries = 0, pendingEntries = 0;
   let availableBranches = 3, failed = false, failure: unknown, rescanBlockedBy: string | undefined;
   const phase = (value: ManagedUsageProgress['phase']) => { if (progress) { progress.phase = value; progress.entriesVisited = entries; } };
-  const fail = (error: unknown) => {
+  const fail = (error: unknown, path?: string, operation?: 'directory-validation') => {
     if (!canRescanUsage(error)) {
       const reason = error instanceof ReleaseError ? error.details.reason : undefined;
+      if (rescanBlockedBy === undefined) progress?.failureWitness?.block(error, paths, { path, operation });
       rescanBlockedBy ??= typeof reason === 'string' ? reason : 'IO_OBSERVATION';
     }
-    if (!failed) { failed = true; failure = error; } return failure;
+    if (!failed) { progress?.failureWitness?.first(error, paths, { path, operation }); failed = true; failure = error; } return failure;
   };
   const active = () => {
     if (failed) throw failure;
@@ -194,13 +197,13 @@ export async function measureManagedUsageOnce(paths: ManagedPaths, signal?: Abor
     } else if (stat.isFile()) bytes += Number(stat.size);
     else throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'FILE_TYPE' });
     if (!Number.isSafeInteger(bytes)) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'SIZE_OVERFLOW' });
-    } catch (error) { throw fail(error); }
+    } catch (error) { throw fail(error, path); }
     finally {
       await Promise.all(branches);
       // 可重试首错不能省略在途目录的末尾复核；已知链接或命名空间更换必须阻止重扫。
       if (directoryBefore && !directoryChecked && failed && !rescanBlockedBy && !signal?.aborted && canRescanUsage(failure)) {
         try { await assertDirectoryIdentity(paths, path, directoryBefore); }
-        catch (error) { fail(error); }
+        catch (error) { fail(error, path, 'directory-validation'); }
       }
     }
   };
@@ -226,7 +229,11 @@ export async function measureManagedUsageOnce(paths: ManagedPaths, signal?: Abor
   } catch (error) {
     const observed = error instanceof ReleaseError ? error : new ReleaseError('BUDGET_UNKNOWN', { reason: 'IO_OBSERVATION', ioCode: record(error).code,
       entry: typeof record(error).path === 'string' ? relative(paths.slotRoot, String(record(error).path)) : undefined });
-    if (rescanBlockedBy && canRescanUsage(observed)) throw new ReleaseError(observed.code, { ...observed.details, rescanBlockedBy });
+    if (rescanBlockedBy && canRescanUsage(observed)) {
+      const blocked = new ReleaseError(observed.code, { ...observed.details, rescanBlockedBy });
+      progress?.failureWitness?.selected(error, blocked, paths); throw blocked;
+    }
+    progress?.failureWitness?.selected(error, observed, paths);
     throw observed;
   }
 }

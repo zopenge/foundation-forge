@@ -150,6 +150,8 @@ Node 调用方可另传 `buildInfoHttp`，类型为 [`forge-http-transport`](../
 
 `BUDGET_UNKNOWN` 观察失败可附 `scanAttemptDiagnostics`，至多记录原三轮扫描的 `attempt`、同一观察起点下的 `startedOffsetMs`、已结束时的 `endedOffsetMs`、`elapsedMs`、`outcome`（`pending`、`resolved` 或 `rejected`）、`retried`、本轮 `entriesVisited` 和共享 `phase`；失败原因只取有限类别，不携带路径、身份、消息或内容。下一轮扫描确实开始才将前轮标为已重试。原截止在 abort 前复制快照，末轮未结束则没有结束偏移，迟到结算不改写证据；首轮尚未开始时数组为空。`resolved` 只说明扫描回调返回，checkout 复核和字节/空间准入仍可失败，共享阶段也不定位具体失败操作。该摘要不增加逐条目 I/O，不改变成功返回、其他错误码、原首错、重试决定、采样、期限或真实进程关闭语义。
 
+每轮可另附 `failureWitness`。`first` 记录原首错的有限 `reason`、可选 `ioCode`、`operation`、调用参数 `role`、`boundary` 和 `observedOffsetMs`；偏移起点是该轮原扫描回调已有的单调起点，需要观察级偏移时才加上本轮 `startedOffsetMs`。`failure-latch` 表示原首错锁存边界，早于随后的兄弟分支排空和目录末尾复核；绕过该锁存、只在扫描外层 catch 才观察到的错误标为 `scan-catch`，不伪造更早时间。它们都不是 OS 失败时刻，整轮耗时也不是发现首错前的耗时。正常内部缺失链接回退不产生首错见证。独立 `blocking` 以 `relation: first` 指向首错，或以 `relation: later` 记录首个后续重扫阻断错误，不覆盖原错误。只有已拒绝的扫描带 `selection`（`first`、`different`、`unwitnessed`），区分所传出错误与首错的关系；截止时仍 pending 可带已知首错和阻断见证，但不虚构最终选择。角色仅按已有参数和已知布局分为 `checkout-payload`、`checkout-metadata`、`managed-control`、`protected-root` 或 `unknown`，不归因写入者或链接最终目标；操作取原生 syscall 或明确验证类别，缺证据为 `unknown`。成功扫描不新增见证时钟，失败每轮最多读取两次；不新增文件查询、逐项计时或任意内容，原截止在 abort 前一并脱离复制，迟到错误不能回写。见证不证明命令已经放行或执行，也不构成超时根因结论。
+
 pnpm 安装过程中，受管根内的 symlink 或 Windows junction 可以暂时指向尚未创建的目标。观察器逐段核对已有祖先及根身份，链接解析最多 40 跳，缺失目标时统计链接自身，目标形成后通过普通目录遍历计数；外部目标、祖先逃逸、循环链接和根替换仍拒绝。已具备关闭证明的历史运行可带着这类内部链接通过正式 recover 入口恢复并复用槽。旧运行若未保存 OS 关闭见证，更新工具后仍不能凭 PID 消失解锁，应保留原状态和锁；本修复不伪造正常退出，也不提供清槽绕行。
 
 生命周期包装错误保留 Node 系统错误及底层公开契约已定义的 `causeCode`，后续持久化错误不能覆盖已记录首错，不记录原始异常消息、任意自定义错误码或环境。`PROCESS_LIFECYCLE_FAILED` 的历史记录若没有底层分类，不能仅凭后续测试通过就追认其根因。

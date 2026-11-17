@@ -55,11 +55,11 @@ it('records each settled attempt and witnesses retries only when the next scan s
   expect(error.details).toMatchObject({ reason: 'ENTRY_LIMIT', scanAttempts: 3, entriesVisited: 21 });
   expect(error.details.scanAttemptDiagnostics).toEqual([
     { attempt: 1, startedOffsetMs: 0, endedOffsetMs: 11, elapsedMs: 11, outcome: 'rejected', retried: true,
-      entriesVisited: 7, phase: 'entry', failure: { reason: 'IO_OBSERVATION', ioCode: 'ENOENT' } },
+      entriesVisited: 7, phase: 'entry', failure: { reason: 'IO_OBSERVATION', ioCode: 'ENOENT' }, failureWitness: { selection: 'unwitnessed' } },
     { attempt: 2, startedOffsetMs: 11, endedOffsetMs: 33, elapsedMs: 22, outcome: 'rejected', retried: true,
-      entriesVisited: 14, phase: 'entry', failure: { reason: 'DIRECTORY_REPLACED', change: 'identity', scope: 'checkout-entry' } },
+      entriesVisited: 14, phase: 'entry', failure: { reason: 'DIRECTORY_REPLACED', change: 'identity', scope: 'checkout-entry' }, failureWitness: { selection: 'unwitnessed' } },
     { attempt: 3, startedOffsetMs: 33, endedOffsetMs: 66, elapsedMs: 33, outcome: 'rejected', retried: false,
-      entriesVisited: 21, phase: 'entry', failure: { reason: 'ENTRY_LIMIT' } },
+      entriesVisited: 21, phase: 'entry', failure: { reason: 'ENTRY_LIMIT' }, failureWitness: { selection: 'unwitnessed' } },
   ]);
 });
 
