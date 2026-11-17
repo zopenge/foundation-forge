@@ -75,6 +75,22 @@ it('bounds concurrent fresh metadata reads inside a single nested checkout', tra
   expect(active).toBe(0);
 }));
 
+it('uses the existing metadata branches across independent narrow directory subtrees', track(async () => {
+  const fixture = await managedBudgetFixture(); fixtures.push(fixture);
+  const parent = resolve(fixture.paths.checkoutRoot, 'node_modules');
+  for (const name of ['pkg-a', 'pkg-b', 'pkg-c']) {
+    await mkdir(resolve(parent, name, 'lib'), { recursive: true });
+    await writeFile(resolve(parent, name, 'lib/entry'), 'owned');
+  }
+  checkpoint.prefix = resolve(parent, 'pkg-');
+  let active = 0, peak = 0;
+  checkpoint.start = () => { active++; peak = Math.max(peak, active); };
+  checkpoint.pause = async () => { active--; };
+  const value = await measureManagedUsageOnce(fixture.paths);
+  expect(value.bytes).toBe((await lstat(fixture.paths.lockPath)).size + 15);
+  expect(peak).toBeGreaterThan(1); expect(peak).toBeLessThanOrEqual(4); expect(active).toBe(0);
+}));
+
 it('drains in-flight metadata reads after cancellation before settling the scan', track(async context => {
   const fixture = await prepare(), held = deferred(), parallel = deferred(), controller = new AbortController();
   let active = 0, started = 0, settled = false;

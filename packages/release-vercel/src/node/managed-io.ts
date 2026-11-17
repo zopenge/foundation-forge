@@ -121,7 +121,7 @@ async function assertDirectoryIdentity(paths: ManagedPaths, path: string, before
   }
 }
 export async function readManagedDirectoryNames(path: string, maxEntries: number, signal?: AbortSignal,
-  progress?: ManagedUsageProgress, inspectEntry?: (name: string, directory: boolean) => void): Promise<string[]> {
+  progress?: ManagedUsageProgress, inspectEntry?: () => void): Promise<string[]> {
   if (!Number.isSafeInteger(maxEntries) || maxEntries < 0 || maxEntries > entryLimit) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'ENTRY_LIMIT' });
   const active = () => { if (signal?.aborted) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'OBSERVATION_DEADLINE' }); };
   const directory = await opendir(path);
@@ -132,7 +132,7 @@ export async function readManagedDirectoryNames(path: string, maxEntries: number
   for await (const entry of directory) {
     active();
     if (children.length >= maxEntries) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'ENTRY_LIMIT' });
-    inspectEntry?.(entry.name, entry.isDirectory());
+    inspectEntry?.();
     children.push(entry.name);
   }
   return children;
@@ -159,6 +159,7 @@ export async function measureManagedUsageOnce(paths: ManagedPaths, signal?: Abor
   };
   const visit = async (path: string): Promise<void> => {
     const branches = new Set<Promise<void>>();
+    let directoryBefore: { readonly dev: bigint; readonly ino: bigint } | undefined, directoryChecked = false;
     try {
     active();
     if (++entries > entryLimit) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'ENTRY_LIMIT' });
@@ -170,17 +171,15 @@ export async function measureManagedUsageOnce(paths: ManagedPaths, signal?: Abor
       if (!sameIdentity(stat, await lstat(path, { bigint: true }))) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'LINK_REPLACED' });
       bytes += Number(stat.size);
     } else if (stat.isDirectory()) {
+      directoryBefore = stat;
       phase('directory-open');
       // 已访问与所有祖先尚待处理的名称共用原条目上限，不能为关闭句柄引入无界快照。
-      const directories = new Set<string>();
-      const children = await readManagedDirectoryNames(path, entryLimit - entries - pendingEntries, signal, progress, (name, directory) => {
-        reserveEntry(); if (directory) directories.add(name);
-      });
+      const children = await readManagedDirectoryNames(path, entryLimit - entries - pendingEntries, signal, progress, reserveEntry);
       for (const [index, child] of children.entries()) {
         active(); pendingEntries--;
         // 不等待分支许可；没有空位时沿当前分支前进，避免递归持有许可后互相等待。
-        // 目录提示只用于调度；visit 仍重新 lstat，目录身份及链接检查不能复用枚举结果。
-        if (directories.has(child) || availableBranches === 0 || index === children.length - 1) await visit(resolve(path, child));
+        // 文件和目录共用原有分支额度；每项仍重新读取元数据，不复用枚举类型。
+        if (availableBranches === 0 || index === children.length - 1) await visit(resolve(path, child));
         else {
           availableBranches--;
           const branch: Promise<void> = visit(resolve(path, child)).catch(error => { fail(error); })
@@ -191,12 +190,19 @@ export async function measureManagedUsageOnce(paths: ManagedPaths, signal?: Abor
       }
       await Promise.all(branches);
       // 释放搜索句柄后重新核对目录；不返回已变化子树的部分计数。
-      active(); await assertDirectoryIdentity(paths, path, stat);
+      active(); await assertDirectoryIdentity(paths, path, stat); directoryChecked = true;
     } else if (stat.isFile()) bytes += Number(stat.size);
     else throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'FILE_TYPE' });
     if (!Number.isSafeInteger(bytes)) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'SIZE_OVERFLOW' });
     } catch (error) { throw fail(error); }
-    finally { await Promise.all(branches); }
+    finally {
+      await Promise.all(branches);
+      // 可重试首错不能省略在途目录的末尾复核；已知链接或命名空间更换必须阻止重扫。
+      if (directoryBefore && !directoryChecked && failed && !rescanBlockedBy && !signal?.aborted && canRescanUsage(failure)) {
+        try { await assertDirectoryIdentity(paths, path, directoryBefore); }
+        catch (error) { fail(error); }
+      }
+    }
   };
   try {
     const assertRoot = async () => {
