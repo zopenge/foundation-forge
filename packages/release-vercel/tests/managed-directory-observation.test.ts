@@ -152,6 +152,14 @@ it('keeps repeated regular subtree replacement unknown after the original two re
     entry: expect.stringMatching(/checkout[/\\]node_modules[/\\]pkg/u),
     before: { dev: expect.any(String), ino: expect.any(String) }, after: { dev: expect.any(String), ino: expect.any(String) },
     scanAttempts: 3, entriesVisited: expect.any(Number), phase: expect.any(String),
+    scanAttemptDiagnostics: [
+      expect.objectContaining({ attempt: 1, outcome: 'rejected', retried: true,
+        failure: { reason: 'DIRECTORY_REPLACED', change: 'identity', scope: 'checkout-entry' } }),
+      expect.objectContaining({ attempt: 2, outcome: 'rejected', retried: true,
+        failure: { reason: 'DIRECTORY_REPLACED', change: 'identity', scope: 'checkout-entry' } }),
+      expect.objectContaining({ attempt: 3, outcome: 'rejected', retried: false,
+        failure: { reason: 'DIRECTORY_REPLACED', change: 'identity', scope: 'checkout-entry' } }),
+    ],
     budgetMs: 30_250, elapsedMs: expect.any(Number), observedAt: expect.any(String),
   } });
   expect(attempts).toBe(3);
@@ -254,7 +262,7 @@ it('rejects a replaced source root even when the original owned slot was moved b
   })).rejects.toMatchObject({ code: 'BUDGET_UNKNOWN', details: { reason: 'ROOT_REPLACED' } });
 });
 
-it('retains the first directory failure but forbids a rescan after a sibling link replacement was observed', async () => {
+it.each(['scan', 'budget'] as const)('retains the first directory failure but forbids a rescan after a sibling link replacement was observed (%s)', async mode => {
   const fixture = await managedBudgetFixture(); fixtures.push(fixture);
   const parent = fixture.paths.checkoutRoot, link = resolve(parent, 'a-link'), directory = resolve(parent, 'z-directory');
   const marker = resolve(directory, 'entry'), target = resolve(fixture.paths.slotRoot, 'target');
@@ -274,12 +282,18 @@ it('retains the first directory failure but forbids a rescan after a sibling lin
   };
   checkpoint.canonicalPath = directory;
   checkpoint.canonicalPause = async () => { checkpoint.canonicalPath = ''; release(); };
-  const pending = measureManagedUsage(fixture.paths, undefined, async (...args) => {
+  const scan = async (...args: Parameters<typeof measureManagedUsageOnce>) => {
     attempts++; return measureManagedUsageOnce(...args);
-  }).then(value => ({ value }), (error: unknown) => ({ error }));
+  };
+  const pending = (mode === 'scan' ? measureManagedUsage(fixture.paths, undefined, scan)
+    : observeBudget(fixture.paths, fixture.limits, scan)).then(value => ({ value }), (error: unknown) => ({ error }));
   try {
     expect(await pending).toMatchObject({ error: { code: 'BUDGET_UNKNOWN', details: {
       reason: 'DIRECTORY_REPLACED', change: 'identity', rescanBlockedBy: 'LINK_REPLACED',
+    } } });
+    if (mode === 'budget') expect(await pending).toMatchObject({ error: { details: {
+      scanAttemptDiagnostics: [expect.objectContaining({ attempt: 1, outcome: 'rejected', retried: false,
+        failure: { reason: 'DIRECTORY_REPLACED', change: 'identity', scope: 'checkout-entry', rescanBlockedBy: 'LINK_REPLACED' } })],
     } } });
     expect(attempts).toBe(1);
   } finally { release(); await pending; }
