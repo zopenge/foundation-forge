@@ -1,5 +1,11 @@
 # @openge/forge-release-vercel
 
+## 0.10.1
+
+### Patch Changes
+
+- 498337e: 为受管预算目录替换增加有界相对路径、变化类型、作用域及前后文件身份诊断。仅普通 checkout 子目录的纯身份变化可在原重试次数和同一期限内丢弃整扫后重新观察，持续变化仍保持 UNKNOWN；槽根、checkout 根、Git 元数据、链接及规范路径变化继续拒绝，保留原始字节、条目预算和关闭门禁。
+
 ## 0.10.0
 
 ### Minor Changes
