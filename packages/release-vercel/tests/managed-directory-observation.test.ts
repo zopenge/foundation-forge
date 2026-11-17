@@ -1,14 +1,27 @@
 import { lstat, mkdir, readFile, rename, symlink, writeFile } from 'node:fs/promises';
+import type { Dirent } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { measureManagedUsage, measureManagedUsageOnce, readManagedDirectoryNames } from '../src/node/managed-io.js';
+import { observeBudget } from '../src/node/managed-budget.js';
 import { managedBudgetFixture } from './helpers/managed-budget-fixture.js';
 
-const checkpoint = vi.hoisted(() => ({ path: '', expandDirectory: '', pause: async () => {} }));
+const checkpoint = vi.hoisted(() => {
+  const afterStat: (path: string) => Promise<void> = async () => {};
+  return { path: '', expandDirectory: '', orderedDirectory: '', canonicalPath: '', pause: async () => {}, canonicalPause: async () => {}, afterStat };
+});
 vi.mock('node:fs/promises', async importOriginal => {
   const fs = await importOriginal<typeof import('node:fs/promises')>();
   return { ...fs, opendir: async (...args: Parameters<typeof fs.opendir>) => {
     const directory = await fs.opendir(...args);
+    if (args[0] === checkpoint.orderedDirectory) {
+      const iterate = directory[Symbol.asyncIterator].bind(directory);
+      directory[Symbol.asyncIterator] = async function* () {
+        const entries: Dirent[] = [];
+        for await (const entry of { [Symbol.asyncIterator]: iterate }) entries.push(entry);
+        for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) yield entry;
+      };
+    }
     if (args[0] === checkpoint.expandDirectory) {
       const iterate = directory[Symbol.asyncIterator].bind(directory);
       directory[Symbol.asyncIterator] = async function* () {
@@ -26,6 +39,11 @@ vi.mock('node:fs/promises', async importOriginal => {
   }, lstat: async (...args: Parameters<typeof fs.lstat>) => {
     const value = await fs.lstat(...args);
     if (args[0] === checkpoint.path) await checkpoint.pause();
+    await checkpoint.afterStat(String(args[0]));
+    return value;
+  }, realpath: async (...args: Parameters<typeof fs.realpath>) => {
+    const value = await fs.realpath(...args);
+    if (args[0] === checkpoint.canonicalPath) await checkpoint.canonicalPause();
     return value;
   } };
 });
@@ -33,6 +51,7 @@ vi.mock('node:fs/promises', async importOriginal => {
 const fixtures: Awaited<ReturnType<typeof managedBudgetFixture>>[] = [];
 afterEach(async () => {
   checkpoint.path = ''; checkpoint.expandDirectory = ''; checkpoint.pause = async () => {};
+  checkpoint.orderedDirectory = ''; checkpoint.canonicalPath = ''; checkpoint.canonicalPause = async () => {}; checkpoint.afterStat = async () => {};
   for (const fixture of fixtures.splice(0)) {
     await fixture.lock.release(); await fixture.dispose();
   }
@@ -76,6 +95,174 @@ it('bounds directory names by the remaining shared entry budget and closes on ov
   expect(await readFile(resolve(destination, 'c'), 'utf8')).toBe('c');
   expect((await readManagedDirectoryNames(destination, 3)).sort()).toEqual(['a', 'b', 'c']);
   await expect(readManagedDirectoryNames(destination, Infinity)).rejects.toMatchObject({ code: 'BUDGET_UNKNOWN', details: { reason: 'ENTRY_LIMIT' } });
+});
+
+it('discards a replaced regular checkout subtree and counts only a fresh whole scan', async () => {
+  const fixture = await managedBudgetFixture(); fixtures.push(fixture);
+  const source = resolve(fixture.paths.checkoutRoot, 'node_modules/pkg'), marker = resolve(source, 'entry');
+  await mkdir(source, { recursive: true }); await writeFile(marker, 'old');
+  const lockBytes = (await lstat(fixture.paths.lockPath)).size;
+  checkpoint.path = marker;
+  checkpoint.pause = async () => {
+    checkpoint.path = '';
+    await rename(source, resolve(fixture.root, 'old-package'));
+    await mkdir(source); await writeFile(marker, 'fresh-owned-data');
+  };
+  let attempts = 0;
+  const value = await measureManagedUsage(fixture.paths, undefined, async (...args) => {
+    attempts++; return measureManagedUsageOnce(...args);
+  });
+  expect(value.bytes).toBe(lockBytes + 16); expect(attempts).toBe(2);
+});
+
+it('keeps repeated regular subtree replacement unknown after the original two retries', async () => {
+  const fixture = await managedBudgetFixture(); fixtures.push(fixture);
+  const source = resolve(fixture.paths.checkoutRoot, 'node_modules/pkg'), marker = resolve(source, 'entry');
+  await mkdir(source, { recursive: true }); await writeFile(marker, 'old');
+  let attempts = 0;
+  checkpoint.path = marker;
+  checkpoint.pause = async () => {
+    await rename(source, resolve(fixture.root, `old-${String(attempts)}`));
+    await mkdir(source); await writeFile(marker, 'replacement');
+  };
+  await expect(observeBudget(fixture.paths, fixture.limits, async (...args) => {
+    attempts++; return measureManagedUsageOnce(...args);
+  })).rejects.toMatchObject({ code: 'BUDGET_UNKNOWN', details: {
+    reason: 'DIRECTORY_REPLACED', change: 'identity', scope: 'checkout-entry',
+    entry: expect.stringMatching(/checkout[/\\]node_modules[/\\]pkg/u),
+    before: { dev: expect.any(String), ino: expect.any(String) }, after: { dev: expect.any(String), ino: expect.any(String) },
+    scanAttempts: 3, entriesVisited: expect.any(Number), phase: expect.any(String),
+    budgetMs: 30_250, elapsedMs: expect.any(Number), observedAt: expect.any(String),
+  } });
+  expect(attempts).toBe(3);
+});
+
+it.each(['checkout-root', 'checkout-metadata', 'slot-entry'])('does not retry replacement of a protected %s directory', async scope => {
+  const fixture = await managedBudgetFixture(); fixtures.push(fixture);
+  const source = scope === 'checkout-root' ? fixture.paths.checkoutRoot : scope === 'checkout-metadata'
+    ? resolve(fixture.paths.checkoutRoot, '.git/objects') : resolve(fixture.paths.slotRoot, 'metadata');
+  const marker = resolve(source, 'entry');
+  await mkdir(source, { recursive: true }); await writeFile(marker, 'old');
+  checkpoint.path = marker;
+  checkpoint.pause = async () => {
+    checkpoint.path = '';
+    await rename(source, resolve(fixture.root, 'old-directory'));
+    await mkdir(source); await writeFile(marker, 'replacement');
+  };
+  let attempts = 0;
+  await expect(measureManagedUsage(fixture.paths, undefined, async (...args) => {
+    attempts++; return measureManagedUsageOnce(...args);
+  })).rejects.toMatchObject({ code: 'BUDGET_UNKNOWN', details: { reason: 'DIRECTORY_REPLACED', change: 'identity', scope } });
+  expect(attempts).toBe(1);
+});
+
+it('does not rebind a checkout root replaced between discarded scans', async () => {
+  const fixture = await managedBudgetFixture(); fixtures.push(fixture);
+  const source = resolve(fixture.paths.checkoutRoot, 'pkg'), marker = resolve(source, 'entry');
+  await mkdir(source, { recursive: true }); await writeFile(marker, 'old');
+  checkpoint.path = marker;
+  checkpoint.pause = async () => {
+    checkpoint.path = ''; await rename(source, resolve(fixture.root, 'old-package'));
+    await mkdir(source); await writeFile(marker, 'replacement');
+  };
+  let attempts = 0;
+  await expect(measureManagedUsage(fixture.paths, undefined, async (...args) => {
+    attempts++;
+    try { return await measureManagedUsageOnce(...args); }
+    catch (error) {
+      await rename(fixture.paths.checkoutRoot, resolve(fixture.root, 'old-checkout'));
+      await mkdir(fixture.paths.checkoutRoot); throw error;
+    }
+  })).rejects.toMatchObject({ code: 'BUDGET_UNKNOWN', details: { reason: 'DIRECTORY_REPLACED', scope: 'checkout-root' } });
+  expect(attempts).toBe(1);
+});
+
+it('keeps cancellation visible while the final checkout identity guard is pending', async () => {
+  const fixture = await managedBudgetFixture(); fixtures.push(fixture);
+  await mkdir(fixture.paths.checkoutRoot);
+  const controller = new AbortController();
+  await expect(measureManagedUsage(fixture.paths, controller.signal, async (...args) => {
+    const value = await measureManagedUsageOnce(...args);
+    checkpoint.path = fixture.paths.checkoutRoot; checkpoint.pause = async () => { controller.abort(); };
+    return value;
+  })).rejects.toMatchObject({ code: 'BUDGET_UNKNOWN', details: { reason: 'OBSERVATION_DEADLINE' } });
+});
+
+it.each(['link', 'namespace', 'type'])('does not retry an eligible subtree with a changed %s', async change => {
+  const fixture = await managedBudgetFixture(); fixtures.push(fixture);
+  const parent = resolve(fixture.paths.checkoutRoot, 'node_modules'), source = resolve(parent, 'pkg'), marker = resolve(source, 'entry');
+  const target = resolve(fixture.paths.slotRoot, 'internal-target');
+  await mkdir(source, { recursive: true }); await writeFile(marker, 'old');
+  await mkdir(resolve(target, 'pkg'), { recursive: true }); await writeFile(resolve(target, 'pkg/entry'), 'replacement');
+  checkpoint.path = marker;
+  checkpoint.pause = async () => {
+    checkpoint.path = '';
+    await rename(change === 'namespace' ? parent : source, resolve(fixture.root, 'old-tree'));
+    if (change === 'type') await writeFile(source, 'file in place of directory');
+    else await symlink(change === 'link' ? fixture.root : target, change === 'link' ? source : parent, 'junction');
+  };
+  let attempts = 0;
+  await expect(measureManagedUsage(fixture.paths, undefined, async (...args) => {
+    attempts++; return measureManagedUsageOnce(...args);
+  })).rejects.toMatchObject({ code: 'BUDGET_UNKNOWN', details: { reason: 'DIRECTORY_REPLACED', change, scope: 'checkout-entry' } });
+  expect(attempts).toBe(1);
+});
+
+it('does not retry replacement of the owned slot root', async () => {
+  const fixture = await managedBudgetFixture(); fixtures.push(fixture);
+  const moved = resolve(fixture.root, 'original-slot');
+  let attempts = 0;
+  try {
+    await expect(measureManagedUsage(fixture.paths, undefined, async (...args) => {
+      attempts++; await rename(fixture.paths.slotRoot, moved); await mkdir(fixture.paths.slotRoot);
+      return measureManagedUsageOnce(...args);
+    })).rejects.toMatchObject({ code: 'BUDGET_UNKNOWN', details: { reason: 'ROOT_REPLACED' } });
+    expect(attempts).toBe(1);
+  } finally {
+    await rename(fixture.paths.slotRoot, resolve(fixture.root, 'replacement-slot'));
+    await rename(moved, fixture.paths.slotRoot);
+  }
+});
+
+it('rejects a replaced source root even when the original owned slot was moved back', async () => {
+  const fixture = await managedBudgetFixture(); fixtures.push(fixture);
+  const moved = resolve(fixture.root, 'original-source');
+  await expect(measureManagedUsage(fixture.paths, undefined, async (...args) => {
+    await rename(fixture.paths.sourceRoot, moved); await mkdir(fixture.paths.sourceRoot);
+    await rename(resolve(moved, 'state'), resolve(fixture.paths.sourceRoot, 'state'));
+    return measureManagedUsageOnce(...args);
+  })).rejects.toMatchObject({ code: 'BUDGET_UNKNOWN', details: { reason: 'ROOT_REPLACED' } });
+});
+
+it('retains the first directory failure but forbids a rescan after a sibling link replacement was observed', async () => {
+  const fixture = await managedBudgetFixture(); fixtures.push(fixture);
+  const parent = fixture.paths.checkoutRoot, link = resolve(parent, 'a-link'), directory = resolve(parent, 'z-directory');
+  const marker = resolve(directory, 'entry'), target = resolve(fixture.paths.slotRoot, 'target');
+  await mkdir(directory, { recursive: true }); await mkdir(target);
+  await symlink(target, link, 'junction'); await writeFile(marker, 'old');
+  let enter = () => {}, release = () => {}, attempts = 0, firstLinkRead = true;
+  const entered = new Promise<void>(accept => { enter = accept; }), held = new Promise<void>(accept => { release = accept; });
+  checkpoint.orderedDirectory = parent;
+  checkpoint.afterStat = async path => {
+    if (path === link && firstLinkRead) { firstLinkRead = false; enter(); await held; }
+  };
+  checkpoint.path = marker;
+  checkpoint.pause = async () => {
+    checkpoint.path = ''; await entered;
+    await rename(link, resolve(fixture.root, 'original-link')); await symlink(target, link, 'junction');
+    await rename(directory, resolve(fixture.root, 'original-directory')); await mkdir(directory); await writeFile(marker, 'replacement');
+  };
+  checkpoint.canonicalPath = directory;
+  checkpoint.canonicalPause = async () => { checkpoint.canonicalPath = ''; release(); };
+  const pending = measureManagedUsage(fixture.paths, undefined, async (...args) => {
+    attempts++; return measureManagedUsageOnce(...args);
+  }).then(value => ({ value }), (error: unknown) => ({ error }));
+  try {
+    expect(await pending).toMatchObject({ error: { code: 'BUDGET_UNKNOWN', details: {
+      reason: 'DIRECTORY_REPLACED', change: 'identity', rescanBlockedBy: 'LINK_REPLACED',
+    } } });
+    expect(attempts).toBe(1);
+  } finally { release(); await pending; }
 });
 
 it('rejects an observed ancestor replaced with an external junction while child metadata is pending', async () => {

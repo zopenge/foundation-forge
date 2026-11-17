@@ -30,7 +30,13 @@ export async function observeBudget(paths: ManagedPaths, config: ManagedSourceCo
     return { ...value, observedAt: Date.now() };
   };
   try { return await Promise.race([observation(), deadline]); }
-  catch (error) { if (error instanceof ReleaseError) throw error; throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'OBSERVATION_FAILED' }); }
+  catch (error) {
+    const observed = error instanceof ReleaseError ? error : new ReleaseError('BUDGET_UNKNOWN', { reason: 'OBSERVATION_FAILED' });
+    if (observed.code === 'BUDGET_UNKNOWN') throw new ReleaseError(observed.code, { budgetMs,
+      elapsedMs: Math.floor(performance.now() - started), observedAt: new Date().toISOString(),
+      scanAttempts, entriesVisited: progress.entriesVisited, phase: progress.phase, ...observed.details });
+    throw observed;
+  }
   finally { clearTimeout(timer); }
 }
 export class BudgetMonitor {
