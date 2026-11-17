@@ -101,6 +101,25 @@ export interface ManagedUsageProgress {
   phase: 'path-guard' | 'scan' | 'root' | 'entry' | 'link' | 'directory-open' | 'directory-read' | 'anchor' | 'volume' | 'complete';
 }
 const entryLimit = 500_000;
+const canRescanUsage = (error: unknown): boolean => error instanceof ReleaseError
+  ? error.code === 'BUDGET_UNKNOWN' && error.details.rescanBlockedBy === undefined && (
+    error.details.reason === 'IO_OBSERVATION' && error.details.ioCode === 'ENOENT'
+    || error.details.reason === 'DIRECTORY_REPLACED' && error.details.change === 'identity' && error.details.scope === 'checkout-entry')
+  : record(error).code === 'ENOENT';
+const directoryScope = (paths: ManagedPaths, path: string) => path === paths.slotRoot ? 'slot-root'
+  : path === paths.checkoutRoot ? 'checkout-root' : within(resolve(paths.checkoutRoot, '.git'), path) ? 'checkout-metadata'
+    : within(paths.checkoutRoot, path) ? 'checkout-entry' : 'slot-entry';
+async function assertDirectoryIdentity(paths: ManagedPaths, path: string, before: { readonly dev: bigint; readonly ino: bigint }): Promise<void> {
+  const after = await lstat(path, { bigint: true });
+  const change = after.isSymbolicLink() ? 'link' : !after.isDirectory() ? 'type' : await realpath(path) !== path ? 'namespace'
+    : !sameIdentity(before, after) ? 'identity' : undefined;
+  if (change) {
+    const entry = relative(paths.slotRoot, path) || '.', bounded = Array.from(entry).slice(0, 512).join('');
+    throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'DIRECTORY_REPLACED', change, scope: directoryScope(paths, path),
+      entry: bounded, entryTruncated: bounded !== entry,
+      before: { dev: before.dev.toString(), ino: before.ino.toString() }, after: { dev: after.dev.toString(), ino: after.ino.toString() } });
+  }
+}
 export async function readManagedDirectoryNames(path: string, maxEntries: number, signal?: AbortSignal,
   progress?: ManagedUsageProgress, inspectEntry?: (name: string, directory: boolean) => void): Promise<string[]> {
   if (!Number.isSafeInteger(maxEntries) || maxEntries < 0 || maxEntries > entryLimit) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'ENTRY_LIMIT' });
@@ -120,9 +139,15 @@ export async function readManagedDirectoryNames(path: string, maxEntries: number
 }
 export async function measureManagedUsageOnce(paths: ManagedPaths, signal?: AbortSignal, progress?: ManagedUsageProgress): Promise<{ bytes: number; freeBytes: number }> {
   let bytes = 0, entries = 0, pendingEntries = 0;
-  let availableBranches = 3, failed = false, failure: unknown;
+  let availableBranches = 3, failed = false, failure: unknown, rescanBlockedBy: string | undefined;
   const phase = (value: ManagedUsageProgress['phase']) => { if (progress) { progress.phase = value; progress.entriesVisited = entries; } };
-  const fail = (error: unknown) => { if (!failed) { failed = true; failure = error; } return failure; };
+  const fail = (error: unknown) => {
+    if (!canRescanUsage(error)) {
+      const reason = error instanceof ReleaseError ? error.details.reason : undefined;
+      rescanBlockedBy ??= typeof reason === 'string' ? reason : 'IO_OBSERVATION';
+    }
+    if (!failed) { failed = true; failure = error; } return failure;
+  };
   const active = () => {
     if (failed) throw failure;
     if (signal?.aborted) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'OBSERVATION_DEADLINE' });
@@ -165,10 +190,8 @@ export async function measureManagedUsageOnce(paths: ManagedPaths, signal?: Abor
         phase('directory-read');
       }
       await Promise.all(branches);
-      // 释放搜索句柄后安装器可正常 rename；目录消失须整扫重试，身份或链接替换则拒绝本次观察。
-      active(); const after = await lstat(path, { bigint: true });
-      if (!after.isDirectory() || after.isSymbolicLink() || !sameIdentity(stat, after) || await realpath(path) !== path)
-        throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'DIRECTORY_REPLACED' });
+      // 释放搜索句柄后重新核对目录；不返回已变化子树的部分计数。
+      active(); await assertDirectoryIdentity(paths, path, stat);
     } else if (stat.isFile()) bytes += Number(stat.size);
     else throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'FILE_TYPE' });
     if (!Number.isSafeInteger(bytes)) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'SIZE_OVERFLOW' });
@@ -177,7 +200,8 @@ export async function measureManagedUsageOnce(paths: ManagedPaths, signal?: Abor
   };
   try {
     const assertRoot = async () => {
-      if (!sameIdentity(await fileIdentity(paths.slotRoot), paths.slotIdentity) || await realpath(paths.slotRoot) !== paths.slotRoot) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'ROOT_REPLACED' });
+      if (!sameIdentity(await fileIdentity(paths.sourceRoot), paths.sourceIdentity) || await realpath(paths.sourceRoot) !== paths.sourceRoot
+        || !sameIdentity(await fileIdentity(paths.slotRoot), paths.slotIdentity) || await realpath(paths.slotRoot) !== paths.slotRoot) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'ROOT_REPLACED' });
     };
     phase('root'); await assertRoot();
     await visit(paths.slotRoot);
@@ -193,15 +217,36 @@ export async function measureManagedUsageOnce(paths: ManagedPaths, signal?: Abor
     const available = volume.bavail * volume.bsize;
     if (available < 0n || available > BigInt(Number.MAX_SAFE_INTEGER)) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'VOLUME_SIZE' });
     phase('complete'); return { bytes, freeBytes: Number(available) };
-  } catch (error) { if (error instanceof ReleaseError) throw error; throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'IO_OBSERVATION', ioCode: record(error).code,
-    entry: typeof record(error).path === 'string' ? relative(paths.slotRoot, String(record(error).path)) : undefined }); }
+  } catch (error) {
+    const observed = error instanceof ReleaseError ? error : new ReleaseError('BUDGET_UNKNOWN', { reason: 'IO_OBSERVATION', ioCode: record(error).code,
+      entry: typeof record(error).path === 'string' ? relative(paths.slotRoot, String(record(error).path)) : undefined });
+    if (rescanBlockedBy && canRescanUsage(observed)) throw new ReleaseError(observed.code, { ...observed.details, rescanBlockedBy });
+    throw observed;
+  }
 }
 export async function measureManagedUsage(paths: ManagedPaths, signal?: AbortSignal, scan = measureManagedUsageOnce, progress?: ManagedUsageProgress): Promise<{ bytes: number; freeBytes: number }> {
-  for (let attempt = 0; ; attempt++) {
-    try { return await scan(paths, signal, progress); }
+  const active = () => { if (signal?.aborted) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'OBSERVATION_DEADLINE' }); };
+  active();
+  const checkout = await lstat(paths.checkoutRoot, { bigint: true }).catch((error: unknown) => {
+    if (record(error).code === 'ENOENT') return undefined;
+    throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'IO_OBSERVATION', ioCode: record(error).code, entry: 'checkout' });
+  });
+  const assertCheckout = async () => {
+    active();
+    if (!checkout) return;
+    try { await assertDirectoryIdentity(paths, paths.checkoutRoot, checkout); active(); }
     catch (error) {
-      // 正常 rename 可令已枚举条目消失；丢弃整次扫描，不能累计部分清单。
-      if (attempt >= 2 || !(error instanceof ReleaseError) || error.details.reason !== 'IO_OBSERVATION' || error.details.ioCode !== 'ENOENT') throw error;
+      if (error instanceof ReleaseError) throw error;
+      throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'CHECKOUT_UNCONFIRMED', ioCode: record(error).code, entry: 'checkout' });
+    }
+  };
+  for (let attempt = 0; ; attempt++) {
+    try { const value = await scan(paths, signal, progress); await assertCheckout(); return value; }
+    catch (error) {
+      // 普通子树变化只能丢弃整扫；根、链接与命名空间变化不能借重扫重新绑定。
+      if (attempt >= 2 || !(error instanceof ReleaseError) || !canRescanUsage(error)
+        || error.details.reason === 'DIRECTORY_REPLACED' && !checkout) throw error;
+      await assertCheckout();
     }
   }
 }
