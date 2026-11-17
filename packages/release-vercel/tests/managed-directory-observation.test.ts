@@ -1,19 +1,27 @@
 import { lstat, mkdir, readFile, rename, symlink, writeFile } from 'node:fs/promises';
 import type { Dirent } from 'node:fs';
 import { resolve } from 'node:path';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi, type TestContext } from 'vitest';
 import { measureManagedUsage, measureManagedUsageOnce, readManagedDirectoryNames } from '../src/node/managed-io.js';
 import { observeBudget } from '../src/node/managed-budget.js';
 import { managedBudgetFixture } from './helpers/managed-budget-fixture.js';
 
 const checkpoint = vi.hoisted(() => {
   const afterStat: (path: string) => Promise<void> = async () => {};
-  return { path: '', expandDirectory: '', orderedDirectory: '', canonicalPath: '', pause: async () => {}, canonicalPause: async () => {}, afterStat };
+  return { path: '', expandDirectory: '', orderedDirectory: '', canonicalPath: '', queuedPrefix: '', nestedDirectory: '',
+    queued: Promise.resolve(), releaseQueued: () => {}, pause: async () => {}, canonicalPause: async () => {}, afterStat };
 });
 vi.mock('node:fs/promises', async importOriginal => {
   const fs = await importOriginal<typeof import('node:fs/promises')>();
   return { ...fs, opendir: async (...args: Parameters<typeof fs.opendir>) => {
     const directory = await fs.opendir(...args);
+    if (args[0] === checkpoint.nestedDirectory) {
+      const iterate = directory[Symbol.asyncIterator].bind(directory), release = checkpoint.releaseQueued;
+      directory[Symbol.asyncIterator] = async function* () {
+        try { for await (const entry of { [Symbol.asyncIterator]: iterate }) yield entry; }
+        finally { setImmediate(release); }
+      };
+    }
     if (args[0] === checkpoint.orderedDirectory) {
       const iterate = directory[Symbol.asyncIterator].bind(directory);
       directory[Symbol.asyncIterator] = async function* () {
@@ -37,6 +45,7 @@ vi.mock('node:fs/promises', async importOriginal => {
     }
     return directory;
   }, lstat: async (...args: Parameters<typeof fs.lstat>) => {
+    if (checkpoint.queuedPrefix && String(args[0]).startsWith(checkpoint.queuedPrefix)) await checkpoint.queued;
     const value = await fs.lstat(...args);
     if (args[0] === checkpoint.path) await checkpoint.pause();
     await checkpoint.afterStat(String(args[0]));
@@ -49,12 +58,23 @@ vi.mock('node:fs/promises', async importOriginal => {
 });
 
 const fixtures: Awaited<ReturnType<typeof managedBudgetFixture>>[] = [];
+const activeTests = new Set<Promise<void>>();
+const track = (operation: (context: TestContext) => Promise<void>) => (context: TestContext) => {
+  const task = Promise.resolve().then(() => operation(context));
+  activeTests.add(task); void task.catch(() => {}); return task;
+};
 afterEach(async () => {
+  // Vitest 超时会先进入 afterEach；替换写入与扫描都排空后才能回收私有目录。
+  const settled = await Promise.allSettled([...activeTests]); activeTests.clear();
+  const errors: unknown[] = settled.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
   checkpoint.path = ''; checkpoint.expandDirectory = ''; checkpoint.pause = async () => {};
   checkpoint.orderedDirectory = ''; checkpoint.canonicalPath = ''; checkpoint.canonicalPause = async () => {}; checkpoint.afterStat = async () => {};
+  checkpoint.releaseQueued(); checkpoint.queuedPrefix = ''; checkpoint.nestedDirectory = ''; checkpoint.queued = Promise.resolve(); checkpoint.releaseQueued = () => {};
   for (const fixture of fixtures.splice(0)) {
-    await fixture.lock.release(); await fixture.dispose();
+    try { await fixture.lock.release(); } catch (error) { errors.push(error); }
+    try { await fixture.dispose(); } catch (error) { errors.push(error); }
   }
+  if (errors.length > 0) throw new AggregateError(errors, 'directory scan test or fixture cleanup failed');
 });
 
 it('allows an installer rename and discards the stale observation before retrying', async () => {
@@ -265,6 +285,38 @@ it('retains the first directory failure but forbids a rescan after a sibling lin
   } finally { release(); await pending; }
 });
 
+it('rechecks a pending sibling directory before deciding that the first failure permits a rescan', track(async context => {
+  const fixture = await managedBudgetFixture(); fixtures.push(fixture);
+  const parent = fixture.paths.checkoutRoot, first = resolve(parent, 'a-directory'), last = resolve(parent, 'z-directory');
+  const marker = resolve(last, 'entry'), target = resolve(fixture.paths.slotRoot, 'internal-target');
+  await mkdir(first, { recursive: true }); await mkdir(last); await mkdir(target); await writeFile(resolve(target, 'entry'), 'target');
+  await writeFile(marker, 'old');
+  let enter = () => {}, release = () => {}, attempts = 0, firstRead = true;
+  const entered = new Promise<void>(accept => { enter = accept; }), held = new Promise<void>(accept => { release = accept; });
+  checkpoint.orderedDirectory = parent;
+  checkpoint.afterStat = async path => {
+    if (path === first && firstRead) { firstRead = false; enter(); await held; }
+  };
+  checkpoint.path = marker;
+  checkpoint.pause = async () => {
+    checkpoint.path = ''; await entered;
+    await rename(first, resolve(fixture.root, 'original-first')); await symlink(target, first, 'junction');
+    await rename(last, resolve(fixture.root, 'original-last')); await mkdir(last); await writeFile(marker, 'replacement');
+  };
+  checkpoint.canonicalPath = last;
+  checkpoint.canonicalPause = async () => { checkpoint.canonicalPath = ''; release(); };
+  context.signal.addEventListener('abort', release, { once: true });
+  const pending = measureManagedUsage(fixture.paths, context.signal, async (...args) => {
+    attempts++; return measureManagedUsageOnce(...args);
+  }).then(value => ({ value }), (error: unknown) => ({ error }));
+  try {
+    expect(await pending).toMatchObject({ error: { code: 'BUDGET_UNKNOWN', details: {
+      reason: 'DIRECTORY_REPLACED', change: 'identity', rescanBlockedBy: 'DIRECTORY_REPLACED',
+    } } });
+    expect(attempts).toBe(1);
+  } finally { release(); await pending; context.signal.removeEventListener('abort', release); }
+}));
+
 it('rejects an observed ancestor replaced with an external junction while child metadata is pending', async () => {
   const fixture = await managedBudgetFixture(); fixtures.push(fixture);
   const source = resolve(fixture.paths.slotRoot, 'package_tmp'), moved = resolve(fixture.paths.slotRoot, 'package');
@@ -303,6 +355,9 @@ it('includes unvisited ancestor names in the global entry limit before expanding
   await mkdir(resolve(source, 'nested'), { recursive: true });
   await writeFile(resolve(source, 'nested/a'), 'a'); await writeFile(resolve(source, 'nested/b'), 'b');
   checkpoint.expandDirectory = source;
+  // 虚拟队列没有真实元数据；先让真实嵌套枚举触达预算边界，避免并发下无关 ENOENT 抢先。
+  checkpoint.queuedPrefix = resolve(source, 'queued-'); checkpoint.nestedDirectory = resolve(source, 'nested');
+  checkpoint.queued = new Promise<void>(accept => { checkpoint.releaseQueued = accept; });
   await expect(measureManagedUsageOnce(fixture.paths)).rejects.toMatchObject({ code: 'BUDGET_UNKNOWN', details: { reason: 'ENTRY_LIMIT' } });
   await rename(source, destination);
   expect(await readFile(resolve(destination, 'nested/b'), 'utf8')).toBe('b');
