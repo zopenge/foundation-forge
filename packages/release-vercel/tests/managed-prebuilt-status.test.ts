@@ -24,17 +24,24 @@ function observe(value: Fixture, response: Readonly<Record<string, unknown>>) {
   return { requests, candidatePath, expectNoCall, status: () => runRelease({ command: 'status', cwd: value.cwd, sha: value.sha, transport }) };
 }
 
-it.each(['none', 'alias', 'promote'] as const)('reports the blocked candidate with the original %s effect evidence', async pending => {
-  const value = await fixture(pending !== 'promote');
+it.each(['none', 'alias', 'promote', 'acceptance'] as const)('reports the blocked candidate with the original %s effect evidence', async pending => {
+  const withAlias = pending === 'none' || pending === 'alias';
+  const value = await fixture(withAlias, pending === 'acceptance' ? [{ command: 'node', args: ['-e', 'process.exit(23)'] }] : undefined);
   const lost = () => { throw new ReleaseError('VERCEL_API'); };
   if (pending === 'none') value.hooks.deployment = { readyState: 'ERROR' };
   else if (pending === 'alias') value.hooks.alias = lost;
-  else value.hooks.promote = lost;
+  else if (pending === 'promote') value.hooks.promote = lost;
   const published = await runRelease({ command: 'publish', cwd: value.cwd, transport: value.transport });
+  const publicationStage = pending === 'none' ? 'deployment' : pending === 'alias' ? 'version-alias' : pending;
   expect(published, JSON.stringify(published.error)).toMatchObject({ ok: false, processes: { status: 'closed' },
+    stage: publicationStage,
     effects: { deploymentCreate: 'accepted', deploymentPromote: pending === 'promote' ? 'unknown' : 'not-attempted',
-      ...(pending !== 'promote' ? { versionAliasAssign: pending === 'alias' ? 'unknown' : 'not-attempted' } : {}) },
+      ...(withAlias ? { versionAliasAssign: pending === 'alias' ? 'unknown' : 'not-attempted' } : {}) },
     prebuilt: { deploymentId: 'dpl_candidate' }, runId: expect.any(String) });
+  if (pending === 'acceptance') {
+    expect(published.prebuilt?.acceptanceVerified).toBe(false);
+    expect(published.steps).toContainEqual(expect.objectContaining({ name: 'acceptance:0', exitCode: 23 }));
+  }
   const slot = resolve(value.cwd, 'state/release-slot');
   const files = ['latest-publish.json', 'state.json', `history/${published.runId}.json`].map(file => resolve(slot, file));
   const originals = await Promise.all(files.map(file => readFile(file)));
@@ -45,7 +52,8 @@ it.each(['none', 'alias', 'promote'] as const)('reports the blocked candidate wi
     candidateSha: value.sha, configSha256: published.configSha256, runId: published.runId, prebuilt: published.prebuilt,
     effects: published.effects, steps: [], processes: { status: 'closed' },
     deployment: { id: 'dpl_candidate', url: 'https://candidate.vercel.app', sha: value.sha, projectId: 'prj_fixture', state: 'BLOCKED' },
-    error: { code: 'DEPLOYMENT_FAILED', details: { deploymentId: 'dpl_candidate', state: 'BLOCKED', observedAt: expect.any(String), providerBlockCode: 'TEAM_ACCESS_REQUIRED' } } });
+    error: { code: 'DEPLOYMENT_FAILED', details: { deploymentId: 'dpl_candidate', state: 'BLOCKED', observedAt: expect.any(String),
+      publicationStage, providerBlockCode: 'TEAM_ACCESS_REQUIRED' } } });
   expect(report.candidateContext).toEqual(published.candidateContext);
   expect(report.effects).toEqual(published.effects);
   expect(report.prebuilt).toEqual(published.prebuilt);
@@ -61,7 +69,7 @@ it.each(['none', 'alias', 'promote'] as const)('reports the blocked candidate wi
       const observed = observe(value, { readyState: state, seatBlock: { blockCode: state === 'BLOCKED' ? 'unrecognized-code' : 'TEAM_ACCESS_REQUIRED' } });
       const result = await observed.status();
       expect(result).toMatchObject({ ok: false, deployment: { id: 'dpl_candidate', state },
-        error: { code: 'DEPLOYMENT_FAILED', details: { deploymentId: 'dpl_candidate', state, observedAt: expect.any(String) } } });
+        error: { code: 'DEPLOYMENT_FAILED', details: { deploymentId: 'dpl_candidate', state, observedAt: expect.any(String), publicationStage } } });
       expect(result.error?.details).not.toHaveProperty('providerBlockCode');
       expect(observed.requests).toHaveLength(2);
       expect(observed.expectNoCall).not.toHaveBeenCalled();

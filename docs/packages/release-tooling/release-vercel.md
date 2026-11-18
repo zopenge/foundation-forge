@@ -60,7 +60,7 @@ managed-commit 冻结开发分支完整 SHA、已提交配置、精确 `pnpm@<�
 
 status/verify 选择最近 publish 收据，后来源 HEAD、配置或 check 不覆盖选择；指定没有匹配收据的 SHA 拒绝。verify 在受管锁/预算内使用原始 checkout、配置和验收脚本，缺失或不可信时失败，不安装、不回退到当前源脚本。
 
-受管 prebuilt `status` 核对原收据和云端候选身份后，遇到 `BLOCKED`、`ERROR`、`CANCELED` 或 `CANCELLED` 结束就绪等待。schema 2 报告返回 `ok: false`、`stage: "deployment"`、`error.code: "DEPLOYMENT_FAILED"` 与 `deployment: { id, url, projectId, sha, state }`，保留原 `runId`、`candidateSha`、`configSha256`、`prebuilt` 和 `effects`。`deployment.sha` 来自原收据绑定。`error.details` 提供 `deploymentId`、`state` 及 SDK 本次读取的 UTC `observedAt`。仅当状态为 `BLOCKED` 且 `seatBlock.blockCode` 为 `TEAM_ACCESS_REQUIRED` 或 `COMMIT_AUTHOR_REQUIRED` 时添加 `providerBlockCode`。`candidateContext` 沿用版本别名的可选合同。该观察只描述当时的候选，允许后续重新观察；本地解锁、生产路由和未决版本别名或提升仍分别核证。原收据和历史保持不变。
+受管 prebuilt `status` 核对原收据和云端候选身份后，遇到 `BLOCKED`、`ERROR`、`CANCELED` 或 `CANCELLED` 结束就绪等待。schema 2 报告返回 `ok: false`、`stage: "deployment"`、`error.code: "DEPLOYMENT_FAILED"` 与 `deployment: { id, url, projectId, sha, state }`，保留原 `runId`、`candidateSha`、`configSha256`、`prebuilt` 和 `effects`。`deployment.sha` 来自原收据绑定。`error.details` 提供 `deploymentId`、`state` 及 SDK 本次读取的 UTC `observedAt`。原发布收据存在且阶段值可识别时，另提供 `publicationStage`，顶层 `stage` 仍表示本次状态读取所在阶段。仅当状态为 `BLOCKED` 且 `seatBlock.blockCode` 为 `TEAM_ACCESS_REQUIRED` 或 `COMMIT_AUTHOR_REQUIRED` 时添加 `providerBlockCode`。`candidateContext` 沿用版本别名的可选合同。该观察只描述当时的候选，允许后续重新观察；本地解锁、生产路由和未决版本别名或提升仍分别核证。原收据和历史保持不变。
 
 原工作区模式使用 `"source": {"mode":"workspace"}`，保留包含 untracked 的严格 clean 规则。已有 managed 锚点不能静默改槽、改配置绑定，或切回 workspace 执行检查/发布；先按实际收据、锁及引用完成显式维护，无自动迁移或清场。
 

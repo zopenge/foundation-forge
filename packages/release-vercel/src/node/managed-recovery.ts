@@ -14,6 +14,7 @@ import { normalizeRepository, remoteRefs } from './git.js';
 import { assertHistoricalSource, relativeConfigPath } from './source.js';
 import { identityReader } from './process-identities.js';
 import type { PrebuiltReleaseState, ReleaseBudget, ReleaseCompletionState, ReleaseDeployment, ReleaseDiagnostic, ReleaseRecoveryObservation, ReleaseRefRelation, ReleaseReport, ReleaseStage, RunReleaseOptions } from '../contracts.js';
+import { releaseStages } from '../contracts.js';
 import { diagnostic } from './workspace-release.js';
 import { createTransport, VercelVerification } from './vercel.js';
 import { createPrebuiltTransport, PrebuiltStatusFailure } from './prebuilt-vercel.js';
@@ -259,11 +260,15 @@ export async function runManagedReceiptCommand(options: RunReleaseOptions): Prom
     }
     stage = 'complete';
   } catch (error) {
+    failure = diagnostic(error);
     if (error instanceof PrebuiltStatusFailure) {
       deployment = error.deployment;
       prebuilt = selected?.receipt.report.prebuilt;
+      // 缺收据时的恢复描述只供观察，不能作为原 publish 阶段证明。
+      const recordedStage = selected?.reportExists ? selected.receipt.report.stage : undefined;
+      const publicationStage = releaseStages.find(stage => stage === recordedStage);
+      if (publicationStage !== undefined) failure = { code: failure.code, details: { ...failure.details, publicationStage } };
     }
-    failure = diagnostic(error);
   }
   const source = selected?.receipt.source;
   const candidateContext = source ? prebuiltCandidateContext(source.config, prebuilt) : undefined;

@@ -88,6 +88,7 @@ export async function verifyCompletionConsumer({ cwd, config, git, binary }) {
     const details = failed.error?.details, deployment = failed.deployment;
     if (status.code !== 1 || failed.ok || failed.stage !== 'deployment' || failed.error?.code !== 'DEPLOYMENT_FAILED'
       || details?.deploymentId !== 'dpl_candidate' || details.state !== 'BLOCKED' || details.providerBlockCode !== 'TEAM_ACCESS_REQUIRED'
+      || details.publicationStage !== 'completion' || details.publicationStage !== published.report.stage
       || !Number.isFinite(Date.parse(details.observedAt)) || failed.runId !== published.report.runId || failed.candidateSha !== sha
       || deployment?.id !== 'dpl_candidate' || deployment.state !== 'BLOCKED' || deployment.projectId !== selected.vercel.projectId
       || deployment.url !== 'https://candidate.vercel.app' || deployment.sha !== sha || failed.steps.length !== 0

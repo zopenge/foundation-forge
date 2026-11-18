@@ -88,8 +88,9 @@ export interface PrebuiltReleaseState {
   promotionVerified: boolean;
   versionAlias?: PrebuiltVersionAliasState;
 }
-export type ReleaseStage = 'source' | 'admission' | 'checkout' | 'install' | 'prepare' | 'checks'
-  | 'artifact' | 'version-alias' | 'promote' | 'push-dev' | 'push-main' | 'deployment' | 'acceptance' | 'completion' | 'recover' | 'retire' | 'complete' | 'failed';
+export const releaseStages = ['source', 'admission', 'checkout', 'install', 'prepare', 'checks', 'artifact', 'version-alias',
+  'promote', 'push-dev', 'push-main', 'deployment', 'acceptance', 'completion', 'recover', 'retire', 'complete', 'failed'] as const;
+export type ReleaseStage = typeof releaseStages[number];
 export interface ReleaseBudget {
   readonly sampleCount: number;
   readonly maxObservedBytes: number;
