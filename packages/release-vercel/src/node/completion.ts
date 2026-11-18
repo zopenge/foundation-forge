@@ -29,7 +29,7 @@ export async function runCompletion(session: ManagedSession, options: Pick<RunRe
   if (selected.status !== 'completed' && selected.attempts.length >= 32) throw new ReleaseError('BUDGET_EXCEEDED', { reason: 'COMPLETION_ATTEMPT_LIMIT' });
   const prebuiltContext = managedPrebuiltContext(session);
   if (!prebuiltContext || !config.delivery) throw new ReleaseError('SOURCE_UNSUPPORTED');
-  const transport = options.transport ?? createPrebuiltTransport(session.execution, config, false, options.buildInfoHttp);
+  const transport = createPrebuiltTransport(session.execution, config, false, options.buildInfoHttp, options.transport);
   const guard = async () => {
     await session.slot.lock.assertOwned(); await assertFrozen(); await session.assertClosed(); await session.budget.sample();
     const candidate = session.state.prebuilt;

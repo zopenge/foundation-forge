@@ -4,8 +4,9 @@ import type { PrebuiltReleaseState, ReleaseConfig, ReleaseDeployment, ReleaseTra
 import { assertActive, record, ReleaseError } from './errors.js';
 import type { Execution } from './execution.js';
 import { matchesPrebuiltMarker, prebuiltMarkerPath } from './prebuilt-artifact.js';
-import { createTransport, request } from './vercel.js';
+import { request } from './vercel.js';
 import { prebuiltApiOnce } from './prebuilt-http.js';
+import { readBuildInfo } from './build-info-http.js';
 import { versionAliasOrigin } from './version-alias.js';
 
 const idPattern = /^dpl_[a-zA-Z0-9]{1,120}$/u;
@@ -35,9 +36,16 @@ function jsonBody(body: Buffer): Record<string, unknown> {
   try { return record(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(body)) as unknown); }
   catch { throw new ReleaseError('VERCEL_API', { reason: 'INVALID_JSON' }); }
 }
-export async function readPrebuiltVersionAlias(config: ReleaseConfig, hostname: string, signal: AbortSignal): Promise<VersionAliasBinding | undefined> {
+async function readApiOnce(config: ReleaseConfig, path: string, signal: AbortSignal, allowMissing: boolean, timeoutMs: number) {
+  try { return await prebuiltApiOnce(config, path, 'GET', '', signal, allowMissing, timeoutMs); }
+  catch (error) {
+    if (error instanceof ReleaseError) throw error;
+    throw new ReleaseError('VERCEL_API', { reason: 'REQUEST_UNCONFIRMED' });
+  }
+}
+export async function readPrebuiltVersionAlias(config: ReleaseConfig, hostname: string, signal: AbortSignal, timeoutMs = config.limits.requestMs): Promise<VersionAliasBinding | undefined> {
   const path = `/v4/aliases/${aliasHostname(config, hostname)}?teamId=${encodeURIComponent(config.vercel.teamId)}`;
-  const response = await prebuiltApiOnce(config, path, 'GET', '', signal, true);
+  const response = await readApiOnce(config, path, signal, true, timeoutMs);
   if (response.status === 404) return;
   const value = jsonBody(response.body);
   if (value.alias !== hostname || typeof value.projectId !== 'string' || typeof value.deploymentId !== 'string'
@@ -56,26 +64,68 @@ export async function assignPrebuiltVersionAliasOnce(config: ReleaseConfig, depl
     throw new ReleaseError('VERCEL_API', { reason: 'VERSION_ALIAS_RESPONSE' });
   return { alias: hostname, uid: value.uid, ...(typeof value.oldDeploymentId === 'string' ? { oldDeploymentId: value.oldDeploymentId } : {}) };
 }
-export function createPrebuiltTransport(execution: Execution, config: ReleaseConfig, writing: boolean, http?: NodeHttpTransportOptions): ReleaseTransport {
-  if (writing && !process.env.VERCEL_TOKEN) throw new ReleaseError('AUTH_REQUIRED', { reason: 'PREBUILT_TOKEN_REQUIRED' });
+export interface PrebuiltAccess {
+  readonly transport: ReleaseTransport;
+  apiRead(path: string, signal: AbortSignal | undefined, deadline?: number): Promise<unknown>;
+  aliasRead(adapter: VersionAliasTransport, hostname: string, signal: AbortSignal | undefined, deadline?: number): Promise<VersionAliasBinding | undefined>;
+}
+function requestLimit(config: ReleaseConfig, deadline?: number): number {
+  const remaining = deadline === undefined ? config.limits.requestMs : deadline - Date.now();
+  if (remaining <= 0) throw new ReleaseError('DEPLOYMENT_TIMEOUT');
+  return Math.min(config.limits.requestMs, remaining);
+}
+async function nativeRead<T>(execution: Execution, config: ReleaseConfig, operation: (signal: AbortSignal, timeoutMs: number) => Promise<T>,
+  signal?: AbortSignal, deadline?: number): Promise<T> {
+  const value = await execution.observeRequest(combined => operation(combined, requestLimit(config, deadline)), signal);
+  assertActive(signal);
+  if (deadline !== undefined && deadline <= Date.now()) throw new ReleaseError('DEPLOYMENT_TIMEOUT');
+  return value;
+}
+async function nativeApiRead(execution: Execution, config: ReleaseConfig, path: string, signal?: AbortSignal, deadline?: number): Promise<unknown> {
+  const url = new URL(path, 'https://api.vercel.com');
+  if (!path.startsWith('/') || path.startsWith('//') || url.origin !== 'https://api.vercel.com' || url.hash)
+    throw new ReleaseError('VERCEL_API', { reason: 'INVALID_API_PATH' });
+  return nativeRead(execution, config, async (combined, timeoutMs) => jsonBody((await readApiOnce(config, path, combined, false, timeoutMs)).body), signal, deadline);
+}
+async function nativeAliasRead(execution: Execution, config: ReleaseConfig, hostname: string, signal?: AbortSignal, deadline?: number) {
+  try { return await nativeRead(execution, config, (combined, timeoutMs) => readPrebuiltVersionAlias(config, hostname, combined, timeoutMs), signal, deadline); }
+  catch (error) {
+    if (error instanceof ReleaseError && error.code === 'DEPLOYMENT_TIMEOUT') throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'VERSION_ALIAS_UNCONFIRMED' });
+    throw error;
+  }
+}
+/** 默认和 custom 在装配时显式选择；默认请求不会回退到 CLI 或 custom 路径。 */
+export function createPrebuiltTransport(execution: Execution, config: ReleaseConfig, writing: boolean, http?: NodeHttpTransportOptions,
+  supplied?: ReleaseTransport): PrebuiltAccess {
+  if (supplied) return { transport: supplied,
+    apiRead: (path, signal, deadline) => request(combined => supplied.api(path, combined), requestLimit(config, deadline), signal),
+    aliasRead: (adapter, hostname, signal, deadline) => request(combined => adapter.read(hostname, combined), requestLimit(config, deadline), signal) };
+  if (!process.env.VERCEL_TOKEN) throw new ReleaseError('AUTH_REQUIRED', { reason: 'PREBUILT_TOKEN_REQUIRED' });
   let versionAlias: VersionAliasTransport | undefined;
-  if (config.delivery?.versionAlias) versionAlias = { read: (hostname, signal) => readPrebuiltVersionAlias(config, hostname, signal),
+  if (config.delivery?.versionAlias) versionAlias = { read: (hostname, signal) => nativeAliasRead(execution, config, hostname, signal),
     ...(writing ? { assign: (id: string, hostname: string, signal: AbortSignal) => assignPrebuiltVersionAliasOnce(config, id, hostname, signal) } : {}) };
-  return { ...createTransport(execution, http), promote: (id, signal) => promotePrebuiltOnce(config, id, signal), ...(versionAlias ? { versionAlias } : {}) };
+  const transport: ReleaseTransport = {
+    api: (path, signal) => nativeApiRead(execution, config, path, signal),
+    buildInfo: (url, signal) => readBuildInfo(url, signal, config.limits.maxOutputBytes, http),
+    promote: (id, signal) => promotePrebuiltOnce(config, id, signal), ...(versionAlias ? { versionAlias } : {}) };
+  return { transport, apiRead: (path, signal, deadline) => nativeApiRead(execution, config, path, signal, deadline),
+    aliasRead: (_adapter, hostname, signal, deadline) => nativeAliasRead(execution, config, hostname, signal, deadline) };
 }
 export class PrebuiltVerification {
-  constructor(readonly config: ReleaseConfig, readonly transport: ReleaseTransport, readonly signal?: AbortSignal) {}
+  constructor(readonly config: ReleaseConfig, private readonly access: PrebuiltAccess, readonly signal?: AbortSignal) {}
+  get transport(): ReleaseTransport { return this.access.transport; }
   private requestMs(deadline?: number): number {
-    const remaining = deadline === undefined ? this.config.limits.requestMs : deadline - Date.now();
-    if (remaining <= 0) throw new ReleaseError('DEPLOYMENT_TIMEOUT');
-    return Math.min(this.config.limits.requestMs, remaining);
+    return requestLimit(this.config, deadline);
   }
   private async pause(remaining: number): Promise<void> {
     try { await delay(Math.min(this.config.limits.pollMs, remaining), undefined, this.signal ? { signal: this.signal } : {}); }
     catch (error) { assertActive(this.signal); throw error; }
   }
   api(path: string, deadline?: number): Promise<unknown> {
-    return request(signal => this.transport.api(`${path}${path.includes('?') ? '&' : '?'}teamId=${encodeURIComponent(this.config.vercel.teamId)}`, signal), this.requestMs(deadline), this.signal);
+    return this.access.apiRead(`${path}${path.includes('?') ? '&' : '?'}teamId=${encodeURIComponent(this.config.vercel.teamId)}`, this.signal, deadline);
+  }
+  readVersionAlias(adapter: VersionAliasTransport, hostname: string, deadline?: number): Promise<VersionAliasBinding | undefined> {
+    return this.access.aliasRead(adapter, hostname, this.signal, deadline);
   }
   async project(deadline?: number, allowPending = false): Promise<Record<string, unknown>> {
     const project = record(await this.api(`/v9/projects/${encodeURIComponent(this.config.vercel.projectId)}`, deadline));

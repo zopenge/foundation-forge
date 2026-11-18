@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { URL } from 'node:url';
 import process from 'node:process';
 import { validateReleaseConfig } from '@openge/forge-release-vercel/node';
-import { serveCompletionTransport } from './completion-rpc.mjs';
+import { completionFixtureToken, serveCompletionTransport } from './completion-rpc.mjs';
 
 /** 已安装tarball的公开SDK发布失败，再由真实公开CLI恢复；只控制云I/O叶边界。 */
 export async function verifyCompletionConsumer({ cwd, config, git, binary }) {
@@ -14,7 +14,7 @@ export async function verifyCompletionConsumer({ cwd, config, git, binary }) {
   const delivery = Object.fromEntries(Object.entries(config.delivery).filter(([key]) => key !== 'versionAlias'));
   const selected = validateReleaseConfig({ ...config, delivery,
     completion: { idempotent: true, jobs: [{ command: 'node', args: ['completion-job.mjs', control, proof, observations] }] },
-    // READY观察包含真实CLI子进程；声明本夹具的完整部署预算，不沿用内存transport的1秒窗口。
+    // 声明本夹具原有的完整部署预算，覆盖真实受管查询及 native HTTP 观察。
     limits: { ...config.limits, requestMs: 15_000, deploymentMs: config.limits.commandMs } });
   await writeFile(control, 'fail'); await writeFile(resolve(cwd, 'release.config.json'), JSON.stringify(selected));
   git('add', '--', 'release.config.json', 'completion-job.mjs'); git('commit', '-m', 'completion consumer');
@@ -58,7 +58,8 @@ export async function verifyCompletionConsumer({ cwd, config, git, binary }) {
     const started = Date.now();
     const child = spawn(process.execPath, ['--experimental-test-module-mocks', resolve(import.meta.dirname, 'completion-worker.mjs'),
       import.meta.resolve('@openge/forge-release-vercel/node'), cwd, server.endpoint, counter, mode, binary],
-    { cwd, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], signal: globalThis.AbortSignal.timeout(240_000) });
+    { cwd, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], signal: globalThis.AbortSignal.timeout(240_000),
+      env: { ...process.env, VERCEL_TOKEN: completionFixtureToken } });
     let stdout = '', stderr = '', failure;
     child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
     child.stdout.on('data', data => { stdout += data; if (stdout.length > 2_097_152) child.kill('SIGTERM'); });
@@ -81,7 +82,7 @@ export async function verifyCompletionConsumer({ cwd, config, git, binary }) {
     const resumed = await run('cli-verify-retry'), completed = resumed.report;
     if (resumed.code !== 0 || !completed.ok || completed.candidateSha !== sha || completed.completion?.status !== 'completed'
       || completed.completion?.attempts.length !== 2 || JSON.stringify(completed.completion.attempts[0]) !== JSON.stringify(published.report.completion.attempts[0])
-      || !(await readFile(receiptPath)).equals(receipt) || promotions !== 1 || Number(await readFile(counter, 'utf8')) !== 1)
+      || !(await readFile(receiptPath)).equals(receipt) || promotions !== 1 || Number(await readFile(counter, 'utf8')) !== 1 || server.nativeReads < 1)
       throw new Error(`tarball CLI completion retry contract: ${JSON.stringify({ error: completed.error, stage: completed.stage,
         steps: completed.steps.slice(-3), processes: completed.processes, completion: completed.completion?.status,
         elapsedMs: resumed.elapsedMs, stderr: resumed.stderr, requests, progress: await progress() })}`);

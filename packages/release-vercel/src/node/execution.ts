@@ -48,6 +48,20 @@ export class Execution {
   observeCheckout<T>(operation: () => Promise<T>): Promise<T> {
     return this.lifecycle?.observeCheckout ? this.lifecycle.observeCheckout(operation) : operation();
   }
+  async observeRequest<T>(operation: (signal: AbortSignal) => Promise<T>, signal = this.signal): Promise<T> {
+    assertActive(signal);
+    try {
+      let result: T;
+      if (this.lifecycle) {
+        if (!this.lifecycle.observeRequest) throw new ReleaseError('SOURCE_UNSUPPORTED', { reason: 'REQUEST_LIFECYCLE_REQUIRED' });
+        result = await this.lifecycle.observeRequest(operation, signal);
+      } else result = await operation(signal ?? new AbortController().signal);
+      assertActive(signal); return result;
+    } catch (error) {
+      if (error instanceof ReleaseError && ['BUDGET_UNKNOWN', 'BUDGET_EXCEEDED'].includes(error.code)) throw error;
+      assertActive(signal); throw error;
+    }
+  }
   constructor(readonly cwd: string, readonly config: Pick<ReleaseConfig, 'limits'>, readonly signal: AbortSignal | undefined,
     readonly steps: ReleaseStep[], private readonly lifecycle?: ExecutionLifecycle, selectedReader?: ProcessIdentityReader) {
     const reader = selectedReader ?? (process.platform === 'win32' ? createWindowsNativeProcessIdentityReader() : createPosixProcessIdentityReader());

@@ -2,13 +2,13 @@ import type { NodeHttpTransportOptions } from '@openge/forge-http-transport';
 import type { PrebuiltReleaseState, ReleaseConfig, ReleaseTransport } from '../contracts.js';
 import type { ManagedState, PrebuiltEffectResolution } from './managed-state-contracts.js';
 import type { Execution } from './execution.js';
-import { createPrebuiltTransport, PrebuiltVerification } from './prebuilt-vercel.js';
+import { createPrebuiltTransport, PrebuiltVerification, type PrebuiltAccess } from './prebuilt-vercel.js';
 import { assertActive, ReleaseError } from './errors.js';
 import { observeVersionAlias } from './prebuilt-alias.js';
 
 /** 原始回执不改写；返回本次独立观察到的状态，不能用当前 manifest 补造旧绑定。 */
 export async function observePrebuiltCandidate(config: ReleaseConfig, state: PrebuiltReleaseState | undefined,
-  transport: ReleaseTransport, signal?: AbortSignal) {
+  transport: PrebuiltAccess, signal?: AbortSignal) {
   if (!state?.deploymentId) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'PREBUILT_CANDIDATE_ID_MISSING' });
   const verify = new PrebuiltVerification(config, transport, signal);
   await verify.project(undefined, true); const deployment = await verify.ready(state);
@@ -32,7 +32,7 @@ export async function assertPrebuiltEffectObserved(state: ManagedState, executio
   if (!hasUnresolvedPrebuiltEffect(state)) return;
   const candidate = state.prebuilt; if (!candidate) return;
   if (!candidate.deploymentId) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'PREBUILT_CREATE_UNKNOWN', runId: state.runId });
-  const verify = new PrebuiltVerification(state.source.config, transport ?? createPrebuiltTransport(execution, state.source.config, false, http), execution.signal);
+  const verify = new PrebuiltVerification(state.source.config, createPrebuiltTransport(execution, state.source.config, false, http, transport), execution.signal);
   await verify.project(undefined, true); await verify.candidate(candidate);
   let versionAlias: PrebuiltEffectResolution['versionAlias'];
   if (candidate.versionAlias && candidate.versionAlias.effect !== 'not-attempted') {

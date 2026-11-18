@@ -78,7 +78,11 @@ check 仅构建、检查和冻结本地产物，不访问云。publish 在消费
 
 仓库回归在受控 loopback API 上运行真实固定版本 CLI，检查上传 tgz 中的链接、文件摘要和模式，移除原输出及上传槽后再真实加载两层 pnpm 依赖及函数别名。Linux 使用真实 umask 022 和系统 tar 解压；Windows 常规场景保持真实 API，另一个明确命名的场景在 CLI 子进程模拟 POSIX umask 查询/设置。Windows 系统 tar 无法使用非提权链接标志时，由测试内 Node 还原已核对的条目。真实 tarball 的公开 SDK 和 CLI 也覆盖移动后的独立布局。此证据属于本地协议和消费者验收，不代表真实 Vercel 云端或任意原生模块已经运行通过。
 
-默认 prebuilt 写入通过正常受保护配置提供 `VERCEL_TOKEN`；不依赖 Codex 或临时认证脚本。固定 CLI 的 promote/api POST 内部有重试，因此提升使用相同官方公开 endpoint 的单次 HTTPS 请求，受超时、输出和连接关闭约束，不修改或深引 CLI 实现。自定义 transport 的 promote 也必须只写一次并响应取消。
+默认 prebuilt API 读取和写入统一通过正常受保护配置提供 `VERCEL_TOKEN`，包括 status、verify 及远端未决效果核验；这些读取不再使用用户 CLI 登录凭据。缺少 token 在网络前失败，不读取、迁移认证文件或回退到 CLI。本地不查询 Vercel 的恢复仍不要求 Vercel 凭据。Git 交付和显式自定义 transport 保持各自原有认证契约。
+
+默认项目、候选、生产 alias 和版本 alias API 读取使用固定 `api.vercel.com` 的单次 native HTTPS GET，仍核对原 project/team。请求不重试、不重定向、不读取宿主代理配置。每次 GET 的上限为 30 秒、64 KiB，配置较小的 requestMs/maxOutputBytes 仍生效；已有轮询绝对截止只会进一步缩短本次请求。受管路径、锁、历史、前台关闭和预算门禁继续执行，但宿主管理成本不计入 HTTP 请求计时，轮询总截止也不重置。成功、错误、取消和超时都等 request 与 socket 真实关闭后才交付；关闭和后续管理检查可使返回晚于请求截止，已过期请求仍为失败。不为 native GET 生成虚构的 CLI scope。
+
+固定 CLI 的 promote/api POST 内部有重试，因此提升使用相同官方公开 endpoint 的单次 HTTPS 请求，受超时、输出和连接关闭约束，不修改或深引 CLI 实现。自定义 transport 的 promote 也必须只写一次并响应取消。普通 publish 仍执行 install、prepare、checks 和制品封存，不提供无 deployment ID 的免重跑续发入口。
 
 项目 rootDirectory 必须未设置、为空或为 `.`；独立上传根只有 `.vercel`，因此嵌套根配置在记录创建意图之前拒绝，避免一个可提前识别的配置错误留下无 ID 的未知创建。POSIX 上传副本显式恢复记录的文件模式，不依赖调用方 umask。
 
@@ -94,7 +98,7 @@ check 仅构建、检查和冻结本地产物，不访问云。publish 在消费
 
 候选生成后的 `report.candidateContext` 及受保护 JSON 环境变量 `FORGE_RELEASE_CANDIDATE_CONTEXT` 公开只读身份：teamId、projectId、sourceSha、configSha256、artifactSha256、deploymentId、candidateUrl、versionUrl、versionAliasVerified。仅包含明确字段，不含凭据、完整配置或环境；消费者的注册与内容验收须使用已核验的版本入口。此上下文不替代业务授权。
 
-`prebuilt.versionAlias` 保存主机名、effect 和 verified，`effects.versionAliasAssign` 与创建、提升独立。取消、超时或丢失响应后，publish 不重放未决绑定；status 只观察，verify 使用原 checkout/配置观察并验收，均不绑定、不提升。别名不存在继续保留未知，包括意图保存后、POST 前中断。后续云写入前必须另存绑定原 hostname/source/config/artifact/ID 的观察证明；原 unknown 历史不改写。本地 recover 仍不要求 Vercel 认证。默认别名读写使用标准受保护 `VERCEL_TOKEN`，其他原有读取沿用官方 CLI 会话。
+`prebuilt.versionAlias` 保存主机名、effect 和 verified，`effects.versionAliasAssign` 与创建、提升独立。取消、超时或丢失响应后，publish 不重放未决绑定；status 只观察，verify 使用原 checkout/配置观察并验收，均不绑定、不提升。别名不存在继续保留未知，包括意图保存后、POST 前中断。后续云写入前必须另存绑定原 hostname/source/config/artifact/ID 的观察证明；原 unknown 历史不改写。本地 recover 仍不要求 Vercel 认证。默认 prebuilt API 读写统一使用上述受保护 `VERCEL_TOKEN`。
 
 官方 alias assignment 能移动已有名字，未提供原子 create-if-absent。因此全部写入方仍须共享外部串行协调，覆盖版本绑定、验收、提升和未决核验；读取后写入不能防止不遵守协调的外部并发换绑。响应报告其他 oldDeploymentId 时停止并保留未知，不补偿回滚。消费者负责额度、历史部署保留、当前引用及回滚策略；本能力不无限保留历史，也不把版本入口注册为项目生产域。
 

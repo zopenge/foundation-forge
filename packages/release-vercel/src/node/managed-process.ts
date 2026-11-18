@@ -6,7 +6,7 @@ import type { ManagedCommand, ManagedState } from './managed-state-contracts.js'
 import type { ManagedSession } from './managed-session-contracts.js';
 import type { ManagedSlot } from './managed-slot-contracts.js';
 import type { ReleaseStep } from '../contracts.js';
-import { record, ReleaseError } from './errors.js';
+import { assertActive, record, ReleaseError } from './errors.js';
 import { within } from './managed-io.js';
 import { assertManagedPaths } from './managed-paths.js';
 import { BudgetMonitor } from './managed-budget.js';
@@ -43,6 +43,8 @@ class ManagedProcess implements ExecutionLifecycle {
   private terminal: TerminalWriter | undefined;
   private observation: { command: ManagedCommand; executing: boolean; closing: boolean } | undefined;
   private startingObservation = false;
+  private requestActive = false;
+  private commandStarts = 0;
   constructor(readonly slot: ManagedSlot, readonly state: ManagedState, readonly budget: BudgetMonitor) {}
   async persist(): Promise<void> {
     await this.terminal?.assertOwned();
@@ -66,7 +68,7 @@ class ManagedProcess implements ExecutionLifecycle {
     if (!restored.state.processes.every(hasVerifiedManagedStop)) throw new ReleaseError('PROCESS_STATE_UNKNOWN');
   }
   async observeCheckout<T>(operation: () => Promise<T>): Promise<T> {
-    if (this.observation || this.startingObservation) throw new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'OBSERVATION_NESTED' });
+    if (this.observation || this.startingObservation || this.requestActive) throw new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'OBSERVATION_NESTED' });
     this.startingObservation = true;
     const command: ManagedCommand = { id: randomUUID(), name: 'checkout-frozen', kind: 'checkout-observation',
       plan: checkoutObservationPlan(this.slot.source), observations: [], status: 'intent', descendants: [], observationComplete: false };
@@ -104,9 +106,30 @@ class ManagedProcess implements ExecutionLifecycle {
     return value as T;
     } finally { this.observation = undefined; }
   }
+  /** HTTP 自持有连接；只复用管理门禁和预算，不生成虚构的进程意图或关闭证明。 */
+  async observeRequest<T>(operation: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {
+    if (this.observation || this.startingObservation || this.requestActive || this.commandStarts) throw new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'REQUEST_OVERLAP' });
+    this.requestActive = true;
+    try {
+      assertActive(signal); await this.guard(); await this.assertClosed();
+      const value = await this.budget.run(async combined => {
+        await this.guard(); await this.assertClosed(); assertActive(combined);
+        return operation(combined);
+      }, signal);
+      await this.guard(); await this.assertClosed(); assertActive(signal);
+      return value;
+    } finally { this.requestActive = false; }
+  }
   async execute(runner: CommandRunner, name: string, spec: CommandSpec, observer?: CommandObserver): Promise<ExecutionResult> {
+    if (this.startingObservation || this.requestActive) throw new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'OBSERVATION_NESTED' });
+    // 第一次异步准入前预约，HTTP 不能在命令意图尚未入列时抢占同一预算。
+    this.commandStarts++;
+    try { return await this.executeCommand(runner, name, spec, observer); }
+    finally { this.commandStarts--; }
+  }
+  private async executeCommand(runner: CommandRunner, name: string, spec: CommandSpec, observer?: CommandObserver): Promise<ExecutionResult> {
     const batch = this.observation;
-    if (this.startingObservation) throw new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'OBSERVATION_NESTED' });
+    if (this.startingObservation || this.requestActive) throw new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'OBSERVATION_NESTED' });
     await this.guard();
     if (batch) {
       await this.terminal?.assertOwned();

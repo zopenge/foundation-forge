@@ -1,10 +1,21 @@
 import { createServer, request } from 'node:http';
 import { Buffer } from 'node:buffer';
 
+export const completionFixtureToken = 'fixture-completion-token';
+
 /** 只在自有 loopback fixture 中代理受控云边界，不访问真实 Vercel。 */
 export async function serveCompletionTransport(transport) {
+  let nativeReads = 0;
   const server = createServer((incoming, response) => {
     void (async () => {
+      if (incoming.method === 'GET') {
+        if (incoming.headers.authorization !== `Bearer ${completionFixtureToken}`) {
+          response.writeHead(401); response.end('{}'); return;
+        }
+        nativeReads++;
+        const value = await transport.api(incoming.url, globalThis.AbortSignal.timeout(30_000));
+        response.writeHead(200, { 'content-type': 'application/json' }); response.end(JSON.stringify(value)); return;
+      }
       if (incoming.method !== 'POST' || incoming.url !== '/') throw new Error('unexpected fixture request');
       const chunks = []; let length = 0;
       for await (const bytes of incoming) {
@@ -31,7 +42,7 @@ export async function serveCompletionTransport(transport) {
   server.on('clientError', (_error, socket) => socket.destroy());
   await new Promise((accept, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', accept); });
   const address = server.address(); if (!address || typeof address === 'string') throw new Error('fixture address missing');
-  return { endpoint: `http://127.0.0.1:${address.port}/`, close: () => new Promise((accept, reject) => {
+  return { endpoint: `http://127.0.0.1:${address.port}/`, get nativeReads() { return nativeReads; }, close: () => new Promise((accept, reject) => {
     server.close(error => error ? reject(error) : accept()); server.closeIdleConnections();
   }) };
 }

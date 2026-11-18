@@ -4,9 +4,12 @@ import { assertActive, ReleaseError } from './errors.js';
 
 /** 仅访问固定Vercel API；一次请求、有限正文，等自有socket和request均关闭后交付。 */
 export async function prebuiltApiOnce(config: ReleaseConfig, path: string, method: 'GET' | 'POST', body: string,
-  signal: AbortSignal, allowMissing = false): Promise<{ readonly status: number; readonly body: Buffer }> {
+  signal: AbortSignal, allowMissing = false, timeoutMs = config.limits.requestMs): Promise<{ readonly status: number; readonly body: Buffer }> {
   assertActive(signal); const token = process.env.VERCEL_TOKEN;
   if (!token) throw new ReleaseError('AUTH_REQUIRED', { reason: 'PREBUILT_TOKEN_REQUIRED' });
+  const requestMs = Math.min(config.limits.requestMs, timeoutMs, method === 'GET' ? 30_000 : Infinity);
+  const maxBytes = Math.min(config.limits.maxOutputBytes, method === 'GET' ? 65_536 : Infinity);
+  if (!Number.isFinite(requestMs) || requestMs <= 0) throw new ReleaseError('DEPLOYMENT_TIMEOUT');
   return new Promise((accept, reject) => {
     let failure: unknown, accepted = false, status = 0, requestClosed = false, socketClosed = true;
     const chunks: Buffer[] = [];
@@ -22,7 +25,7 @@ export async function prebuiltApiOnce(config: ReleaseConfig, path: string, metho
       let length = 0;
       response.on('data', (bytes: Buffer) => {
         length += bytes.length;
-        if (length > config.limits.maxOutputBytes) {
+        if (length > maxBytes) {
           const error = new ReleaseError('VERCEL_API', { reason: 'OUTPUT_LIMIT' });
           failure ??= error; request.destroy(error);
         }
@@ -39,7 +42,7 @@ export async function prebuiltApiOnce(config: ReleaseConfig, path: string, metho
     const timer = setTimeout(() => {
       const error = new ReleaseError('VERCEL_API', { reason: 'REQUEST_TIMEOUT' });
       failure ??= error; request.destroy(error);
-    }, config.limits.requestMs);
+    }, requestMs);
     request.on('error', error => { failure ??= error; });
     request.on('close', () => { requestClosed = true; finish(); });
     request.end(body);
