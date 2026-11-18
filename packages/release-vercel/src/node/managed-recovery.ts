@@ -243,7 +243,7 @@ export async function runManagedReceiptCommand(options: RunReleaseOptions): Prom
     stage = 'deployment';
     if (source.config.delivery) {
       const found = await observePrebuiltCandidate(source.config, prebuilt ?? receipt.report.prebuilt,
-        options.transport ?? createPrebuiltTransport(execution, source.config, false, options.buildInfoHttp), options.signal);
+        createPrebuiltTransport(execution, source.config, false, options.buildInfoHttp, options.transport), options.signal);
       deployment = found.deployment; prebuilt = found.observed;
       effects.deploymentCreate = prebuilt.createEffect; effects.deploymentPromote = prebuilt.promoteEffect;
       if (prebuilt.versionAlias) effects.versionAliasAssign = prebuilt.versionAlias.effect;

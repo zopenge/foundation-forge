@@ -10,7 +10,8 @@ vi.mock('node:timers/promises', async importOriginal => {
     wait.started?.(); return original.setTimeout(...args);
   } };
 });
-import { PrebuiltVerification } from '../src/node/prebuilt-vercel.js';
+import { createPrebuiltTransport, PrebuiltVerification } from '../src/node/prebuilt-vercel.js';
+import { Execution } from '../src/node/execution.js';
 
 afterEach(() => { wait.started = undefined; });
 describe('prebuilt poll cancellation', () => {
@@ -24,7 +25,8 @@ describe('prebuilt poll cancellation', () => {
       ? { id: 'dpl_candidate', projectId: 'prj_fixture', ownerId: 'team_fixture', target: 'production', source: 'cli', readyState: 'BUILDING', url: 'candidate.vercel.app' }
       : { id: 'prj_fixture', accountId: 'team_fixture', link: null, lastAliasRequest: { type: 'promote', jobStatus: 'pending', toDeploymentId: 'dpl_candidate' } },
     buildInfo: async () => { throw new Error('polling must not reach artifact verification'); } };
-    const verify = new PrebuiltVerification(prebuiltConfiguration(), transport, controller.signal);
+    const config = prebuiltConfiguration();
+    const verify = new PrebuiltVerification(config, createPrebuiltTransport(new Execution(process.cwd(), config, controller.signal, []), config, false, undefined, transport), controller.signal);
     await expect(phase === 'ready' ? verify.ready(state) : verify.waitAlias(state)).rejects.toMatchObject({ code: 'CANCELLED' });
     expect(waits).toBe(1);
   });

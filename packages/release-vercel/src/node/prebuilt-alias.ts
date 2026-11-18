@@ -16,7 +16,7 @@ async function readBinding(verify: PrebuiltVerification, hostname: string, deadl
   const remaining = deadline === undefined ? verify.config.limits.requestMs : Math.min(verify.config.limits.requestMs, deadline - Date.now());
   if (remaining <= 0) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'VERSION_ALIAS_UNCONFIRMED' });
   const adapter = versionAliasTransport(verify);
-  const value = await request(signal => adapter.read(hostname, signal), remaining, verify.signal);
+  const value = await verify.readVersionAlias(adapter, hostname, deadline);
   if (value === undefined) return;
   const item = record(value);
   if (item.alias !== hostname || item.projectId !== verify.config.vercel.projectId || item.routing !== 'direct'

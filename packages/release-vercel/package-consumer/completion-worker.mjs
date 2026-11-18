@@ -11,6 +11,12 @@ if (!apiUrl?.startsWith('file:') || !cwd || !endpoint || !counter || !['publish'
   throw new Error('completion fixture arguments');
 const transport = completionRpcTransport(endpoint, (code, details) => new ReleaseError(code, details));
 if (mode === 'cli-verify-retry') {
+  const { request } = await import('node:http');
+  // 仅将固定云地址转至自有真实HTTP服务；保留SDK的认证、计时、限长及request/socket关闭。
+  mock.module('node:https', { namedExports: { request: (url, options, callback) => {
+    if (url.origin !== 'https://api.vercel.com' || options.method !== 'GET') throw new Error('unexpected native fixture request');
+    return request(new URL(`${url.pathname}${url.search}`, endpoint), options, callback);
+  } } });
   // 仅替换公开HTTP适配叶边界；真实CLI、限长读取、解析及发布/恢复流程仍执行安装产物。
   mock.module('@openge/forge-http-transport/node', { namedExports: {
     createNodeHttpTransport: () => ({
@@ -40,24 +46,14 @@ const count=f.existsSync(counter)?Number(f.readFileSync(counter,'utf8')):0;f.wri
 const name=count===0?'candidate':'candidate'+(count+1);
 process.stdout.write(JSON.stringify({status:'ok',deployment:{id:'dpl_'+name,url:'https://'+name+'.vercel.app',target:'production'}}));`;
 Execution.prototype.run = function (name, check, ...rest) {
-  let apiTrace;
   if (name === 'prebuilt-create') {
     const index = check.args?.indexOf('--global-config') ?? -1;
     if (index < 0) throw new Error('fixture creation argv missing');
     check = { ...check, command: process.execPath, args: ['-e', createScript, counter, ...check.args.slice(index)] };
   } else if (name === 'vercel-api' && mode === 'cli-verify-retry') {
-    const index = check.args?.indexOf('api') ?? -1, path = check.args?.[index + 1];
-    if (index < 0 || !path) throw new Error('fixture API argv missing');
-    // 仅记录固定 fixture API 路径及时间，区分 CLI 准备与实际 loopback 请求，不记录参数/环境。
-    apiTrace = { path, at: Date.now() };
-    process.stderr.write(JSON.stringify({ fixtureApi: 'start', ...apiTrace }) + '\n');
-    const script = `const {completionRpc}=await import(process.argv[1]);const result=await completionRpc(process.argv[2],'api',[process.argv[3]],AbortSignal.timeout(30000));if(!result.ok)throw Error(result.error.code);process.stdout.write(JSON.stringify(result.value));`;
-    check = { ...check, command: process.execPath, args: ['--input-type=module', '-e', script, new URL('./completion-rpc.mjs', import.meta.url).href, endpoint, path] };
+    throw new Error('default prebuilt reads must use the native fixture endpoint');
   }
-  const pending = execute.call(this, name, check, ...rest);
-  if (!apiTrace) return pending;
-  return pending.finally(() => process.stderr.write(JSON.stringify({ fixtureApi: 'settled', path: apiTrace.path,
-    elapsedMs: Date.now() - apiTrace.at }) + '\n'));
+  return execute.call(this, name, check, ...rest);
 };
 if (mode === 'crash-publish-receipt') {
   const open = filesystem.promises.open;

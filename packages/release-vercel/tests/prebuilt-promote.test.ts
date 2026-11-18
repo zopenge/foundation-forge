@@ -85,7 +85,7 @@ describe('version alias HTTP boundary', () => {
   function adapter() {
     const config = prebuiltConfiguration();
     Object.assign(config.delivery, { versionAlias: { hostnameTemplate: 'fixture-{sha}.vercel.app' } });
-    return createPrebuiltTransport(new Execution(process.cwd(), config, undefined, []), config, true).versionAlias;
+    return createPrebuiltTransport(new Execution(process.cwd(), config, undefined, []), config, true).transport.versionAlias;
   }
   const binding = { alias: hostname, uid: 'alias_fixture', deploymentId: 'dpl_candidate', projectId: 'prj_fixture' };
   it('reads the exact hostname in the team without filtering away foreign-project conflicts', async () => {

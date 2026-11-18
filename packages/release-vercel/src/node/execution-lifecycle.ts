@@ -5,4 +5,5 @@ export interface ExecutionResult extends CommandResult { readonly preparation?: 
 export interface ExecutionLifecycle {
   execute(runner: CommandRunner, name: string, spec: CommandSpec, observer?: CommandObserver): Promise<ExecutionResult>;
   observeCheckout?<T>(operation: () => Promise<T>): Promise<T>;
+  observeRequest?<T>(operation: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T>;
 }

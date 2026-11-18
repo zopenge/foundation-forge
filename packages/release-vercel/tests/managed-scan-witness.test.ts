@@ -1,4 +1,4 @@
-import { mkdir, rename, symlink, unlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, rename, symlink, unlink, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { setImmediate as tick } from 'node:timers/promises';
@@ -246,7 +246,15 @@ it.each(['payload', 'control', 'lock-lookalike', 'recovery-lookalike', 'owner-lo
     : resolve(fixture.paths.slotRoot, names[kind]);
   await writeFile(victim, 'owned');
   checkpoint.before = async path => { if (path === victim) {
-    if (kind === 'control') await rename(victim, fixture.paths.statePath); else await unlink(victim);
+    if (kind === 'control') {
+      // 每轮只移动源条目，不把上轮目标覆盖时的宿主错误混作预期 ENOENT。
+      const destination = resolve(fixture.root, `control-removed-${calls}`);
+      const exists = await lstat(destination).then(() => true, (error: unknown) => {
+        if (record(error).code === 'ENOENT') return false; throw error;
+      });
+      expect(exists, 'controlled disappearance must not overwrite a previous destination').toBe(false);
+      await rename(victim, destination);
+    } else await unlink(victim);
   } };
   let calls = 0;
   const error = await failure(observeBudget(fixture.paths, fixture.limits, async (...args) => {
