@@ -111,6 +111,16 @@ export function createPrebuiltTransport(execution: Execution, config: ReleaseCon
   return { transport, apiRead: (path, signal, deadline) => nativeApiRead(execution, config, path, signal, deadline),
     aliasRead: (_adapter, hostname, signal, deadline) => nativeAliasRead(execution, config, hostname, signal, deadline) };
 }
+const failedDeploymentStates = ['ERROR', 'CANCELED', 'CANCELLED'];
+
+/** 保留已核对候选的当次失败观察，供只读 status 返回原收据和新诊断。 */
+export class PrebuiltStatusFailure extends ReleaseError {
+  constructor(readonly deployment: ReleaseDeployment, blockCode: unknown) {
+    super('DEPLOYMENT_FAILED', { deploymentId: deployment.id, state: deployment.state, observedAt: new Date().toISOString(),
+      ...(blockCode === 'TEAM_ACCESS_REQUIRED' || blockCode === 'COMMIT_AUTHOR_REQUIRED' ? { providerBlockCode: blockCode } : {}) });
+  }
+}
+
 export class PrebuiltVerification {
   constructor(readonly config: ReleaseConfig, private readonly access: PrebuiltAccess, readonly signal?: AbortSignal) {}
   get transport(): ReleaseTransport { return this.access.transport; }
@@ -141,25 +151,30 @@ export class PrebuiltVerification {
     }
     return project;
   }
-  async candidate(state: PrebuiltReleaseState, deadline?: number): Promise<ReleaseDeployment> {
+  async candidate(state: PrebuiltReleaseState, deadline?: number, purpose?: 'status'): Promise<ReleaseDeployment> {
     const id = candidateId(state.deploymentId), value = record(await this.api(`/v13/deployments/${id}`, deadline));
     if (value.id !== id || value.projectId !== this.config.vercel.projectId || value.ownerId !== this.config.vercel.teamId
       || value.target !== 'production' || value.source !== 'cli') throw new ReleaseError('DEPLOYMENT_SOURCE', { reason: 'PREBUILT_CANDIDATE' });
     const origin = candidateOrigin(value.url);
     if (state.deploymentUrl && origin !== state.deploymentUrl) throw new ReleaseError('DEPLOYMENT_SOURCE', { reason: 'CANDIDATE_URL_CHANGED' });
-    return { id, sha: state.sourceSha, projectId: this.config.vercel.projectId, state: String(value.readyState), url: origin };
+    const readyState = value.readyState;
+    const deployment = { id, sha: state.sourceSha, projectId: this.config.vercel.projectId, state: String(readyState), url: origin };
+    if (purpose === 'status' && typeof readyState === 'string' && (readyState === 'BLOCKED' || failedDeploymentStates.includes(readyState))) {
+      throw new PrebuiltStatusFailure(deployment, readyState === 'BLOCKED' ? record(value.seatBlock).blockCode : undefined);
+    }
+    return deployment;
   }
   async marker(state: PrebuiltReleaseState, origin: string, deadline?: number): Promise<void> {
     const url = new URL(prebuiltMarkerPath, origin); url.searchParams.set('artifact', state.artifactSha256);
     const value = record(await request(signal => this.transport.buildInfo(url.href, signal), this.requestMs(deadline), this.signal));
     if (!matchesPrebuiltMarker(value, state)) throw new ReleaseError('ARTIFACT_CHANGED', { reason: 'REMOTE_MARKER' });
   }
-  async ready(state: PrebuiltReleaseState): Promise<ReleaseDeployment> {
+  async ready(state: PrebuiltReleaseState, purpose?: 'status'): Promise<ReleaseDeployment> {
     const deadline = Date.now() + this.config.limits.deploymentMs;
     do {
-      assertActive(this.signal); const result = await this.candidate(state, deadline);
+      assertActive(this.signal); const result = await this.candidate(state, deadline, purpose);
       if (result.state === 'READY') { await this.marker(state, result.url, deadline); return result; }
-      if (['ERROR', 'CANCELED', 'CANCELLED'].includes(result.state)) throw new ReleaseError('DEPLOYMENT_FAILED', { deploymentId: result.id, state: result.state });
+      if (failedDeploymentStates.includes(result.state)) throw new ReleaseError('DEPLOYMENT_FAILED', { deploymentId: result.id, state: result.state });
       const remaining = deadline - Date.now(); if (remaining <= 0) break;
       await this.pause(remaining);
     } while (Date.now() < deadline);

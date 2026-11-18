@@ -16,7 +16,7 @@ import { identityReader } from './process-identities.js';
 import type { PrebuiltReleaseState, ReleaseBudget, ReleaseCompletionState, ReleaseDeployment, ReleaseDiagnostic, ReleaseRecoveryObservation, ReleaseRefRelation, ReleaseReport, ReleaseStage, RunReleaseOptions } from '../contracts.js';
 import { diagnostic } from './workspace-release.js';
 import { createTransport, VercelVerification } from './vercel.js';
-import { createPrebuiltTransport } from './prebuilt-vercel.js';
+import { createPrebuiltTransport, PrebuiltStatusFailure } from './prebuilt-vercel.js';
 import { managedPrebuiltContext } from './prebuilt-state.js';
 import { observePrebuiltCandidate } from './prebuilt-recovery.js';
 import { prebuiltCandidateContext } from './version-alias.js';
@@ -243,7 +243,7 @@ export async function runManagedReceiptCommand(options: RunReleaseOptions): Prom
     stage = 'deployment';
     if (source.config.delivery) {
       const found = await observePrebuiltCandidate(source.config, prebuilt ?? receipt.report.prebuilt,
-        createPrebuiltTransport(execution, source.config, false, options.buildInfoHttp, options.transport), options.signal);
+        createPrebuiltTransport(execution, source.config, false, options.buildInfoHttp, options.transport), options.signal, 'status');
       deployment = found.deployment; prebuilt = found.observed;
       effects.deploymentCreate = prebuilt.createEffect; effects.deploymentPromote = prebuilt.promoteEffect;
       if (prebuilt.versionAlias) effects.versionAliasAssign = prebuilt.versionAlias.effect;
@@ -258,7 +258,13 @@ export async function runManagedReceiptCommand(options: RunReleaseOptions): Prom
       stage = 'completion'; throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'COMPLETION_PENDING' });
     }
     stage = 'complete';
-  } catch (error) { failure = diagnostic(error); }
+  } catch (error) {
+    if (error instanceof PrebuiltStatusFailure) {
+      deployment = error.deployment;
+      prebuilt = selected?.receipt.report.prebuilt;
+    }
+    failure = diagnostic(error);
+  }
   const source = selected?.receipt.source;
   const candidateContext = source ? prebuiltCandidateContext(source.config, prebuilt) : undefined;
   return { schemaVersion: 2, command: options.command, ok: failure === undefined, startedAt, finishedAt: new Date().toISOString(), steps: [], stage,

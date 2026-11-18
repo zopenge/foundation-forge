@@ -32,7 +32,8 @@ async function fixture(withAlias = false) {
   let aliased: string | undefined, promotions = 0, assignments = 0; const paths: string[] = [];
   const versionBindings = new Map<string, string>();
   const markers = new Map<string, Record<string, unknown>>(), jobs = new Map<string, string>();
-  const hooks: { promote?: () => void; failPromotion?: boolean; alias?: () => void; versionRead?: () => void; project?: () => Promise<void> } = {};
+  const hooks: { promote?: () => void; failPromotion?: boolean; alias?: () => void; versionRead?: () => void; project?: () => Promise<void>;
+    deployment?: Readonly<Record<string, unknown>> } = {};
   const transport: ReleaseTransport = {
     api: async path => {
       paths.push(path);
@@ -45,7 +46,7 @@ async function fixture(withAlias = false) {
         const id = path.split('/')[3]?.split('?')[0]; if (!id) throw new Error('deployment ID required');
         if (!markers.has(id)) markers.set(id, JSON.parse(await readFile(resolve(value.cwd,
           'state/release-slot/checkout/state/forge-vercel-release/prebuilt/.vercel/output/static/.well-known/forge-prebuilt.json'), 'utf8')));
-        return { id, ownerId: 'team_fixture', projectId: 'prj_fixture', target: 'production', source: 'cli', readyState: 'READY', url: `${id.slice(4)}.vercel.app` };
+        return { id, ownerId: 'team_fixture', projectId: 'prj_fixture', target: 'production', source: 'cli', readyState: 'READY', url: `${id.slice(4)}.vercel.app`, ...hooks.deployment };
       }
       if (path.startsWith('/v4/aliases/')) {
         if (!aliased) throw new ReleaseError('ALIAS_MISMATCH');
