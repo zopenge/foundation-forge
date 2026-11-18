@@ -7,10 +7,11 @@ import { mock } from 'node:test';
 import { completionRpcTransport } from './completion-rpc.mjs';
 
 const [apiUrl, cwd, endpoint, counter, mode, binary] = process.argv.slice(2);
-if (!apiUrl?.startsWith('file:') || !cwd || !endpoint || !counter || !['publish', 'crash-publish-receipt', 'verify-retry', 'cli-verify-retry'].includes(mode))
+if (!apiUrl?.startsWith('file:') || !cwd || !endpoint || !counter || !['publish', 'crash-publish-receipt', 'verify-retry', 'cli-verify-retry', 'cli-status'].includes(mode))
   throw new Error('completion fixture arguments');
 const transport = completionRpcTransport(endpoint, (code, details) => new ReleaseError(code, details));
-if (mode === 'cli-verify-retry') {
+const cli = mode === 'cli-verify-retry' || mode === 'cli-status';
+if (cli) {
   const { request } = await import('node:http');
   // 仅将固定云地址转至自有真实HTTP服务；保留SDK的认证、计时、限长及request/socket关闭。
   mock.module('node:https', { namedExports: { request: (url, options, callback) => {
@@ -50,7 +51,7 @@ Execution.prototype.run = function (name, check, ...rest) {
     const index = check.args?.indexOf('--global-config') ?? -1;
     if (index < 0) throw new Error('fixture creation argv missing');
     check = { ...check, command: process.execPath, args: ['-e', createScript, counter, ...check.args.slice(index)] };
-  } else if (name === 'vercel-api' && mode === 'cli-verify-retry') {
+  } else if (name === 'vercel-api' && cli) {
     throw new Error('default prebuilt reads must use the native fixture endpoint');
   }
   return execute.call(this, name, check, ...rest);
@@ -63,10 +64,10 @@ if (mode === 'crash-publish-receipt') {
   };
   syncBuiltinESMExports();
 }
-if (mode === 'cli-verify-retry') {
+if (cli) {
   if (!binary) throw new Error('CLI fixture binary missing');
   // CLI fixture不配置versionAlias，只读云边界沿受控RPC，未替换全局fetch。
-  process.argv = [process.execPath, binary, 'verify', '--cwd', cwd, '--retry-completion'];
+  process.argv = [process.execPath, binary, ...(mode === 'cli-status' ? ['status', '--cwd', cwd] : ['verify', '--cwd', cwd, '--retry-completion'])];
   await import(pathToFileURL(binary).href);
 } else {
   const report = await runRelease({ command: mode === 'verify-retry' ? 'verify' : 'publish', cwd, transport,

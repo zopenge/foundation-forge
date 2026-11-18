@@ -19,7 +19,7 @@ export async function verifyCompletionConsumer({ cwd, config, git, binary }) {
   await writeFile(control, 'fail'); await writeFile(resolve(cwd, 'release.config.json'), JSON.stringify(selected));
   git('add', '--', 'release.config.json', 'completion-job.mjs'); git('commit', '-m', 'completion consumer');
   const sha = git('rev-parse', 'HEAD');
-  let marker, promoted, promotions = 0;
+  let marker, promoted, promotions = 0, blocked = false, blockedReads = 0;
   const requests = [];
   const transport = {
     api: async path => {
@@ -29,7 +29,9 @@ export async function verifyCompletionConsumer({ cwd, config, git, binary }) {
         ...(promoted ? { lastAliasRequest: { type: 'promote', jobStatus: 'succeeded', toDeploymentId: promoted } } : {}) };
       if (path.startsWith('/v13/deployments/')) {
         marker ??= JSON.parse(await readFile(resolve(cwd, 'state/release-slot/checkout/state/forge-vercel-release/prebuilt/.vercel/output/static/.well-known/forge-prebuilt.json'), 'utf8'));
-        return { id: 'dpl_candidate', ownerId: 'team_fixture', projectId: 'prj_fixture', target: 'production', source: 'cli', readyState: 'READY', url: 'candidate.vercel.app' };
+        if (blocked && ++blockedReads > 1) throw new Error('blocked candidate was polled again');
+        return { id: 'dpl_candidate', ownerId: 'team_fixture', projectId: 'prj_fixture', target: 'production', source: 'cli', url: 'candidate.vercel.app',
+          ...(blocked ? { readyState: 'BLOCKED', seatBlock: { blockCode: 'TEAM_ACCESS_REQUIRED' } } : { readyState: 'READY' }) };
       }
       if (path.startsWith('/v4/aliases/') && promoted) return { alias: 'fixture.example.invalid', projectId: 'prj_fixture', deploymentId: promoted };
       throw new Error(`unexpected fixture API ${path}`);
@@ -78,11 +80,30 @@ export async function verifyCompletionConsumer({ cwd, config, git, binary }) {
       throw new Error(`tarball completion failure contract: ${JSON.stringify({ error: published.report.error,
         elapsedMs: published.elapsedMs, stderr: published.stderr, requests, progress: await progress() })}`);
     const receiptPath = resolve(cwd, 'state/release-slot/latest-publish.json'), receipt = await readFile(receiptPath);
+    const historyPath = resolve(cwd, 'state/release-slot/history', `${published.report.runId}.json`), history = await readFile(historyPath);
+    const readsBefore = server.nativeReads, writesBefore = promotions;
+    requests.length = 0; blocked = true;
+    const status = await run('cli-status'), failed = status.report;
+    blocked = false;
+    const details = failed.error?.details, deployment = failed.deployment;
+    if (status.code !== 1 || failed.ok || failed.stage !== 'deployment' || failed.error?.code !== 'DEPLOYMENT_FAILED'
+      || details?.deploymentId !== 'dpl_candidate' || details.state !== 'BLOCKED' || details.providerBlockCode !== 'TEAM_ACCESS_REQUIRED'
+      || details.publicationStage !== 'completion' || details.publicationStage !== published.report.stage
+      || !Number.isFinite(Date.parse(details.observedAt)) || failed.runId !== published.report.runId || failed.candidateSha !== sha
+      || deployment?.id !== 'dpl_candidate' || deployment.state !== 'BLOCKED' || deployment.projectId !== selected.vercel.projectId
+      || deployment.url !== 'https://candidate.vercel.app' || deployment.sha !== sha || failed.steps.length !== 0
+      || JSON.stringify(failed.effects) !== JSON.stringify(published.report.effects)
+      || JSON.stringify(failed.prebuilt) !== JSON.stringify(published.report.prebuilt)
+      || JSON.stringify(failed.completion) !== JSON.stringify(published.report.completion)
+      || server.nativeReads - readsBefore !== 2 || blockedReads !== 1 || requests.length !== 2 || promotions !== writesBefore
+      || !(await readFile(receiptPath)).equals(receipt) || !(await readFile(historyPath)).equals(history))
+      throw new Error(`tarball CLI blocked candidate contract: ${JSON.stringify({ error: failed.error, deployment, requests, stderr: status.stderr })}`);
     await writeFile(control, 'ok');
+    const readsBeforeRetry = server.nativeReads;
     const resumed = await run('cli-verify-retry'), completed = resumed.report;
     if (resumed.code !== 0 || !completed.ok || completed.candidateSha !== sha || completed.completion?.status !== 'completed'
       || completed.completion?.attempts.length !== 2 || JSON.stringify(completed.completion.attempts[0]) !== JSON.stringify(published.report.completion.attempts[0])
-      || !(await readFile(receiptPath)).equals(receipt) || promotions !== 1 || Number(await readFile(counter, 'utf8')) !== 1 || server.nativeReads < 1)
+      || !(await readFile(receiptPath)).equals(receipt) || promotions !== 1 || Number(await readFile(counter, 'utf8')) !== 1 || server.nativeReads <= readsBeforeRetry)
       throw new Error(`tarball CLI completion retry contract: ${JSON.stringify({ error: completed.error, stage: completed.stage,
         steps: completed.steps.slice(-3), processes: completed.processes, completion: completed.completion?.status,
         elapsedMs: resumed.elapsedMs, stderr: resumed.stderr, requests, progress: await progress() })}`);

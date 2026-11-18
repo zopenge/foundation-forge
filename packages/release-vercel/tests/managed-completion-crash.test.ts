@@ -36,6 +36,15 @@ it('recovers the archived original intent when the coordinator exits before its 
   const recovered = await runs.run({ command: 'recover', cwd: value.cwd, transport: value.transport });
   expect(recovered, JSON.stringify(recovered.error)).toMatchObject({ ok: true, processes: { status: 'closed' }, completion: { status: 'failed' } });
   const archived = await readFile(resolve(location.paths.slotRoot, `history/${state.runId}.json`));
+  const blocked = await runs.run({ command: 'status', cwd: value.cwd, sha: value.sha, transport: { ...value.transport,
+    api: async (path, signal) => {
+      const response = await value.transport.api(path, signal);
+      return path.startsWith('/v13/deployments/') && response && typeof response === 'object'
+        ? { ...response, readyState: 'BLOCKED' } : response;
+    } } });
+  expect(blocked).toMatchObject({ ok: false, stage: 'deployment', recovery: { reportExists: false },
+    deployment: { id: state.prebuilt?.deploymentId, state: 'BLOCKED' }, error: { code: 'DEPLOYMENT_FAILED' } });
+  expect(blocked.error?.details).not.toHaveProperty('publicationStage');
   await writeFile(value.control, 'ok');
   const verified = await runs.run({ command: 'verify', cwd: value.cwd, sha: value.sha, retryCompletion: true, transport: value.transport });
   expect(verified, JSON.stringify(verified.error)).toMatchObject({ ok: true, candidateSha: value.sha,

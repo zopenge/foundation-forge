@@ -11,7 +11,7 @@ import { managedBudgetFixture } from './helpers/managed-budget-fixture.js';
 
 const checkpoint = vi.hoisted(() => {
   const idle: (path: string) => Promise<void> = async () => {};
-  return { before: idle, after: idle, canonical: idle, ordered: '', calls: [] as string[], opened: [] as import('node:fs').Dir[] };
+  return { before: idle, after: idle, canonical: idle, ordered: new Set<string>(), calls: [] as string[], opened: [] as import('node:fs').Dir[] };
 });
 vi.mock('node:fs/promises', async importOriginal => {
   const native = await importOriginal<typeof import('node:fs/promises')>();
@@ -28,7 +28,7 @@ vi.mock('node:fs/promises', async importOriginal => {
     opendir: async (...args: Parameters<typeof native.opendir>) => {
       checkpoint.calls.push(`opendir:${String(args[0])}`);
       const directory = await native.opendir(...args); checkpoint.opened.push(directory);
-      if (String(args[0]) === checkpoint.ordered) {
+      if (checkpoint.ordered.has(String(args[0]))) {
         const iterate = directory[Symbol.asyncIterator].bind(directory);
         directory[Symbol.asyncIterator] = async function* () {
           const entries = []; for await (const entry of { [Symbol.asyncIterator]: iterate }) entries.push(entry);
@@ -75,7 +75,7 @@ const until = async (condition: () => boolean, finished: Promise<unknown>) => {
 };
 afterEach(async () => {
   await drain();
-  checkpoint.before = async () => {}; checkpoint.after = async () => {}; checkpoint.canonical = async () => {}; checkpoint.ordered = '';
+  checkpoint.before = async () => {}; checkpoint.after = async () => {}; checkpoint.canonical = async () => {}; checkpoint.ordered.clear();
   vi.useRealTimers(); vi.restoreAllMocks();
   const errors: unknown[] = [];
   for (const directory of checkpoint.opened.splice(0)) {
@@ -100,7 +100,7 @@ it('keeps ordinary missing internal link fallback free of failure witnesses, new
 
 it('records a nonzero second-attempt origin independently from delayed first-attempt drain', async () => {
   const fixture = await prepare(), bad = resolve(fixture.paths.checkoutRoot, 'a-bad'), hold = resolve(fixture.paths.checkoutRoot, 'z-hold');
-  await writeFile(bad, 'bad'); await writeFile(hold, 'hold'); checkpoint.ordered = fixture.paths.checkoutRoot;
+  await writeFile(bad, 'bad'); await writeFile(hold, 'hold'); checkpoint.ordered.add(fixture.paths.checkoutRoot);
   const entered = gate(), held = gate(); let now = 100, state: ScanFailureWitness | undefined, calls = 0;
   checkpoint.before = async path => { if (path === bad) { await entered.promise; await unlink(bad); } };
   checkpoint.after = async path => { if (path === hold) { entered.release(); await held.promise; } };
@@ -150,7 +150,7 @@ it('keeps a later selected replacement error distinct from the original failed s
 it('does not downgrade an unsafe first cause when a later sibling observes ENOENT', async () => {
   const fixture = await prepare(), link = resolve(fixture.paths.checkoutRoot, 'a-link'), bad = resolve(fixture.paths.checkoutRoot, 'z-bad');
   const target = resolve(fixture.root, 'outside-slot'); await mkdir(target); await symlink(target, link, 'junction'); await writeFile(bad, 'owned');
-  checkpoint.ordered = fixture.paths.checkoutRoot; const entered = gate(), held = gate();
+  checkpoint.ordered.add(fixture.paths.checkoutRoot); const entered = gate(), held = gate();
   checkpoint.before = async path => { if (path === bad) { entered.release(); await held.promise; await unlink(bad); } };
   checkpoint.after = async path => { if (path === link) await entered.promise; };
   const witness = new ScanFailureWitness(0), now = vi.spyOn(performance, 'now').mockReturnValue(10);
@@ -166,13 +166,16 @@ it('does not downgrade an unsafe first cause when a later sibling observes ENOEN
 
 it.each(['before', 'after'] as const)('freezes pending first and unsafe evidence observed %s the original deadline', async when => {
   const fixture = await prepare(), link = resolve(fixture.paths.checkoutRoot, 'a-link'), bad = resolve(fixture.paths.checkoutRoot, 'b-bad');
-  const hold = resolve(fixture.paths.checkoutRoot, 'z-hold'), target = resolve(fixture.paths.slotRoot, 'target');
-  await mkdir(target); await symlink(target, link, 'junction'); await writeFile(bad, 'bad'); await writeFile(hold, 'hold'); checkpoint.ordered = fixture.paths.checkoutRoot;
-  const linkEntered = gate(), holdEntered = gate(), linkHeld = gate(), finalHeld = gate(); let firstLink = true;
+  const target = resolve(fixture.paths.slotRoot, 'target');
+  await mkdir(target); await symlink(target, link, 'junction'); await writeFile(bad, 'bad');
+  checkpoint.ordered.add(fixture.paths.checkoutRoot); checkpoint.ordered.add(fixture.paths.slotRoot);
+  // 保持槽内锁分支占用许可。用槽层目标读保持扫描未结算，使 checkout 只需读取链接和消失条目。
+  const linkEntered = gate(), holdEntered = gate(), linkHeld = gate(), finalHeld = gate(), lockHeld = gate(); let firstLink = true;
   checkpoint.before = async path => { if (path === bad) { await linkEntered.promise; await holdEntered.promise; await unlink(bad); } };
   checkpoint.after = async path => {
     if (path === link && firstLink) { firstLink = false; linkEntered.release(); await linkHeld.promise; }
-    if (path === hold) { holdEntered.release(); await finalHeld.promise; }
+    if (path === target) { holdEntered.release(); await finalHeld.promise; }
+    if (path === fixture.paths.lockPath) await lockHeld.promise;
   };
   let now = 0, state: ScanFailureWitness | undefined; const scans: Promise<unknown>[] = [];
   vi.spyOn(performance, 'now').mockImplementation(() => now); vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
@@ -192,7 +195,10 @@ it.each(['before', 'after'] as const)('freezes pending first and unsafe evidence
     expect(witness.selection).toBeUndefined();
     if (when === 'before') expect(witness.blocking).toMatchObject({ relation: 'later', reason: 'LINK_REPLACED', observedOffsetMs: 500 });
     else expect(witness.blocking).toBeUndefined();
-    now = 32000; linkHeld.release(); finalHeld.release(); await Promise.allSettled(scans);
+    now = 32000; linkHeld.release();
+    // 先让被替换链接的身份复核完成，再释放槽层目录，避免其取消抢成首个重扫阻断。
+    if (when === 'after') await until(() => !!state?.snapshot().blocking, Promise.allSettled(scans));
+    finalHeld.release(); lockHeld.release(); await Promise.allSettled(scans);
     expect(state?.snapshot().blocking).toMatchObject({ relation: 'later', reason: 'LINK_REPLACED' });
     expect(JSON.stringify(error.details)).toBe(frozen); expect(vi.getTimerCount()).toBe(0);
   } finally { await drain(); await Promise.allSettled(scans); await Promise.allSettled([task]); }
@@ -277,7 +283,7 @@ it('retains a later unsafe blocker separately from the first directory failure',
   const fixture = await prepare(), link = resolve(fixture.paths.checkoutRoot, 'a-link'), directory = resolve(fixture.paths.checkoutRoot, 'z-directory');
   const leaf = resolve(directory, 'entry'), target = resolve(fixture.paths.slotRoot, 'target');
   await mkdir(directory); await mkdir(target); await symlink(target, link, 'junction'); await writeFile(leaf, 'owned');
-  const entered = gate(), held = gate(); checkpoint.ordered = fixture.paths.checkoutRoot; let firstLink = true, changed = false;
+  const entered = gate(), held = gate(); checkpoint.ordered.add(fixture.paths.checkoutRoot); let firstLink = true, changed = false;
   checkpoint.after = async path => {
     if (path === link && firstLink) { firstLink = false; entered.release(); await held.promise; }
     if (path === leaf && !changed) {

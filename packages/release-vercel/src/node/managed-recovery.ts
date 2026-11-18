@@ -14,9 +14,10 @@ import { normalizeRepository, remoteRefs } from './git.js';
 import { assertHistoricalSource, relativeConfigPath } from './source.js';
 import { identityReader } from './process-identities.js';
 import type { PrebuiltReleaseState, ReleaseBudget, ReleaseCompletionState, ReleaseDeployment, ReleaseDiagnostic, ReleaseRecoveryObservation, ReleaseRefRelation, ReleaseReport, ReleaseStage, RunReleaseOptions } from '../contracts.js';
+import { releaseStages } from '../contracts.js';
 import { diagnostic } from './workspace-release.js';
 import { createTransport, VercelVerification } from './vercel.js';
-import { createPrebuiltTransport } from './prebuilt-vercel.js';
+import { createPrebuiltTransport, PrebuiltStatusFailure } from './prebuilt-vercel.js';
 import { managedPrebuiltContext } from './prebuilt-state.js';
 import { observePrebuiltCandidate } from './prebuilt-recovery.js';
 import { prebuiltCandidateContext } from './version-alias.js';
@@ -243,7 +244,7 @@ export async function runManagedReceiptCommand(options: RunReleaseOptions): Prom
     stage = 'deployment';
     if (source.config.delivery) {
       const found = await observePrebuiltCandidate(source.config, prebuilt ?? receipt.report.prebuilt,
-        createPrebuiltTransport(execution, source.config, false, options.buildInfoHttp, options.transport), options.signal);
+        createPrebuiltTransport(execution, source.config, false, options.buildInfoHttp, options.transport), options.signal, 'status');
       deployment = found.deployment; prebuilt = found.observed;
       effects.deploymentCreate = prebuilt.createEffect; effects.deploymentPromote = prebuilt.promoteEffect;
       if (prebuilt.versionAlias) effects.versionAliasAssign = prebuilt.versionAlias.effect;
@@ -258,7 +259,17 @@ export async function runManagedReceiptCommand(options: RunReleaseOptions): Prom
       stage = 'completion'; throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'COMPLETION_PENDING' });
     }
     stage = 'complete';
-  } catch (error) { failure = diagnostic(error); }
+  } catch (error) {
+    failure = diagnostic(error);
+    if (error instanceof PrebuiltStatusFailure) {
+      deployment = error.deployment;
+      prebuilt = selected?.receipt.report.prebuilt;
+      // 缺收据时的恢复描述只供观察，不能作为原 publish 阶段证明。
+      const recordedStage = selected?.reportExists ? selected.receipt.report.stage : undefined;
+      const publicationStage = releaseStages.find(stage => stage === recordedStage);
+      if (publicationStage !== undefined) failure = { code: failure.code, details: { ...failure.details, publicationStage } };
+    }
+  }
   const source = selected?.receipt.source;
   const candidateContext = source ? prebuiltCandidateContext(source.config, prebuilt) : undefined;
   return { schemaVersion: 2, command: options.command, ok: failure === undefined, startedAt, finishedAt: new Date().toISOString(), steps: [], stage,

@@ -1,7 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { afterEach, vi } from 'vitest';
-import type { ReleaseTransport } from '../../src/contracts.js';
+import type { ReleaseConfig, ReleaseTransport } from '../../src/contracts.js';
 
 const boundary = vi.hoisted(() => ({ counter: '', mode: 'ok' }));
 // 只有创建部署的外部 CLI 被换成随仓库维护的真实 Node 子进程；Git、槽位、锁、事务及关闭协议均真实运行。
@@ -17,10 +17,11 @@ import { managedFixture } from './managed-fixture.js';
 
 const owned: Awaited<ReturnType<typeof managedFixture>>[] = [];
 afterEach(async () => { for (const fixture of owned.splice(0)) await fixture.dispose(); boundary.counter = ''; boundary.mode = 'ok'; });
-async function fixture(withAlias = false) {
+async function fixture(withAlias = false, acceptance: ReleaseConfig['acceptance'] | undefined = undefined) {
   const value = await managedFixture(); owned.push(value);
   if (value.config.source.mode !== 'managed-commit') throw new Error('managed source required');
-  const config = { ...value.config, delivery: { mode: 'prebuilt', maxFiles: 100, maxBytes: 1_048_576,
+  const config = { ...value.config, acceptance: acceptance ?? value.config.acceptance,
+    delivery: { mode: 'prebuilt', maxFiles: 100, maxBytes: 1_048_576,
     ...(withAlias ? { versionAlias: { hostnameTemplate: 'fixture-{sha}.vercel.app' } } : {}),
     concurrencyControl: { mode: 'external-serialization', scope: 'fixture-project' },
     admission: [{ command: 'node', args: ['-e', 'process.exit(0)'] }] },
@@ -32,7 +33,8 @@ async function fixture(withAlias = false) {
   let aliased: string | undefined, promotions = 0, assignments = 0; const paths: string[] = [];
   const versionBindings = new Map<string, string>();
   const markers = new Map<string, Record<string, unknown>>(), jobs = new Map<string, string>();
-  const hooks: { promote?: () => void; failPromotion?: boolean; alias?: () => void; versionRead?: () => void; project?: () => Promise<void> } = {};
+  const hooks: { promote?: () => void; failPromotion?: boolean; alias?: () => void; versionRead?: () => void; project?: () => Promise<void>;
+    deployment?: Readonly<Record<string, unknown>> } = {};
   const transport: ReleaseTransport = {
     api: async path => {
       paths.push(path);
@@ -45,7 +47,7 @@ async function fixture(withAlias = false) {
         const id = path.split('/')[3]?.split('?')[0]; if (!id) throw new Error('deployment ID required');
         if (!markers.has(id)) markers.set(id, JSON.parse(await readFile(resolve(value.cwd,
           'state/release-slot/checkout/state/forge-vercel-release/prebuilt/.vercel/output/static/.well-known/forge-prebuilt.json'), 'utf8')));
-        return { id, ownerId: 'team_fixture', projectId: 'prj_fixture', target: 'production', source: 'cli', readyState: 'READY', url: `${id.slice(4)}.vercel.app` };
+        return { id, ownerId: 'team_fixture', projectId: 'prj_fixture', target: 'production', source: 'cli', readyState: 'READY', url: `${id.slice(4)}.vercel.app`, ...hooks.deployment };
       }
       if (path.startsWith('/v4/aliases/')) {
         if (!aliased) throw new ReleaseError('ALIAS_MISMATCH');

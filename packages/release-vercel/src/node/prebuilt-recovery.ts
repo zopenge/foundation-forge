@@ -8,10 +8,10 @@ import { observeVersionAlias } from './prebuilt-alias.js';
 
 /** 原始回执不改写；返回本次独立观察到的状态，不能用当前 manifest 补造旧绑定。 */
 export async function observePrebuiltCandidate(config: ReleaseConfig, state: PrebuiltReleaseState | undefined,
-  transport: PrebuiltAccess, signal?: AbortSignal) {
+  transport: PrebuiltAccess, signal?: AbortSignal, purpose?: 'status') {
   if (!state?.deploymentId) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'PREBUILT_CANDIDATE_ID_MISSING' });
   const verify = new PrebuiltVerification(config, transport, signal);
-  await verify.project(undefined, true); const deployment = await verify.ready(state);
+  await verify.project(undefined, true); const deployment = await verify.ready(state, purpose);
   const observed: PrebuiltReleaseState = { ...state, createEffect: 'accepted' };
   if (state.versionAlias) {
     await observeVersionAlias(verify, state);
