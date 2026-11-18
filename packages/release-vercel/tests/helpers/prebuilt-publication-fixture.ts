@@ -17,10 +17,10 @@ import { managedFixture } from './managed-fixture.js';
 
 const owned: Awaited<ReturnType<typeof managedFixture>>[] = [];
 afterEach(async () => { for (const fixture of owned.splice(0)) await fixture.dispose(); boundary.counter = ''; boundary.mode = 'ok'; });
-async function fixture(withAlias = false, acceptance: ReleaseConfig['acceptance'] | undefined = undefined) {
+async function fixture(withAlias = false, acceptance?: ReleaseConfig['acceptance'], completion?: ReleaseConfig['completion']) {
   const value = await managedFixture(); owned.push(value);
   if (value.config.source.mode !== 'managed-commit') throw new Error('managed source required');
-  const config = { ...value.config, acceptance: acceptance ?? value.config.acceptance,
+  const config = { ...value.config, acceptance: acceptance ?? value.config.acceptance, ...(completion ? { completion } : {}),
     delivery: { mode: 'prebuilt', maxFiles: 100, maxBytes: 1_048_576,
     ...(withAlias ? { versionAlias: { hostnameTemplate: 'fixture-{sha}.vercel.app' } } : {}),
     concurrencyControl: { mode: 'external-serialization', scope: 'fixture-project' },

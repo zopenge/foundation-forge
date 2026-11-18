@@ -14,6 +14,7 @@ import { normalizeRepository, remoteRefs } from './git.js';
 import { assertHistoricalSource, relativeConfigPath } from './source.js';
 import { identityReader } from './process-identities.js';
 import type { PrebuiltReleaseState, ReleaseBudget, ReleaseCompletionState, ReleaseDeployment, ReleaseDiagnostic, ReleaseRecoveryObservation, ReleaseRefRelation, ReleaseReport, ReleaseStage, RunReleaseOptions } from '../contracts.js';
+import type { CandidateMarkerHeaders } from './candidate-marker-auth.js';
 import { releaseStages } from '../contracts.js';
 import { diagnostic } from './workspace-release.js';
 import { createTransport, VercelVerification } from './vercel.js';
@@ -141,7 +142,7 @@ export async function settleManagedSlot(options: RunReleaseOptions): Promise<voi
   if (!recovered.ok) throw new ReleaseError(recovered.error?.code ?? 'RECOVERY_REQUIRED', { ...recovered.error?.details,
     runId: state.runId, ...(recovered.recovery?.nextCommand ? { nextCommand: recovered.recovery.nextCommand } : {}) });
 }
-async function runManagedVerification(options: RunReleaseOptions): Promise<ReleaseReport> {
+async function runManagedVerification(options: RunReleaseOptions, candidateMarkerHeaders?: CandidateMarkerHeaders): Promise<ReleaseReport> {
   const startedAt = new Date().toISOString();
   let selected: Awaited<ReturnType<typeof loadManagedPublication>> | undefined, slot: ManagedSlot | undefined, session: ManagedSession | undefined;
   let failure: ReleaseDiagnostic | undefined, deployment: ReleaseDeployment | undefined, closed = true;
@@ -175,10 +176,11 @@ async function runManagedVerification(options: RunReleaseOptions): Promise<Relea
     const assertFrozen = async () => { await assertHistoricalSource(source, options.signal); await assertCheckoutFrozen(current); };
     await assertFrozen();
     deployment = await publishCandidate({ execution: session.execution, config: source.config, sha: source.sha, signal: options.signal, transport: options.transport, buildInfoHttp: options.buildInfoHttp,
-      effects: session.state.effects, prebuilt: managedPrebuiltContext(session), assertFrozen, mutationGuard: async () => { throw new ReleaseError('SOURCE_UNSUPPORTED'); },
+      effects: session.state.effects, prebuilt: managedPrebuiltContext(session), assertFrozen, candidateMarkerHeaders,
+      mutationGuard: async () => { throw new ReleaseError('SOURCE_UNSUPPORTED'); },
       stage: async stage => { current.state.stage = stage; await current.persist(); }, checkpoint: async () => { throw new ReleaseError('SOURCE_UNSUPPORTED'); } }, 'verify');
-    await runCompletion(session, options, assertFrozen);
-    await recordVerifiedAlias(session, selected.receipt, options.transport, options.buildInfoHttp);
+    await runCompletion(session, options, assertFrozen, candidateMarkerHeaders);
+    await recordVerifiedAlias(session, selected.receipt, options.transport, options.buildInfoHttp, candidateMarkerHeaders);
     await session.assertClosed(); await session.budget.sample(); session.state.stage = 'complete';
   } catch (error) { failure = diagnostic(error); }
   if (session) {
@@ -196,9 +198,9 @@ async function runManagedVerification(options: RunReleaseOptions): Promise<Relea
   return report();
 }
 
-export async function runManagedReceiptCommand(options: RunReleaseOptions): Promise<ReleaseReport> {
+export async function runManagedReceiptCommand(options: RunReleaseOptions, candidateMarkerHeaders?: CandidateMarkerHeaders): Promise<ReleaseReport> {
   if (options.command === 'recover') return recoverManagedPublication(options);
-  if (options.command === 'verify') return runManagedVerification(options);
+  if (options.command === 'verify') return runManagedVerification(options, candidateMarkerHeaders);
   const startedAt = new Date().toISOString();
   let selected: Awaited<ReturnType<typeof loadManagedPublication>> | undefined, observation: RecoveryObservation | undefined;
   let deployment: ReleaseDeployment | undefined, failure: ReleaseDiagnostic | undefined, stage: ReleaseStage = 'source', needsRecovery = false;
@@ -244,7 +246,7 @@ export async function runManagedReceiptCommand(options: RunReleaseOptions): Prom
     stage = 'deployment';
     if (source.config.delivery) {
       const found = await observePrebuiltCandidate(source.config, prebuilt ?? receipt.report.prebuilt,
-        createPrebuiltTransport(execution, source.config, false, options.buildInfoHttp, options.transport), options.signal, 'status');
+        createPrebuiltTransport(execution, source.config, false, options.buildInfoHttp, options.transport, candidateMarkerHeaders), options.signal, 'status');
       deployment = found.deployment; prebuilt = found.observed;
       effects.deploymentCreate = prebuilt.createEffect; effects.deploymentPromote = prebuilt.promoteEffect;
       if (prebuilt.versionAlias) effects.versionAliasAssign = prebuilt.versionAlias.effect;

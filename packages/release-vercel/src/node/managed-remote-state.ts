@@ -2,6 +2,7 @@ import { opendir } from 'node:fs/promises';
 import type { NodeHttpTransportOptions } from '@openge/forge-http-transport';
 import { resolve } from 'node:path';
 import type { Execution } from './execution.js';
+import type { CandidateMarkerHeaders } from './candidate-marker-auth.js';
 import type { FrozenSource, ManagedPaths, ManagedState, PrebuiltEffectResolution } from './managed-state-contracts.js';
 import { assertPathChain, pathExists, readBoundedJson } from './managed-io.js';
 import { readManagedDisposition } from './managed-disposition.js';
@@ -17,7 +18,8 @@ import { assertPrebuiltEffectObserved, hasUnresolvedPrebuiltEffect, matchesPrebu
 /** 每次新的远端写入前重新观察全部历史未决意图；本地 check 不会抹去它们。 */
 export async function assertManagedRemoteSettled(paths: ManagedPaths, execution: Execution,
   intent?: { readonly effect: 'developmentPush' | 'releasePush'; readonly source: FrozenSource }, transport?: ReleaseTransport,
-  persistResolution?: (proof: PrebuiltEffectResolution) => Promise<void>, http?: NodeHttpTransportOptions): Promise<'already-current' | undefined> {
+  persistResolution?: (proof: PrebuiltEffectResolution) => Promise<void>, http?: NodeHttpTransportOptions,
+  candidateMarkerHeaders?: CandidateMarkerHeaders): Promise<'already-current' | undefined> {
   const active = record(await readBoundedJson(paths.statePath));
   const state = parseManagedState(active, active.source as ManagedState['source'], String(active.slotId));
   await assertManagedHistory(paths, state);
@@ -51,7 +53,7 @@ export async function assertManagedRemoteSettled(paths: ManagedPaths, execution:
       if (hasUnresolvedPrebuiltEffect(state) && !resolutions.some(proof => matchesPrebuiltResolution(state, proof))) {
         const location = await readManagedLocation(paths.sourceRoot, state.source.configPath);
         frozenSource(state.source, location); await assertHistoricalSource(state.source, execution.signal);
-        const proof = await assertPrebuiltEffectObserved(state, execution, transport, http);
+        const proof = await assertPrebuiltEffectObserved(state, execution, transport, http, candidateMarkerHeaders);
         if (proof) {
           if (!persistResolution) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'PREBUILT_RESOLUTION_NOT_RECORDED' });
           await persistResolution(proof); resolutions.push(proof);

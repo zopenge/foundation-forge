@@ -28,7 +28,8 @@ export async function publishPrebuiltCandidate(context: ExecutionContext, comman
     || (selected.versionAlias.effect === 'accepted' && !selected.versionAlias.verified)))
     throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'VERSION_ALIAS_UNRESOLVED' });
   if (command === 'status' || command === 'verify') {
-    const found = await observePrebuiltCandidate(config, selected, createPrebuiltTransport(execution, config, false, context.buildInfoHttp, context.transport), signal);
+    const found = await observePrebuiltCandidate(config, selected,
+      createPrebuiltTransport(execution, config, false, context.buildInfoHttp, context.transport, context.candidateMarkerHeaders), signal);
     if (command === 'verify') {
       await save(found.observed);
       await context.stage('acceptance');
@@ -56,7 +57,8 @@ export async function publishPrebuiltCandidate(context: ExecutionContext, comman
   }
   let state = selected ?? await save(initial);
   if (command === 'check') return;
-  const verify = new PrebuiltVerification(config, createPrebuiltTransport(execution, config, true, context.buildInfoHttp, context.transport), signal);
+  const verify = new PrebuiltVerification(config,
+    createPrebuiltTransport(execution, config, true, context.buildInfoHttp, context.transport, context.candidateMarkerHeaders), signal);
   const promote = verify.transport.promote?.bind(verify.transport);
   if (!promote) throw new ReleaseError('SOURCE_UNSUPPORTED', { reason: 'PREBUILT_PROMOTION_TRANSPORT_REQUIRED' });
   const guard = async () => { assertActive(signal); await context.assertFrozen(); await assertPrebuiltArtifact(artifact, config, signal); await context.mutationGuard(); await verify.project(); };

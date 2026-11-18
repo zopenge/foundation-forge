@@ -2,6 +2,7 @@ import type { NodeHttpTransportOptions } from '@openge/forge-http-transport';
 import type { PrebuiltReleaseState, ReleaseConfig, ReleaseTransport } from '../contracts.js';
 import type { ManagedState, PrebuiltEffectResolution } from './managed-state-contracts.js';
 import type { Execution } from './execution.js';
+import type { CandidateMarkerHeaders } from './candidate-marker-auth.js';
 import { createPrebuiltTransport, PrebuiltVerification, type PrebuiltAccess } from './prebuilt-vercel.js';
 import { assertActive, ReleaseError } from './errors.js';
 import { observeVersionAlias } from './prebuilt-alias.js';
@@ -28,11 +29,13 @@ export function hasUnresolvedPrebuiltEffect(state: ManagedState): boolean {
     || (candidate.promoteEffect === 'accepted' && !candidate.promotionVerified)
     || candidate.versionAlias?.effect === 'unknown' || (candidate.versionAlias?.effect === 'accepted' && !candidate.versionAlias.verified));
 }
-export async function assertPrebuiltEffectObserved(state: ManagedState, execution: Execution, transport?: ReleaseTransport, http?: NodeHttpTransportOptions): Promise<PrebuiltEffectResolution | undefined> {
+export async function assertPrebuiltEffectObserved(state: ManagedState, execution: Execution, transport?: ReleaseTransport, http?: NodeHttpTransportOptions,
+  candidateMarkerHeaders?: CandidateMarkerHeaders): Promise<PrebuiltEffectResolution | undefined> {
   if (!hasUnresolvedPrebuiltEffect(state)) return;
   const candidate = state.prebuilt; if (!candidate) return;
   if (!candidate.deploymentId) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'PREBUILT_CREATE_UNKNOWN', runId: state.runId });
-  const verify = new PrebuiltVerification(state.source.config, createPrebuiltTransport(execution, state.source.config, false, http, transport), execution.signal);
+  const verify = new PrebuiltVerification(state.source.config,
+    createPrebuiltTransport(execution, state.source.config, false, http, transport, candidateMarkerHeaders), execution.signal);
   await verify.project(undefined, true); await verify.candidate(candidate);
   let versionAlias: PrebuiltEffectResolution['versionAlias'];
   if (candidate.versionAlias && candidate.versionAlias.effect !== 'not-attempted') {

@@ -8,6 +8,7 @@ export type {
   VersionAliasConfig,
   VersionAliasBinding, VersionAliasAssignment, VersionAliasTransport,
   PrebuiltCandidateContext, PrebuiltVersionAliasState,
+  PrebuiltMarkerCandidate, CandidateMarkerAuth, ResolveCandidateMarkerAuth,
   PrebuiltReleaseState, ReleaseCloudEffect,
   ReleasePushEffect, ReleaseRefRelation, ReleaseRecoveryObservation,
 } from './contracts.js';

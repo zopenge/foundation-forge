@@ -180,6 +180,13 @@ export interface ReleaseTransport {
   promote?(deploymentId: string, signal: AbortSignal): Promise<void>;
   readonly versionAlias?: VersionAliasTransport;
 }
+export type PrebuiltMarkerCandidate = Pick<PrebuiltCandidateContext, 'teamId' | 'projectId' | 'deploymentId'> & { readonly origin: string };
+export interface CandidateMarkerAuth {
+  readonly origin: string;
+  readonly headers: Readonly<Partial<Record<'x-vercel-trusted-oidc-idp-token' | 'x-vercel-protection-bypass' | 'cookie', string>>>;
+}
+export type ResolveCandidateMarkerAuth = (candidate: PrebuiltMarkerCandidate, signal: AbortSignal) =>
+  CandidateMarkerAuth | undefined | Promise<CandidateMarkerAuth | undefined>;
 export interface RunReleaseOptions {
   readonly command: ReleaseCommand;
   readonly cwd: string;
@@ -192,5 +199,6 @@ export interface RunReleaseOptions {
   readonly signal?: AbortSignal;
   readonly transport?: ReleaseTransport;
   readonly buildInfoHttp?: NodeHttpTransportOptions;
+  readonly candidateMarkerAuth?: ResolveCandidateMarkerAuth;
   readonly onLoginOutput?: (text: string) => void;
 }

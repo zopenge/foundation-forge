@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { ReleaseDeployment, ReleaseDiagnostic, ReleaseReport, ReleaseStage, RunReleaseOptions } from '../contracts.js';
+import type { CandidateMarkerHeaders } from './candidate-marker-auth.js';
 import type { FrozenSource } from './managed-state-contracts.js';
 import type { ManagedSession } from './managed-session-contracts.js';
 import type { ManagedSlot } from './managed-slot-contracts.js';
@@ -22,7 +23,7 @@ import { prebuiltCandidateContext } from './version-alias.js';
 import { resumeVerifiedAlias } from './prebuilt-resumption.js';
 import { runCompletion } from './completion.js';
 
-export async function runManagedRelease(options: RunReleaseOptions): Promise<ReleaseReport> {
+export async function runManagedRelease(options: RunReleaseOptions, candidateMarkerHeaders?: CandidateMarkerHeaders): Promise<ReleaseReport> {
   const startedAt = new Date().toISOString();
   let source: FrozenSource | undefined, slot: ManagedSlot | undefined, session: ManagedSession | undefined;
   let result: ReleaseDeployment | undefined, failure: ReleaseDiagnostic | undefined, stage: ReleaseStage = 'source';
@@ -77,7 +78,7 @@ export async function runManagedRelease(options: RunReleaseOptions): Promise<Rel
     await prepareCheckout(session); await prepareEnvironment(session);
     const assertFrozen = async () => { await assertSourceFrozen(frozen, original); await assertCheckoutFrozen(currentSession); };
     result = await publishCandidate({ execution: session.execution, config: source.config, sha: source.sha, signal: options.signal, transport: options.transport, buildInfoHttp: options.buildInfoHttp,
-      effects: session.state.effects, assertFrozen,
+      effects: session.state.effects, assertFrozen, candidateMarkerHeaders,
       prebuilt: managedPrebuiltContext(session),
       mutationGuard: async effect => { await assertFrozen(); await currentSession.assertClosed(); await currentSession.budget.sample(); await currentSession.slot.lock.assertOwned();
         return assertManagedRemoteSettled(currentSession.slot.paths, currentSession.execution, effect ? { effect, source: frozen } : undefined, options.transport,
@@ -86,10 +87,10 @@ export async function runManagedRelease(options: RunReleaseOptions): Promise<Rel
             if (previous.some(item => item.runId === proof.runId)) return;
             if (previous.length >= 1000) throw new ReleaseError('BUDGET_EXCEEDED', { reason: 'PREBUILT_RESOLUTION_LIMIT' });
             currentSession.state.prebuiltResolutions = [...previous, proof]; await currentSession.persist();
-          }, options.buildInfoHttp); },
+          }, options.buildInfoHttp, candidateMarkerHeaders); },
       stage: async value => { currentSession.state.stage = value; await currentSession.persist(); },
       checkpoint: async pending => { if (pending) currentSession.state.pendingPush = pending; else delete currentSession.state.pendingPush; await currentSession.persist(); } }, options.command === 'publish' ? 'publish' : 'check');
-    await runCompletion(session, options, assertFrozen);
+    await runCompletion(session, options, assertFrozen, candidateMarkerHeaders);
     await assertFrozen(); await session.assertClosed(); await session.budget.sample(); session.state.stage = 'complete';
   } catch (error) { failure = diagnostic(error); }
   if (session) {

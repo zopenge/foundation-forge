@@ -3,11 +3,12 @@ import { createNodeHttpTransport } from '@openge/forge-http-transport/node';
 import { ReleaseError } from './errors.js';
 
 export async function readBuildInfo(url: string, signal: AbortSignal, maxBytes: number,
-  options: NodeHttpTransportOptions = { route: 'direct' }): Promise<unknown> {
+  options: NodeHttpTransportOptions = { route: 'direct' }, authHeaders?: Headers): Promise<unknown> {
+  const headers = new Headers(authHeaders);
+  headers.set('cache-control', 'no-cache'); headers.set('accept', 'application/json');
   const client = createNodeHttpTransport(options);
   try {
-    const response = await client.fetch(url, { method: 'GET', signal, credentials: 'omit', cache: 'no-store',
-      headers: { 'cache-control': 'no-cache', accept: 'application/json' } });
+    const response = await client.fetch(url, { method: 'GET', signal, credentials: 'omit', cache: 'no-store', headers });
     if (!response.ok || !response.body) throw new ReleaseError('BUILD_INFO', { status: response.status });
     const reader = response.body.getReader();
     const chunks: Uint8Array[] = []; let length = 0;
