@@ -32,7 +32,7 @@ async function history() {
   const input = { schemaVersion: 1 as const, checkout: { dev: '1', ino: '1' }, git: { dev: '1', ino: '2' }, output: { dev: '1', ino: '3' },
     upload: { dev: '1', ino: '4' }, manifest: { identity: { dev: '1', ino: '5' }, sha256: 'f'.repeat(64) } };
   const original: ManagedState = { schemaVersion: 3, slotId: randomUUID(), runId, source, command: 'publish', history: [],
-    host: { platform: 'linux', hostId: 'e'.repeat(64), uptimeSeconds: 1000, bootId: '11111111-1111-4111-8111-111111111111' },
+    host: { platform: 'linux', hostId: 'e'.repeat(64) },
     coordinator: { pid: 1, startToken: 'protocol' }, stage: 'completion', status: 'closed', processes: [failedCommand],
     effects: { developmentPush: 'not-attempted', releasePush: 'not-attempted', deploymentCreate: 'accepted', deploymentPromote: 'accepted' }, prebuilt, completion, completionInput: input };
   const retryRunId = randomUUID(), completedCommand = command(retryRunId, 0);
@@ -86,19 +86,16 @@ function retirement(state: ManagedState, publishRunId = state.completion?.public
   const host = state.host;
   return sealRetirementRecord({ schemaVersion: 1, kind: 'interrupted-run-retirement', runId: state.runId, slotId: state.slotId,
     snapshot, snapshotSha256: retirementDigest(snapshot), origin: 'recorded-run-host', host, preparedAt: now,
-    final: { host: { ...host, uptimeSeconds: 20, bootId: '22222222-2222-4222-8222-222222222222' }, retiredAt: now,
-      observation: { owner: 'inactive', processes: 'unknown', observedAt: now, developmentRef: { sha: source.sha, relation: 'unknown' }, releaseRef: { sha: source.sha, relation: 'unknown' } } } });
+    final: { host, retiredAt: now, cessation: 'recorded-stopped-scopes',
+      observation: { owner: 'inactive', processes: 'closed', observedAt: now, developmentRef: { sha: source.sha, relation: 'unknown' }, releaseRef: { sha: source.sha, relation: 'unknown' } } } });
 }
 
-it('uses final retirement solely as cessation proof while retaining the original unknown command and attempt', async () => {
+it('does not accept an archive as a substitute for a missing scope stop witness', async () => {
   const value = await history(), unknown: ManagedState = { ...value.original, status: 'unknown',
     processes: [{ ...value.failedCommand, status: 'unknown', observationComplete: false }] };
   const sealed = retirement(unknown), saved = JSON.stringify(unknown), record = JSON.stringify(sealed);
-  // 后续开机只作为协议输入；这里没有模拟真实重启或生成真实OS关闭证明。
-  const selected = selectCompletionSnapshots([unknown], [sealed]);
-  expect(() => selected[0] && assertCompletionRetryStopped(selected[0])).not.toThrow();
+  expect(() => selectCompletionSnapshots([unknown], [sealed])).toThrow('SLOT_STATE');
   expect(JSON.stringify(unknown)).toBe(saved); expect(JSON.stringify(sealed)).toBe(record);
-  expect(selected[0]?.completion.status).toBe('failed');
   expect(() => selectCompletionSnapshots([unknown, { ...value.retry, processes: [] }], [sealed])).toThrow('SLOT_STATE');
 });
 
@@ -113,7 +110,7 @@ it('rejects incomplete, cross-run, cross-slot and mismatched-anchor retirement e
 
 it.each(['publish', 'verify'] as const)('accepts retirement after a completed repeated publish in the same candidate lineage: %s', async kind => {
   const value = await history(), repeated: ManagedState = { ...value.retry, runId: randomUUID(), command: 'publish',
-    status: 'unknown', processes: [{ id: randomUUID(), name: 'checkout-frozen', status: 'intent', descendants: [], observationComplete: false }] };
+    status: 'unknown', processes: [] };
   const current: ManagedState = kind === 'publish' ? repeated : { ...repeated, runId: randomUUID(), command: 'verify' };
   const sealed = retirement(current, repeated.runId);
   const selected = selectCompletionSnapshots([value.original, value.retry, repeated, ...(kind === 'verify' ? [current] : [])], [sealed]);

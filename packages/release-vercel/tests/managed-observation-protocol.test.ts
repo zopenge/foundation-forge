@@ -91,6 +91,69 @@ it('组件：授权前取消保留受控停止输入及原错误分类', async (
   await session.assertStopped();
 });
 
+it('组件：第三条查询的前置预算超时保留未调用 runner 的耐久证据', async () => {
+  const { slot, session, runner, entry } = await prepared({ queries: 2 });
+  const sample = session.budget.sample.bind(session.budget);
+  const deadline = new ReleaseError('BUDGET_UNKNOWN', { reason: 'OBSERVATION_DEADLINE', budgetMs: 31_000 });
+  vi.spyOn(session.budget, 'sample').mockImplementation(async () => {
+    const batch = session.state.processes.at(-1);
+    if (batch?.observations?.length === 3 && batch.observations[2]?.status === 'intent') throw deadline;
+    await sample();
+  });
+  entry.unknown = true;
+  await expect(assertCheckoutFrozen(session)).rejects.toBe(deadline);
+  expect(runner.observed).toHaveLength(2);
+  const disk = await slot.store.read();
+  if (!disk) throw new Error('missing disk state');
+  const batch = (await restoreManagedTerminal(slot.paths, disk)).state.processes.at(-1);
+  expect(batch).toMatchObject({ status: 'stopped', observationComplete: true, terminalSha256: expect.stringMatching(/^[a-f0-9]{64}$/u) });
+  expect(batch?.observations?.slice(0, 2).every(hasVerifiedManagedClosure)).toBe(true);
+  expect(batch?.observations?.[2]).toMatchObject({ name: 'git-stream', status: 'stopped',
+    notStarted: { schemaVersion: 1, reason: 'budget-before-runner' } });
+  expect(batch?.observations?.[2]?.scope).toBeUndefined();
+  expect(batch?.observations?.[2]?.closure).toBeUndefined();
+  await session.assertStopped();
+  await expect(session.assertClosed()).rejects.toMatchObject({ code: 'PROCESS_STATE_UNKNOWN' });
+  entry.unknown = false;
+});
+
+it('组件：批次已核验停止时，终态预算超时仍返回原失败并保留耐久停止证据', async () => {
+  const { slot, session, entry } = await prepared();
+  const journal = vi.spyOn(slot.store, 'writeState');
+  const sample = session.budget.sample.bind(session.budget);
+  const deadline = new ReleaseError('BUDGET_UNKNOWN', { reason: 'OBSERVATION_DEADLINE' });
+  vi.spyOn(session.budget, 'sample').mockImplementation(async () => {
+    const batch = session.state.processes.at(-1);
+    if (batch?.kind === 'checkout-observation' && batch.observationComplete) throw deadline;
+    await sample();
+  });
+  entry.unknown = true;
+  await expect(assertCheckoutFrozen(session)).rejects.toBe(deadline);
+  expect(journal).toHaveBeenCalledTimes(1);
+  const disk = await slot.store.read();
+  if (!disk) throw new Error('missing disk state');
+  const restored = await restoreManagedTerminal(slot.paths, disk);
+  expect(restored.state.processes.at(-1)).toMatchObject({ status: 'closed', observationComplete: true,
+    terminalSha256: expect.stringMatching(/^[a-f0-9]{64}$/u) });
+  expect(restored.state.processes.at(-1)?.observations?.every(hasVerifiedManagedClosure)).toBe(true);
+  await session.assertStopped();
+  entry.unknown = false;
+});
+
+it('组件：终态预算发现硬错误时仍拒绝完成状态', async () => {
+  const { session, entry } = await prepared();
+  const sample = session.budget.sample.bind(session.budget);
+  const hard = new ReleaseError('BUDGET_UNKNOWN', { reason: 'EXTERNAL_LINK' });
+  vi.spyOn(session.budget, 'sample').mockImplementation(async () => {
+    if (session.state.processes.at(-1)?.observationComplete) throw hard;
+    await sample();
+  });
+  entry.unknown = true;
+  await expect(assertCheckoutFrozen(session)).rejects.toBe(hard);
+  expect(session.state.processes.at(-1)).toMatchObject({ status: 'unknown', observationComplete: false });
+  await expect(session.assertStopped()).rejects.toMatchObject({ code: 'PROCESS_STATE_UNKNOWN' });
+});
+
 it('组件：独立证明写入失败时整批保持UNKNOWN', async () => {
   const { slot, session, entry } = await prepared(), original = Execution.prototype.streamGit;
   vi.spyOn(Execution.prototype, 'streamGit').mockImplementation(async function (this: Execution, args, consume, exits) {

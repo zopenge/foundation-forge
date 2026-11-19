@@ -88,12 +88,54 @@ it('keeps unknown strings and error content out of attempt summaries', async () 
   expect(JSON.stringify(error.details.scanAttemptDiagnostics)).not.toContain('PRIVATE_SENTINEL');
 });
 
+it.each(['complete', 'deadline'] as const)('honors a configured observation timeout on a slow scan: %s', async mode => {
+  const f = await fixture(), entered = deferred(), held = deferred();
+  const config = { ...f.limits, observationTimeoutMs: 60_000 };
+  let signal: AbortSignal | undefined, scan: Promise<{ bytes: number; freeBytes: number }> | undefined;
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const result = observeBudget(f.paths, config, (...args) => {
+    signal = args[1]; entered.resolve();
+    scan = held.promise.then(() => measureManagedUsageOnce(...args));
+    return scan;
+  }).then(value => value, (error: unknown) => error);
+  try {
+    await Promise.race([entered.promise, result.then(() => { throw new Error('observer did not enter the scan'); })]);
+    await vi.advanceTimersByTimeAsync(40_000);
+    expect(signal?.aborted).toBe(false);
+    if (mode === 'complete') {
+      held.resolve();
+      expect(await result).toMatchObject({ bytes: expect.any(Number), freeBytes: expect.any(Number) });
+    } else {
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(await result).toMatchObject({ code: 'BUDGET_UNKNOWN', details: { reason: 'OBSERVATION_DEADLINE', budgetMs: 60_000, scanAttempts: 1 } });
+      expect(signal?.aborted).toBe(true);
+    }
+  } finally {
+    held.resolve();
+    await Promise.allSettled([result, scan]);
+  }
+});
+
 it('does not change successful results or non-UNKNOWN failures', async () => {
   const f = await fixture(), value = await observeBudget(f.paths, f.limits);
   expect(Object.keys(value)).toEqual(['bytes', 'freeBytes', 'observedAt']);
   const original = new ReleaseError('SLOT_STATE', { reason: 'private-non-budget-error' });
   const error = await failure(observeBudget(f.paths, f.limits, async () => { throw original; }));
   expect(error).toBe(original); expect(error.details).toEqual({ reason: 'private-non-budget-error' });
+});
+
+it('rejects a completed scan after the monotonic deadline before the timer runs', async () => {
+  const f = await fixture();
+  const config = { ...f.limits, observationTimeoutMs: 60_000 };
+  let now = 0;
+  vi.spyOn(performance, 'now').mockImplementation(() => now);
+  const error = await failure(observeBudget(f.paths, config, async (...args) => {
+    const value = await measureManagedUsageOnce(...args);
+    now = 60_001;
+    return value;
+  }));
+  expect(error.details).toMatchObject({ reason: 'OBSERVATION_DEADLINE', budgetMs: 60_000, elapsedMs: 60_001,
+    scanAttemptDiagnostics: [expect.objectContaining({ outcome: 'resolved', retried: false })] });
 });
 
 it('distinguishes a returned scan from a rejected checkout guard', async () => {

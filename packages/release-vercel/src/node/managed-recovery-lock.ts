@@ -7,29 +7,32 @@ import { fileIdentity, measureManagedUsage, pathExists, readBoundedJson, sameIde
 import { parseManagedState } from './managed-state.js';
 import { createManagedExecution } from './managed-execution.js';
 import { hasManagedDisposition } from './managed-disposition.js';
-import { acquireLocalDirectoryLease } from '@openge/forge-process-control-node';
-import { readRetirementHost, retirementLeaseNamespace } from './retirement-host.js';
+import { acquireManagedCoordinatorLease, readRetirementHost } from './retirement-host.js';
 import { claimRetirement } from './retirement-claim.js';
 import { retirementDigest } from './retirement-record.js';
 import { assertMetadataFile, inspectMetadataFile } from './managed-metadata.js';
 import { assertManagedHistory } from './managed-history.js';
 
-export async function claimManagedRecovery(paths: ManagedPaths, state: ManagedState, signal?: AbortSignal): Promise<{ readonly claim: OwnedLock; readonly oldLock?: OwnedLock }> {
+export async function claimManagedRecovery(paths: ManagedPaths, state: ManagedState, signal?: AbortSignal, isolation = false): Promise<{ readonly claim: OwnedLock; readonly oldLock?: OwnedLock }> {
   await assertManagedPaths(paths);
   const management = createManagedExecution(state.source.root, state.source.config, undefined, []);
   await assertManagementUntracked(state.source, management);
   const config = state.source.config.source;
   if (config.mode !== 'managed-commit') throw new ReleaseError('SOURCE_UNSUPPORTED');
-  const usage = await measureManagedUsage(paths);
-  if (usage.bytes + 1024 > config.maxBytes || usage.freeBytes - 1024 < config.minFreeBytes) throw new ReleaseError('BUDGET_EXCEEDED', { reason: 'RECOVERY_ADMISSION' });
+  if (!isolation) {
+    const usage = await measureManagedUsage(paths);
+    if (usage.bytes + 1024 > config.maxBytes || usage.freeBytes - 1024 < config.minFreeBytes)
+      throw new ReleaseError('BUDGET_EXCEEDED', { reason: 'RECOVERY_ADMISSION' });
+  }
   await assertManagedHistory(paths, state);
   const stateFile = await inspectMetadataFile(paths.statePath);
   const host = await readRetirementHost(signal);
-  const lease = await acquireLocalDirectoryLease(paths.slotRoot, { scope: { namespace: retirementLeaseNamespace, discriminator: host.hostId },
-    expectedIdentity: paths.slotIdentity, signal });
+  if (host.hostId !== state.host.hostId || host.platform !== state.host.platform)
+    throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'RECOVERY_HOST_CHANGED' });
+  const lease = await acquireManagedCoordinatorLease(paths, host, signal);
   const guard = async () => { await lease.assertOwned(); await assertManagedPaths(paths); await assertManagementUntracked(state.source, management); await assertMetadataFile(paths.statePath, stateFile); };
   let rawClaim: OwnedLock;
-  try { rawClaim = await claimRetirement(paths, state, retirementDigest({ runId: state.runId, slotId: state.slotId, stateFile }), lease, guard, signal, 'managed-recovery-claim'); }
+  try { rawClaim = await claimRetirement(paths, state, retirementDigest({ runId: state.runId, slotId: state.slotId, stateFile }), lease, guard, signal, 'managed-recovery-claim', isolation); }
   catch (error) { await lease.release(); throw error; }
   const assertClaim = async () => { await assertManagedPaths(paths); await assertManagementUntracked(state.source, management); await rawClaim.assertOwned(); };
   const claim = { assertOwned: assertClaim, release: async () => { try { await assertClaim(); await rawClaim.release(); } finally { await lease.release(); } } };
@@ -42,7 +45,8 @@ export async function claimManagedRecovery(paths: ManagedPaths, state: ManagedSt
     }
     const before = await fileIdentity(paths.lockPath), value = record(await readBoundedJson(paths.lockPath, 65_536));
     const identity = record(value.identity), expected = JSON.stringify(value);
-    if (value.pid !== state.coordinator.pid || value.runId !== state.runId || identity.pid !== state.coordinator.pid || identity.startToken !== state.coordinator.startToken
+    if (value.pid !== state.coordinator.pid || value.runId !== state.runId || value.coordinatorLease !== state.coordinatorLease
+      || identity.pid !== state.coordinator.pid || identity.startToken !== state.coordinator.startToken
       || typeof value.token !== 'string' || !/^[a-f0-9-]{36}$/u.test(value.token)) throw new ReleaseError('LOCK_OWNERSHIP', { reason: 'RUN_LOCK_BINDING' });
     const assertOwned = async () => {
       await assertManagedPaths(paths); await claim.assertOwned();

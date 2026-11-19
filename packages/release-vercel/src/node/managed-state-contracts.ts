@@ -37,7 +37,7 @@ export interface ManagedCommand {
   descendants: RecordedIdentity[];
   observationComplete: boolean;
   scope?: { readonly scopeId: string; readonly binding: string };
-  notStarted?: { readonly schemaVersion: 1; readonly reason: 'cancelled-before-runner'; readonly binding: string; readonly observedAt: string };
+  notStarted?: { readonly schemaVersion: 1; readonly reason: 'cancelled-before-runner' | 'budget-before-runner'; readonly binding: string; readonly observedAt: string };
   terminalSha256?: string;
   closure?: { readonly observedAt: string; readonly exitCode: number | null; readonly termination: CommandTerminationReason; readonly requestedTermination?: 'abort' | 'timeout'; readonly ownedScope?: ProcessScopeClosure };
 }
@@ -55,7 +55,9 @@ export interface PrebuiltEffectResolution {
 export interface ManagedState {
   readonly schemaVersion: 3; readonly slotId: string; readonly runId: string;
   readonly source: FrozenSource; readonly command: ReleaseCommand;
+  checkoutIdentity?: FileIdentity;
   readonly coordinator: RecordedIdentity;
+  readonly coordinatorLease?: 'native-directory';
   readonly host: RetirementHost;
   readonly history: readonly ManagedHistoryReference[];
   stage: ReleaseStage; status: 'running' | 'closed' | 'unknown';

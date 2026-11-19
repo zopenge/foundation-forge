@@ -1,10 +1,12 @@
 import { realpath } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import type { FileIdentity, FrozenSource, ManagedAnchor, ManagedPaths, ManagedReceipt, ManagedState } from './managed-state-contracts.js';
 import type { ManagedSession } from './managed-session-contracts.js';
 import type { ManagedSlot } from './managed-slot-contracts.js';
-import { assertActive, record, ReleaseError } from './errors.js';
-import { assertPathChain, pathExists, readBoundedJson, within } from './managed-io.js';
+import { assertActive, localLeaseDiagnostic, record, ReleaseError } from './errors.js';
+import type { OwnedLock } from './lock.js';
+import { assertPathChain, fileIdentity, pathExists, readBoundedJson, sameIdentity, within } from './managed-io.js';
 import { assertManagedPaths } from './managed-paths.js';
 import { parseManagedReceipt, parseManagedState } from './managed-state.js';
 import { validateReleaseConfig } from './config.js';
@@ -33,12 +35,14 @@ import { publishCandidate } from './publication.js';
 import { hasVerifiedManagedStop } from './managed-closure.js';
 import { managedCommandIdentities } from './managed-observation.js';
 import { discardPreparedState, restoreManagedTerminal } from './managed-terminal.js';
-import { archiveManagedDisposition, assertDispositionSnapshot, hasManagedDisposition, readManagedDisposition } from './managed-disposition.js';
+import { archiveManagedDisposition, assertDispositionSnapshot, discardIsolatedCheckout, hasManagedDisposition, readManagedDisposition } from './managed-disposition.js';
 import { hasFinalizedRetirement } from './retirement-record.js';
 import { assertManagedHistory } from './managed-history.js';
 import { runCompletion } from './completion.js';
 import { observedCompletionState, parseCompletionState } from './completion-state.js';
 import { readCompletionSnapshots } from './completion-history.js';
+import { acquireManagedCoordinatorLease, readRetirementHost } from './retirement-host.js';
+import { assertMetadataFile, inspectMetadataFile, terminalLimit } from './managed-metadata.js';
 
 export async function classifyRemoteRef(execution: Execution, sha: string, ref: string): Promise<ReleaseRefRelation> {
   if (sha === ref) return 'candidate';
@@ -54,6 +58,7 @@ interface ReceiptOutcome {
   readonly stage: ReleaseStage; readonly effects: ReleaseReport['effects']; readonly steps: ReleaseReport['steps']; readonly failure?: ReleaseDiagnostic;
   readonly observation?: RecoveryObservation; readonly refs?: ReleaseRecoveryObservation; readonly deployment?: ReleaseDeployment; readonly budget?: ReleaseBudget;
   readonly next?: string; readonly kind?: 'publish' | 'check'; readonly reportExists?: boolean;
+  readonly checkoutDiscarded?: true;
   readonly prebuilt?: PrebuiltReleaseState;
   readonly completion?: ReleaseCompletionState;
 }
@@ -63,7 +68,8 @@ function receiptReport(options: RunReleaseOptions, outcome: ReceiptOutcome): Rel
   return { schemaVersion: 2, command: options.command, ok: outcome.failure === undefined, startedAt: outcome.startedAt, finishedAt: new Date().toISOString(),
     stage: outcome.stage, steps: outcome.steps, effects: { ...outcome.effects }, ...(outcome.runId ? { runId: outcome.runId } : {}),
     ...(source && location ? { sourceRoot: source.root, executionRoot: location.paths.checkoutRoot, slotId: location.anchor.slotId, candidateSha: source.sha, configSha256: source.configSha256, configPath: source.configPath,
-      recovery: { candidateSha: source.sha, reportPath: resolve(location.paths.slotRoot, `latest-${outcome.kind ?? 'publish'}.json`), nextCommand: recoveryCommand(outcome.next ?? 'verify', source), ...(outcome.reportExists === undefined ? {} : { reportExists: outcome.reportExists }), ...(outcome.refs ? { observation: outcome.refs } : {}) } } : {}),
+      recovery: { candidateSha: source.sha, reportPath: resolve(location.paths.slotRoot, `latest-${outcome.kind ?? 'publish'}.json`), nextCommand: recoveryCommand(outcome.next ?? 'verify', source), ...(outcome.reportExists === undefined ? {} : { reportExists: outcome.reportExists }), ...(outcome.refs ? { observation: outcome.refs } : {}),
+        ...(outcome.checkoutDiscarded ? { checkoutDiscarded: true } : {}) } } : {}),
     ...(outcome.observation ? { processes: { status: outcome.observation.processes, knownCount: outcome.observation.knownCount } } : {}),
     ...(outcome.budget ? { budget: outcome.budget } : {}), ...(outcome.prebuilt ? { prebuilt: outcome.prebuilt } : {}),
     ...(outcome.completion ? { completion: outcome.completion } : {}),
@@ -91,6 +97,7 @@ async function recoverManagedPublication(options: RunReleaseOptions): Promise<Re
   let location: ManagedLocation | undefined, source: FrozenSource | undefined, state: ManagedState | undefined;
   let recovery: Awaited<ReturnType<typeof claimManagedRecovery>> | undefined, observation: RecoveryObservation | undefined, refs: ReleaseRecoveryObservation | undefined;
   let budget: BudgetMonitor | undefined, failure: ReleaseDiagnostic | undefined;
+  let discarded = false;
   let effects: ReleaseReport['effects'] = { developmentPush: 'not-attempted', releasePush: 'not-attempted' };
   try {
     assertActive(options.signal);
@@ -98,34 +105,86 @@ async function recoverManagedPublication(options: RunReleaseOptions): Promise<Re
     location = await readManagedLocation(options.cwd, options.configPath ?? 'release.config.json');
     const value = await readBoundedJson(location.paths.statePath); source = frozenSource(record(value).source, location);
     state = parseManagedState(value, source, location.anchor.slotId); effects = { ...state.effects };
+    if (options.discardCheckout && options.runId !== state.runId)
+      throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'CHECKOUT_ISOLATION_RUN_MISMATCH', runId: state.runId });
     await assertHistoricalSource(source, options.signal);
-    recovery = await claimManagedRecovery(location.paths, state, options.signal);
-    const restored = await restoreManagedTerminal(location.paths, state, { allowReleasedLock: !recovery.oldLock, ...(options.signal ? { signal: options.signal } : {}) });
-    observation = await inspectManagedRecovery(restored.state, location.paths, options.signal);
-    refs = { owner: observation.owner, processes: observation.processes, observedAt: new Date().toISOString() };
+    const paths = location.paths, original = state;
+    const observeRecovery = async (allowReleasedLock: boolean, heldLease?: Pick<OwnedLock, 'assertOwned'>) => {
+      const restored = await restoreManagedTerminal(paths, original, { allowReleasedLock, ...(options.signal ? { signal: options.signal } : {}) });
+      const observed = await inspectManagedRecovery(restored.state, paths, options.signal, undefined, heldLease);
+      observation = observed;
+      refs = { owner: observed.owner, processes: observed.processes, observedAt: new Date().toISOString() };
+      return { restored, observed };
+    };
+    const assertStopped = (observed: RecoveryObservation) => {
+      if (observed.owner !== 'inactive') throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'OWNER_NOT_INACTIVE', owner: observed.owner });
+      if (observed.processes !== 'closed') throw new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'CLOSURE_UNPROVEN', processes: observed.processes });
+    };
+    const requestedIsolation = options.discardCheckout === true || !!(await readManagedDisposition(paths, original.runId))?.checkoutIsolation;
+    if (requestedIsolation) {
+      // 缺见证时只读取证，在确认旧运行有停止证据前不创建恢复声明。
+      const host = await readRetirementHost(options.signal);
+      if (host.hostId !== original.host.hostId || host.platform !== original.host.platform)
+        throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'RECOVERY_HOST_CHANGED' });
+      assertStopped((await observeRecovery(!await pathExists(paths.lockPath))).observed);
+      if (!['admission', 'checkout'].includes(state.stage)
+        || state.pendingPush || state.completion || Object.values(state.effects).some(effect => effect !== 'not-attempted'))
+        throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'CHECKOUT_ISOLATION_EFFECTS' });
+      if (!original.checkoutIdentity) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'CHECKOUT_ISOLATION_IDENTITY_MISSING' });
+    }
+    recovery = await claimManagedRecovery(location.paths, state, options.signal, requestedIsolation);
+    const terminalPath = resolve(paths.slotRoot, 'terminal.json'), terminalFile = await inspectMetadataFile(terminalPath, terminalLimit);
+    const { restored, observed } = await observeRecovery(!recovery.oldLock, recovery.claim);
+    await assertMetadataFile(terminalPath, terminalFile, terminalLimit);
     if (source.config.source.mode !== 'managed-commit') throw new ReleaseError('SOURCE_UNSUPPORTED');
-    budget = new BudgetMonitor(location.paths, source.config.source); await budget.sample();
+    const previous = await readManagedDisposition(location.paths, state.runId);
+    let isolation = previous?.checkoutIsolation;
+    if (options.discardCheckout && !isolation) {
+      if (previous) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'CHECKOUT_ISOLATION_ALREADY_DISPOSED' });
+      if (!await pathExists(location.paths.checkoutRoot)) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'CHECKOUT_MISSING' });
+      const expected = state.checkoutIdentity;
+      if (!expected || !sameIdentity(await fileIdentity(location.paths.checkoutRoot), expected))
+        throw new ReleaseError('SLOT_STATE', { reason: 'CHECKOUT_ISOLATION_CHANGED' });
+      isolation = { ...expected, quarantineId: randomUUID() };
+    }
+    if (!isolation) { budget = new BudgetMonitor(location.paths, source.config.source); await budget.sample(); }
     const execution = createManagedExecution(source.root, source.config, options.signal, []);
-    if (!source.config.delivery) refs = await observeRefsForDisposition(execution, source, observation);
-    if (observation.owner !== 'inactive') throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'OWNER_NOT_INACTIVE', owner: observation.owner });
-    if (observation.processes !== 'closed') throw new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'CLOSURE_UNPROVEN', processes: observation.processes });
-    await budget.sample();
+    if (!source.config.delivery) refs = await observeRefsForDisposition(execution, source, observed);
+    assertStopped(observed);
+    await budget?.sample();
     const oldLocation = location, claim = recovery.claim, oldLock = recovery.oldLock, frozen = source;
-    const guard = async () => { await assertHistoricalSource(frozen, options.signal); await assertManagedPaths(oldLocation.paths); await claim.assertOwned(); await oldLock?.assertOwned(); };
-    const archived = await archiveManagedDisposition(location.paths, state, restored.state, guard, refs);
+    const guard = async () => {
+      await assertHistoricalSource(frozen, options.signal); await assertManagedPaths(oldLocation.paths);
+      await claim.assertOwned(); await oldLock?.assertOwned(); await assertMetadataFile(terminalPath, terminalFile, terminalLimit);
+    };
+    const archived = await archiveManagedDisposition(location.paths, state, restored.state, guard, refs, false, undefined, isolation);
     await discardPreparedState(location.paths, restored.terminal, async () => { await guard(); await assertDispositionSnapshot(oldLocation.paths, archived, !!oldLock); });
+    if (isolation) {
+      const assertDiscarded = await discardIsolatedCheckout(location.paths, archived, guard, !!oldLock);
+      await assertDiscarded();
+      discarded = true;
+    }
     // 原始失败和未决副作用均已归档；这里只结束本地占用，不重放远端操作。
     await oldLock?.release();
   } catch (error) { failure = diagnostic(error); }
-  finally { if (recovery) { try { await recovery.claim.release(); } catch (error) { failure = diagnostic(error); } } }
+  finally { if (recovery) { try { await recovery.claim.release(); } catch (error) { failure ??= diagnostic(error); } } }
   let reportExists: boolean | undefined;
-  if (location) { try { reportExists = await pathExists(resolve(location.paths.slotRoot, state?.command === 'check' ? 'latest-check.json' : 'latest-publish.json')); } catch { /* 存在性未知时省略此字段，不把路径文本当作文件证据。 */ } }
+  if (location && state) {
+    try {
+      const raw = record(await readBoundedJson(resolve(location.paths.slotRoot, state.command === 'check' ? 'latest-check.json' : 'latest-publish.json')));
+      const latest = record(raw.report);
+      reportExists = raw.slotId === state.slotId && latest.candidateSha === state.source.sha && latest.configSha256 === state.source.configSha256
+        && (state.command === 'verify' || latest.runId === state.runId);
+    } catch { /* 无法确认时省略，而不把路径文本视作证据。 */ }
+  }
   return receiptReport(options, { startedAt, stage: failure ? 'recover' : 'complete', steps: [], effects, ...(reportExists === undefined ? {} : { reportExists }),
     ...(source ? { source } : {}), ...(location ? { location } : {}), ...(state ? { runId: state.runId, kind: state.command === 'check' ? 'check' : 'publish' } : {}),
     ...(observation ? { observation } : {}), ...(refs ? { refs } : {}), ...(budget ? { budget: budget.summary() } : {}), ...(failure ? { failure } : {}),
     ...(state?.prebuilt ? { prebuilt: state.prebuilt } : {}),
     ...(state?.completion ? { completion: state.completion } : {}),
-    next: failure ? failure.details.reason === 'CLOSURE_UNPROVEN' && state ? `retire --run-id ${state.runId}` : 'recover'
+    ...(discarded ? { checkoutDiscarded: true } : {}),
+    next: failure ? options.discardCheckout && options.runId ? `recover --run-id ${options.runId} --discard-checkout`
+      : failure.details.reason === 'CLOSURE_UNPROVEN' && state ? `retire --run-id ${state.runId}` : 'recover'
       : state?.prebuilt ? state.prebuilt.deploymentId ? 'verify' : 'status' : effects.releasePush === 'pushed' || effects.releasePush === 'already-current' ? 'verify' : 'publish' });
 }
 export async function settleManagedSlot(options: RunReleaseOptions): Promise<void> {
@@ -139,24 +198,29 @@ export async function settleManagedSlot(options: RunReleaseOptions): Promise<voi
     || await hasFinalizedRetirement(location.paths, state)
     || (state.status === 'closed' && !state.pendingPush && !Object.values(state.effects).includes('unknown') && state.processes.every(hasVerifiedManagedStop)))) return;
   const recovered = await recoverManagedPublication({ ...options, command: 'recover' });
-  if (!recovered.ok) throw new ReleaseError(recovered.error?.code ?? 'RECOVERY_REQUIRED', { ...recovered.error?.details,
-    runId: state.runId, ...(recovered.recovery?.nextCommand ? { nextCommand: recovered.recovery.nextCommand } : {}) });
+  if (!recovered.ok) {
+    const error = recovered.error;
+    const active = state.coordinatorLease === 'native-directory' && error?.code === 'LOCKED' && error.details.reason === 'RETIREMENT_ACTIVE';
+    throw new ReleaseError(active ? 'RECOVERY_REQUIRED' : error?.code ?? 'RECOVERY_REQUIRED', {
+      ...(active ? { reason: 'OWNER_NOT_INACTIVE', owner: 'active' } : error?.details),
+      runId: state.runId, ...(recovered.recovery?.nextCommand ? { nextCommand: recovered.recovery.nextCommand } : {}) });
+  }
 }
 async function runManagedVerification(options: RunReleaseOptions, candidateMarkerHeaders?: CandidateMarkerHeaders): Promise<ReleaseReport> {
   const startedAt = new Date().toISOString();
   let selected: Awaited<ReturnType<typeof loadManagedPublication>> | undefined, slot: ManagedSlot | undefined, session: ManagedSession | undefined;
-  let failure: ReleaseDiagnostic | undefined, deployment: ReleaseDeployment | undefined, closed = true;
+  let failure: ReleaseDiagnostic | undefined, deployment: ReleaseDeployment | undefined, closed = true, retained = false;
   const report = () => receiptReport(options, { startedAt, stage: session?.state.stage ?? 'source', steps: session?.steps ?? [],
     effects: session?.state.effects ?? (selected?.receipt.report.completion ? selected.receipt.report.effects : { developmentPush: 'not-attempted', releasePush: 'not-attempted' }),
     ...(selected ? { source: selected.receipt.source, location: selected.location, ...(selected.reportExists ? {} : { reportExists: false }),
       ...(session ? { runId: session.state.runId } : {}) } : {}),
-    ...(session ? { observation: { owner: closed ? 'inactive' : 'unknown', processes: closed ? 'closed' : 'unknown', knownCount: new Set(session.state.processes.flatMap(managedCommandIdentities).map(identity => `${String(identity.pid)}:${identity.startToken}`)).size }, budget: session.budget.summary() } : {}),
+    ...(session ? { observation: { owner: closed && !retained ? 'inactive' : 'unknown', processes: closed ? 'closed' : 'unknown', knownCount: new Set(session.state.processes.flatMap(managedCommandIdentities).map(identity => `${String(identity.pid)}:${identity.startToken}`)).size }, budget: session.budget.summary() } : {}),
     ...(session?.state.prebuilt ? { prebuilt: session.state.prebuilt } : {}),
     ...(session?.state.completion ? { completion: session.state.completion } : {}),
     ...(!session && selected?.receipt.report.completion ? { completion: selected.receipt.report.completion,
       ...(selected.receipt.report.prebuilt ? { prebuilt: selected.receipt.report.prebuilt } : {}) } : {}),
     ...(deployment ? { deployment } : {}), ...(failure ? { failure } : {}),
-    next: closed ? session?.state.completion && session.state.completion.status !== 'completed' ? 'verify --retry-completion' : 'verify' : 'recover' });
+    next: closed && !retained ? session?.state.completion && session.state.completion.status !== 'completed' ? 'verify --retry-completion' : 'verify' : 'recover' });
   try {
     if (options.config !== undefined) throw new ReleaseError('SOURCE_UNSUPPORTED', { reason: 'COMMITTED_CONFIG_REQUIRED' });
     selected = await loadManagedPublication(options.cwd, options.configPath ?? 'release.config.json', options.sha, options.signal);
@@ -183,10 +247,11 @@ async function runManagedVerification(options: RunReleaseOptions, candidateMarke
     await recordVerifiedAlias(session, selected.receipt, options.transport, options.buildInfoHttp, candidateMarkerHeaders);
     await session.assertClosed(); await session.budget.sample(); session.state.stage = 'complete';
   } catch (error) { failure = diagnostic(error); }
+  retained = failure?.code === 'BUDGET_UNKNOWN' && failure.details.reason === 'OBSERVATION_DEADLINE';
   if (session) {
     try { await session.assertStopped(); } catch { closed = false; }
     session.state.status = closed ? 'closed' : 'unknown';
-    try {
+    if (!retained) try {
       await session.persist();
       if (closed) {
         const completed = session; await completed.assertStopped();
@@ -194,7 +259,8 @@ async function runManagedVerification(options: RunReleaseOptions, candidateMarke
       }
     } catch (error) { failure ??= diagnostic(error); closed = false; }
   }
-  if (slot && closed) { try { await slot.lock.release(); } catch (error) { failure = diagnostic(error); closed = false; } }
+  if (slot && closed && !retained) { try { await slot.lock.release(); } catch (error) { failure ??= diagnostic(error); retained = true; } }
+  try { await slot?.coordinatorLease?.release(); } catch (error) { failure ??= diagnostic(error); retained = true; }
   return report();
 }
 
@@ -290,7 +356,8 @@ export async function runManagedReceiptCommand(options: RunReleaseOptions, candi
 }
 
 export interface RecoveryObservation { readonly owner: 'inactive' | 'active' | 'unknown'; readonly processes: 'closed' | 'running' | 'unknown'; readonly knownCount: number }
-export async function inspectManagedRecovery(state: ManagedState, paths: ManagedPaths, signal?: AbortSignal, reader = identityReader()): Promise<RecoveryObservation> {
+export async function inspectManagedRecovery(state: ManagedState, paths: ManagedPaths, signal?: AbortSignal, reader = identityReader(),
+  heldLease?: Pick<OwnedLock, 'assertOwned'>): Promise<RecoveryObservation> {
   assertActive(signal); await assertManagedPaths(paths);
   const controller = new AbortController(), timer = setTimeout(() => controller.abort(), Math.min(30_000, state.source.config.limits.commandMs));
   const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
@@ -301,11 +368,23 @@ export async function inspectManagedRecovery(state: ManagedState, paths: Managed
   let unknown = unresolved.length > 0, running = false;
   try {
     try {
-      const observed = await reader.readIdentity({ pid: state.coordinator.pid, signal: combined });
-      if (observed.status === 'ABSENT') owner = 'inactive';
-      else if (observed.identity.startToken === state.coordinator.startToken) owner = await pathExists(paths.lockPath) ? 'active' : state.status === 'closed' || await hasManagedDisposition(paths, state) ? 'inactive' : 'unknown';
-      else owner = 'inactive';
-    } catch { assertActive(signal); }
+      if (state.coordinatorLease === 'native-directory') {
+        // 该协议跟踪单次 SDK 调用，Node 宿主可以继续为其他调用服务。
+        if (heldLease) { await heldLease.assertOwned(); owner = 'inactive'; }
+        else {
+          const host = await readRetirementHost(combined);
+          if (host.hostId === state.host.hostId && host.platform === state.host.platform) {
+            const probe = await acquireManagedCoordinatorLease(paths, host, combined);
+            await probe.release(); owner = 'inactive';
+          }
+        }
+      } else {
+        const observed = await reader.readIdentity({ pid: state.coordinator.pid, signal: combined });
+        if (observed.status === 'ABSENT') owner = 'inactive';
+        else if (observed.identity.startToken === state.coordinator.startToken) owner = await pathExists(paths.lockPath) ? 'active' : state.status === 'closed' || await hasManagedDisposition(paths, state) ? 'inactive' : 'unknown';
+        else owner = 'inactive';
+      }
+    } catch (error) { assertActive(signal); if (localLeaseDiagnostic(error)?.code === 'LOCKED') owner = 'active'; }
     // 已见证关闭的原实例不能重新出现；复用完整证据，未闭环实例仍逐个核验且不升为 PASS。
     for (const identity of pendingIdentities.values()) {
       if (combined.aborted) { unknown = true; break; }
@@ -359,7 +438,7 @@ export function frozenSource(value: unknown, location: ManagedLocation): FrozenS
   return { root: location.root, configPath: location.configPath, sha: item.sha, config, configBlobOid: item.configBlobOid, configSha256: item.configSha256, fetchUrl: item.fetchUrl };
 }
 /** 缺少正常收据时只读原意图；descriptor 永远是失败，绝不补造原发布成功。 */
-async function completionIntentReceipt(location: ManagedLocation, selected: NonNullable<ManagedAnchor['latestPublish']>, signal: AbortSignal | undefined,
+async function publicationIntentReceipt(location: ManagedLocation, selected: NonNullable<ManagedAnchor['latestPublish']>, signal: AbortSignal | undefined,
   allowActive: boolean): Promise<ManagedReceipt | undefined> {
   const archive = await readManagedDisposition(location.paths, selected.runId);
   const retired = archive ? undefined : (await readCompletionSnapshots(location.paths, location.anchor.slotId, undefined, signal))
@@ -372,7 +451,8 @@ async function completionIntentReceipt(location: ManagedLocation, selected: NonN
     const source = frozenSource(record(value).source, location);
     state = parseManagedState(value, source, location.anchor.slotId);
   }
-  if (state.command !== 'publish' || state.runId !== selected.runId || !state.source.config.completion || !state.completion || !state.prebuilt) return;
+  if (state.command !== 'publish' || state.runId !== selected.runId) return;
+  if (!archive && (!state.source.config.completion || !state.completion || !state.prebuilt)) return;
   const source = frozenSource(state.source, location);
   if (source.sha !== selected.sha || source.configSha256 !== selected.configSha256 || state.slotId !== location.anchor.slotId)
     throw new ReleaseError('SLOT_STATE', { reason: 'COMPLETION_INTENT_IDENTITY' });
@@ -384,7 +464,8 @@ async function completionIntentReceipt(location: ManagedLocation, selected: NonN
   const report: ReleaseReport = { schemaVersion: 2, command: 'publish', ok: false, startedAt: observedAt, finishedAt: observedAt,
     steps: [], effects: { ...state.effects }, candidateSha: source.sha, configSha256: source.configSha256, runId: state.runId,
     slotId: state.slotId, sourceRoot: source.root, executionRoot: location.paths.checkoutRoot, configPath: source.configPath, stage: state.stage,
-    prebuilt: state.prebuilt, completion: state.completion, ...(candidateContext ? { candidateContext } : {}),
+    ...(state.prebuilt ? { prebuilt: state.prebuilt } : {}), ...(state.completion ? { completion: state.completion } : {}),
+    ...(candidateContext ? { candidateContext } : {}),
     error: { code: 'RECOVERY_REQUIRED', details: { reason: archived ? 'ARCHIVED_PUBLICATION_INTENT' : 'ACTIVE_PUBLICATION_INTENT' } } };
   return parseManagedReceipt({ schemaVersion: 2, slotId: state.slotId, source, report }, source, state.slotId);
 }
@@ -396,14 +477,14 @@ async function loadManagedPublication(cwd: string, configPath: string, sha?: str
   if (sha !== undefined && sha !== selected.sha) throw new ReleaseError('RECEIPT_SHA_MISMATCH', { requested: sha, known: selected.sha });
   const value = await readBoundedJson(resolve(location.paths.slotRoot, 'latest-publish.json'));
   if (value === undefined) {
-    const intent = await completionIntentReceipt(location, selected, signal, allowActiveCompletion);
+    const intent = await publicationIntentReceipt(location, selected, signal, allowActiveCompletion);
     if (intent) return { receipt: intent, location, reportExists: false };
   }
   const source = frozenSource(record(value).source, location);
   const receipt = parseManagedReceipt(value, source, location.anchor.slotId);
   await assertHistoricalSource(source, signal);
   if (receipt.report.command === 'publish' && receipt.report.runId !== selected.runId) {
-    const intent = await completionIntentReceipt(location, selected, signal, allowActiveCompletion);
+    const intent = await publicationIntentReceipt(location, selected, signal, allowActiveCompletion);
     if (intent) return { receipt: intent, location, reportExists: false };
   }
   if (receipt.report.runId !== selected.runId || source.sha !== selected.sha || source.configSha256 !== selected.configSha256 || receipt.report.command !== 'publish') throw new ReleaseError('SLOT_STATE', { reason: 'PUBLICATION_BINDING' });

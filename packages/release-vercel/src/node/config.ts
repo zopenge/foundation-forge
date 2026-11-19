@@ -35,7 +35,7 @@ function source(value: unknown): ReleaseSource {
   if (record(value).mode === 'workspace') {
     object(value, ['mode'], 'source'); return { mode: 'workspace' };
   }
-  const entry = object(value, ['mode', 'slotPath', 'maxBytes', 'minFreeBytes', 'sampleIntervalMs', 'install', 'prepare'], 'source');
+  const entry = object(value, ['mode', 'slotPath', 'maxBytes', 'minFreeBytes', 'sampleIntervalMs', 'install', 'prepare'], 'source', ['observationTimeoutMs']);
   if (entry.mode !== 'managed-commit') invalid('source.mode');
   const slotPath = text(entry.slotPath, 'source.slotPath', /^[a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)*$/u);
   if (slotPath.split('/').some(part => ['.', '..', '.git'].includes(part.toLowerCase()))) invalid('source.slotPath');
@@ -43,10 +43,13 @@ function source(value: unknown): ReleaseSource {
   if (install.packageManager !== 'pnpm') invalid('source.install.packageManager');
   const sampleIntervalMs = integer(entry.sampleIntervalMs, 5000, 'source.sampleIntervalMs');
   if (sampleIntervalMs < 250) invalid('source.sampleIntervalMs');
+  const observationTimeoutMs = entry.observationTimeoutMs === undefined ? undefined : integer(entry.observationTimeoutMs, 120_000, 'source.observationTimeoutMs');
+  if (observationTimeoutMs !== undefined && observationTimeoutMs < 30_000) invalid('source.observationTimeoutMs');
   return { mode: 'managed-commit', slotPath,
     maxBytes: integer(entry.maxBytes, Number.MAX_SAFE_INTEGER, 'source.maxBytes'),
     minFreeBytes: integer(entry.minFreeBytes, Number.MAX_SAFE_INTEGER, 'source.minFreeBytes'),
-    sampleIntervalMs, install: { packageManager: 'pnpm' }, prepare: commands(entry.prepare, 'source.prepare', true) };
+    sampleIntervalMs, ...(observationTimeoutMs === undefined ? {} : { observationTimeoutMs }),
+    install: { packageManager: 'pnpm' }, prepare: commands(entry.prepare, 'source.prepare', true) };
 }
 export function validateReleaseConfig(value: unknown): ReleaseConfig {
   const root = object(value, ['schemaVersion', 'source', 'git', 'vercel', 'checks', 'acceptance', 'buildInfo', 'limits'], 'config', ['delivery', 'completion']);

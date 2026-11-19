@@ -13,7 +13,7 @@ function state(): ManagedState {
     source: { root: resolve(import.meta.dirname, 'protocol-input'), sha: sourceSha, configPath: 'release.config.json',
       config: prebuiltConfiguration(), configSha256, configBlobOid: 'c'.repeat(40), fetchUrl: 'https://github.com/fixture/repository.git' },
     command: 'publish', coordinator: { pid: 1, startToken: 'fixture' },
-    host: { platform: 'win32', hostId: 'e'.repeat(64), uptimeSeconds: 1000 }, history: [], stage: 'deployment', status: 'closed', processes: [],
+    host: { platform: 'win32', hostId: 'e'.repeat(64) }, history: [], stage: 'deployment', status: 'closed', processes: [],
     effects: { developmentPush: 'not-attempted', releasePush: 'not-attempted', deploymentCreate: 'accepted', deploymentPromote: 'not-attempted' },
     prebuilt: { sourceSha, configSha256, artifactSha256: 'd'.repeat(64), fileCount: 2, byteLength: 100,
       createEffect: 'accepted', promoteEffect: 'not-attempted', deploymentId: 'dpl_candidate', deploymentUrl: 'https://candidate.vercel.app',

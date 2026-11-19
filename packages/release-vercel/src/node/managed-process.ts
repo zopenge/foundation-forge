@@ -38,6 +38,16 @@ function lifecycleError(error: unknown, reason: string, step: string, phase?: st
     ...(known ? { causeCode: code, ...(phase ? { causePhase: phase } : {}), ...(syscall ? { causeSyscall: syscall } : {}),
       ...(file && ['state.json', '.state.json.next', 'terminal.json', '.terminal.json.next'].includes(file) ? { causeFile: file } : {}) } : {}) });
 }
+
+function witnessNoStart(command: ManagedCommand, binding: string, reason: NonNullable<ManagedCommand['notStarted']>['reason']): void {
+  command.status = 'stopped';
+  command.observationComplete = true;
+  command.notStarted = { schemaVersion: 1, reason, binding, observedAt: new Date().toISOString() };
+}
+
+const isObservationDeadline = (error: unknown): error is ReleaseError => error instanceof ReleaseError
+  && error.code === 'BUDGET_UNKNOWN' && error.details.reason === 'OBSERVATION_DEADLINE';
+
 class ManagedProcess implements ExecutionLifecycle {
   private tail = Promise.resolve();
   private terminal: TerminalWriter | undefined;
@@ -85,24 +95,31 @@ class ManagedProcess implements ExecutionLifecycle {
       if (command.observations?.length !== command.plan?.length) throw new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'OBSERVATION_INCOMPLETE' });
     } catch (error) { failed = true; failure = error; }
     this.observation.closing = true;
+    let deadline = isObservationDeadline(failure) ? failure : undefined;
     try { try {
       const observations = command.observations ?? [];
       command.status = observations.every(hasVerifiedManagedClosure) ? 'closed' : 'stopped';
       command.observationComplete = true;
       if (this.observation.executing || !hasObservationStopWitness(command)) throw new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'OBSERVATION_STOP_UNPROVEN' });
-      // 每条查询已独立核验；提交前仍重新观察路径、锁、历史、预算及元数据身份。
-      await this.guard(); await this.budget.sample(); await terminal.assertOwned();
+      await this.guard();
+      if (!deadline) {
+        try { await this.budget.sample(); }
+        catch (error) { if (!isObservationDeadline(error)) throw error; deadline = error; }
+      }
+      await terminal.assertOwned();
       command.terminalSha256 = await terminal.write(command);
-      await this.persist();
+      // 截止仍令操作失败。原记录可与独立停止回执归并，无须等待再次扫描整个槽。
+      if (!deadline) await this.persist();
     } catch (error) {
       if (!command.terminalSha256) {
         command.status = 'unknown'; command.observationComplete = false;
         try { await this.persist(); } catch { /* 耐久意图保留 UNKNOWN，不用内存停止事实解锁。 */ }
       }
-      if (!failed) throw lifecycleError(error, 'OBSERVATION_COMMIT_FAILED', command.name);
+      if (!failed) throw deadline ?? lifecycleError(error, 'OBSERVATION_COMMIT_FAILED', command.name);
       // 原解析、权限或取消错误优先；无批次证明时状态仍然未知。
     }
     if (failed) throw failure;
+    if (deadline) throw deadline;
     return value as T;
     } finally { this.observation = undefined; }
   }
@@ -147,7 +164,9 @@ class ManagedProcess implements ExecutionLifecycle {
     if (!terminal) throw new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'OBSERVATION_TERMINAL' });
     if (batch) batch.command.observations?.push(command);
     else { this.terminal = terminal; this.state.processes.push(command); await this.persist(); }
+    let admitted = false;
     try { return await this.budget.run(async signal => {
+      admitted = true;
       const failed = new AbortController(), combined = AbortSignal.any([signal, failed.signal]);
       let failure: unknown, running: RunningCommand | undefined;
       let phase: 'command' | 'terminal' | 'closed-state' = 'command';
@@ -160,8 +179,7 @@ class ManagedProcess implements ExecutionLifecycle {
         const environment = spec.environment ?? { mode: 'inherit' as const };
         if (combined.aborted) {
           // 启动意图已耐久化，但此分支从未调用 runner；独立封印这一事实，不伪造 OS closure。
-          command.status = 'stopped'; command.observationComplete = true;
-          command.notStarted = { schemaVersion: 1, reason: 'cancelled-before-runner', binding, observedAt: new Date().toISOString() };
+          witnessNoStart(command, binding, 'cancelled-before-runner');
           phase = 'terminal';
           if (!batch) command.terminalSha256 = await terminal.write(command);
           phase = 'closed-state';
@@ -231,7 +249,21 @@ class ManagedProcess implements ExecutionLifecycle {
         throw lifecycleError(error, 'PROCESS_LIFECYCLE_FAILED', name, phase);
       }
     }, spec.signal); } catch (error) {
-      if (error instanceof ReleaseError && ['BUDGET_UNKNOWN', 'BUDGET_EXCEEDED'].includes(error.code) && command.closure) {
+      if (error instanceof ReleaseError && ['BUDGET_UNKNOWN', 'BUDGET_EXCEEDED'].includes(error.code) && !admitted) {
+        witnessNoStart(command, binding, 'budget-before-runner');
+        if (!batch) {
+          try {
+            await this.guard(); command.terminalSha256 = await terminal.write(command);
+            if (!isObservationDeadline(error)) await this.persist();
+          }
+          catch {
+            if (!command.terminalSha256) {
+              command.status = 'unknown'; command.observationComplete = false; delete command.notStarted;
+            }
+            // 持久化失败时，保留原预算错误；磁盘单独核验停止回执。
+          }
+        }
+      } else if (error instanceof ReleaseError && ['BUDGET_UNKNOWN', 'BUDGET_EXCEEDED'].includes(error.code) && command.closure) {
         // 保留预算错误，同时给出已记录的命令结果；最终观察失败不能抹掉已发生的超时或非零退出。
         throw new ReleaseError(error.code, { ...error.details, step: name,
           commandTermination: command.closure.requestedTermination ?? command.closure.termination,
@@ -245,7 +277,9 @@ export async function createManagedSession(slot: ManagedSlot, command: 'check' |
   if (slot.source.config.source.mode !== 'managed-commit') throw new ReleaseError('SOURCE_UNSUPPORTED');
   const resumed = command === 'check' ? undefined : slot.completionResume;
   const state: ManagedState = { schemaVersion: 3, slotId: slot.slotId, runId: slot.runId, source: slot.source, command,
-    coordinator: slot.coordinator, host: await readRetirementHost(signal), history: await captureManagedHistory(slot.paths), stage: 'admission', status: 'running', processes: [],
+    coordinator: slot.coordinator, host: slot.coordinatorLease?.host ?? await readRetirementHost(signal),
+    ...(slot.coordinatorLease ? { coordinatorLease: 'native-directory' as const } : {}),
+    history: await captureManagedHistory(slot.paths), stage: 'admission', status: 'running', processes: [],
     ...(resumed ? { prebuilt: structuredClone(resumed.prebuilt), completion: structuredClone(resumed.completion), completionInput: structuredClone(resumed.input) } : {}),
     effects: { developmentPush: 'not-attempted', releasePush: 'not-attempted', ...(resumed ? { deploymentCreate: resumed.prebuilt.createEffect,
       deploymentPromote: resumed.prebuilt.promoteEffect, ...(resumed.prebuilt.versionAlias ? { versionAliasAssign: resumed.prebuilt.versionAlias.effect } : {}) } : {}) } };

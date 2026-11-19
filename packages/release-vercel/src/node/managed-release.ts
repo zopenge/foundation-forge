@@ -28,6 +28,7 @@ export async function runManagedRelease(options: RunReleaseOptions, candidateMar
   let source: FrozenSource | undefined, slot: ManagedSlot | undefined, session: ManagedSession | undefined;
   let result: ReleaseDeployment | undefined, failure: ReleaseDiagnostic | undefined, stage: ReleaseStage = 'source';
   let closed = true, retained = false;
+  let expired = false, deadlineReceipt = false;
   const emptyEffects: ReleaseReport['effects'] = { developmentPush: 'not-attempted', releasePush: 'not-attempted' };
   const buildReport = (): ReleaseReport => {
     const candidateContext = source && session ? prebuiltCandidateContext(source.config, session.state.prebuilt) : undefined;
@@ -41,6 +42,7 @@ export async function runManagedRelease(options: RunReleaseOptions, candidateMar
     ...(session?.state.completion ? { completion: session.state.completion } : {}),
     ...(candidateContext ? { candidateContext } : {}),
     ...(slot && source ? { recovery: { candidateSha: source.sha, reportPath: resolve(slot.paths.slotRoot, options.command === 'publish' ? 'latest-publish.json' : 'latest-check.json'),
+      ...(expired ? { reportExists: deadlineReceipt } : {}),
       nextCommand: recoveryCommand(retained || !closed || Object.values(session?.state.effects ?? emptyEffects).includes('unknown') ? 'recover' : options.command === 'publish' && (session?.state.prebuilt?.deploymentId || ['pushed', 'already-current'].includes(session?.state.effects.releasePush ?? '')) ? 'verify' : options.command, source) } } : {}) };
   };
   try {
@@ -93,11 +95,19 @@ export async function runManagedRelease(options: RunReleaseOptions, candidateMar
     await runCompletion(session, options, assertFrozen, candidateMarkerHeaders);
     await assertFrozen(); await session.assertClosed(); await session.budget.sample(); session.state.stage = 'complete';
   } catch (error) { failure = diagnostic(error); }
+  expired = failure?.code === 'BUDGET_UNKNOWN' && failure.details.reason === 'OBSERVATION_DEADLINE';
   if (session) {
     try { await session.assertStopped(); } catch { closed = false; }
-    retained = !closed;
+    // 截止后保留原锁，避免收尾重新扫描整个 payload。
+    retained = !closed || expired;
     session.state.status = retained ? 'unknown' : 'closed';
-    try {
+    if (expired) {
+      try {
+        deadlineReceipt = true;
+        await session.slot.store.writeReceipt(options.command === 'publish' ? 'publish' : 'check',
+          { schemaVersion: 2, slotId: session.slot.slotId, source: session.slot.source, report: buildReport() }, 'observation-deadline');
+      } catch { deadlineReceipt = false; }
+    } else try {
       await session.persist();
       await session.slot.store.writeReceipt(options.command === 'publish' ? 'publish' : 'check', { schemaVersion: 2, slotId: session.slot.slotId, source: session.slot.source, report: buildReport() });
       if (closed) {
@@ -107,6 +117,7 @@ export async function runManagedRelease(options: RunReleaseOptions, candidateMar
       }
     } catch (error) { failure ??= diagnostic(error); retained = true; }
   }
-  if (slot && !retained) { try { await slot.lock.release(); } catch (error) { failure = diagnostic(error); retained = true; } }
+  if (slot && !retained) { try { await slot.lock.release(); } catch (error) { failure ??= diagnostic(error); retained = true; } }
+  try { await slot?.coordinatorLease?.release(); } catch (error) { failure ??= diagnostic(error); retained = true; }
   return buildReport();
 }

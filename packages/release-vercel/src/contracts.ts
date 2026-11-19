@@ -38,6 +38,7 @@ export type ReleaseSource = { readonly mode: 'workspace' } | {
   readonly maxBytes: number;
   readonly minFreeBytes: number;
   readonly sampleIntervalMs: number;
+  readonly observationTimeoutMs?: number;
   readonly install: { readonly packageManager: 'pnpm' };
   readonly prepare: readonly ReleaseCheck[];
 };
@@ -157,12 +158,12 @@ export interface ReleaseReport {
   readonly candidateContext?: PrebuiltCandidateContext;
   readonly deployment?: ReleaseDeployment;
   readonly error?: ReleaseDiagnostic;
-  readonly recovery?: { readonly candidateSha: string; readonly nextCommand: string; readonly reportPath: string; readonly reportExists?: boolean; readonly observation?: ReleaseRecoveryObservation };
+  readonly recovery?: { readonly candidateSha: string; readonly nextCommand: string; readonly reportPath: string; readonly reportExists?: boolean; readonly observation?: ReleaseRecoveryObservation; readonly checkoutDiscarded?: true };
   readonly retirement?: {
     readonly status: 'prepared' | 'retired';
     readonly historicalVerification: 'unknown';
     readonly origin?: 'recorded-run-host';
-    readonly cessation?: 'observed-subsequent-boot' | 'recorded-empty-unstarted-scope';
+    readonly cessation?: 'recorded-stopped-scopes' | 'recorded-empty-unstarted-scope';
     readonly archivePath?: string;
   };
   readonly runId?: string;
@@ -195,7 +196,7 @@ export interface RunReleaseOptions {
   readonly sha?: string;
   readonly retryCompletion?: boolean;
   readonly runId?: string;
-  readonly abandonUnstarted?: boolean;
+  readonly discardCheckout?: boolean;
   readonly signal?: AbortSignal;
   readonly transport?: ReleaseTransport;
   readonly buildInfoHttp?: NodeHttpTransportOptions;

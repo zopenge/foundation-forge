@@ -36,7 +36,7 @@ function scanFailure(error: unknown): Readonly<Record<string, string>> {
 }
 export async function observeBudget(paths: ManagedPaths, config: ManagedSourceConfig, scan = measureManagedUsageOnce): Promise<BudgetObservation> {
   const controller = new AbortController();
-  const started = performance.now(), budgetMs = 30_000 + config.sampleIntervalMs;
+  const started = performance.now(), budgetMs = config.observationTimeoutMs ?? (30_000 + config.sampleIntervalMs);
   const progress: ManagedUsageProgress = { entriesVisited: 0, phase: 'path-guard' };
   let scanAttempts = 0;
   const attempts: ScanAttemptRecord[] = [];
@@ -54,15 +54,17 @@ export async function observeBudget(paths: ManagedPaths, config: ManagedSourceCo
   });
   let deadlineSnapshot: ReturnType<typeof snapshotAttempts> | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadlineFailure = (now: number): ReleaseError => {
+    // 先复制证据，避免同步 abort 监听或迟到的扫描改写截止快照。
+    deadlineSnapshot = snapshotAttempts(now);
+    const error = new ReleaseError('BUDGET_UNKNOWN', { reason: 'OBSERVATION_DEADLINE', budgetMs,
+      elapsedMs: Math.floor(now - started), observedAt: new Date().toISOString(),
+      scanAttempts, entriesVisited: progress.entriesVisited, phase: progress.phase });
+    controller.abort();
+    return error;
+  };
   const deadline = new Promise<never>((_accept, reject) => {
-    timer = setTimeout(() => {
-      // 原截止边界先复制证据；同步abort监听和迟到settlement不能回改本次快照。
-      deadlineSnapshot = snapshotAttempts(performance.now());
-      const error = new ReleaseError('BUDGET_UNKNOWN', { reason: 'OBSERVATION_DEADLINE', budgetMs,
-        elapsedMs: Math.floor(performance.now() - started), observedAt: new Date().toISOString(),
-        scanAttempts, entriesVisited: progress.entriesVisited, phase: progress.phase });
-      controller.abort(); reject(error);
-    }, budgetMs);
+    timer = setTimeout(() => reject(deadlineFailure(performance.now())), budgetMs);
   });
   const observation = async () => {
     await assertManagedPaths(paths);
@@ -83,6 +85,8 @@ export async function observeBudget(paths: ManagedPaths, config: ManagedSourceCo
         if (progress) { attempt.entriesVisited = progress.entriesVisited; attempt.phase = progress.phase; }
       }
     }, progress, started + budgetMs);
+    const now = performance.now();
+    if (!controller.signal.aborted && now - started >= budgetMs) throw deadlineFailure(now);
     return { ...value, observedAt: Date.now() };
   };
   try { return await Promise.race([observation(), deadline]); }

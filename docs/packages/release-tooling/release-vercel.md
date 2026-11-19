@@ -32,7 +32,7 @@ pnpm exec forge-vercel-release recover
 pnpm exec forge-vercel-release retire --run-id <运行UUID>
 ```
 
-参数支持 `--cwd DIR`、`--config FILE`；`--sha SHA` 仅适用于 status/verify，`--run-id UUID` 与 `--abandon-unstarted` 仅适用于 retire。stdout 是 JSON，成功退出 0、运行失败或封存证据待补退出 1、参数错误退出 2。项目可映射为 release:check、release、release:status、release:verify。prepare/check/acceptance 接收受保护的 `FORGE_RELEASE_COMMAND=check|publish|verify` 与 `FORGE_RELEASE_SHA`；验收另接收 URL、deployment ID。宿主同名值不能覆盖。这些值只说明操作意图，不授予业务权限；业务断言、幂等远端准备和业务恢复由消费方承担。
+参数支持 `--cwd DIR` 和 `--config FILE`。`--sha SHA` 仅适用于 status/verify。`retire` 和 `recover --discard-checkout` 要求 `--run-id UUID`。stdout 是 JSON，成功退出 0、运行失败或封存证据待补退出 1、参数错误退出 2。项目可映射为 release:check、release、release:status、release:verify。prepare/check/acceptance 接收受保护的 `FORGE_RELEASE_COMMAND=check|publish|verify` 与 `FORGE_RELEASE_SHA`，验收另接收 URL 和 deployment ID。宿主同名值不能覆盖。业务断言、幂等远端准备和业务恢复由消费方承担。
 
 ## 受管提交模式
 
@@ -132,7 +132,7 @@ const report = await runRelease({
 });
 ```
 
-runRelease 支持 command、cwd、configPath、workspace 专用 config 对象、sha、signal、transport、onLoginOutput，以及 retire 专用 runId、abandonUnstarted。managed 必须用已提交文件。transport 替换 API/buildInfo 及可选的 prebuilt promote 外部边界，必须响应取消、关闭自有资源，且不得重试提升写入；onLoginOutput 显示脱敏认证指引。公开签名不携带第三方实现类型。
+runRelease 支持 command、cwd、configPath、workspace 专用 config 对象、sha、signal、transport、onLoginOutput。`retire` 和带 `discardCheckout: true` 的 `recover` 接收 `runId`。managed 必须用已提交文件。transport 替换 API/buildInfo 及可选的 prebuilt promote 外部边界，必须响应取消、关闭自有资源，且不得重试提升写入。onLoginOutput 显示脱敏认证指引。公开签名不携带第三方实现类型。
 
 Node 调用方可另传 `buildInfoHttp`，类型为 [`forge-http-transport`](../networking/http-transport.md) 的 `NodeHttpTransportOptions`，例如 `{ route: 'proxy', environment: proxyEnvironmentSnapshot }`。它只影响匿名 build-info/制品 marker 读取；默认显式 direct，不读取宿主代理环境。每次读取后关闭连接，覆盖成功、取消、超限、HTTP/JSON 错误。重定向不跟随。完整自定义 transport 优先于该选项。网络参数不写入持久 release config、摘要或回执，不改变 Vercel CLI/API 写入、认证、重试与发布状态机。
 
@@ -150,7 +150,7 @@ Node 调用方可另传 `buildInfoHttp`，类型为 [`forge-http-transport`](../
 
 预算统计包含槽内全部条目及原根锚点，hardlink 各条目重复计数，内部链接不遍历，外部或未知链接失败。一次最多观察 500000 项，原子元数据写入检查临时峰值。准入、运行监测和阶段观察遇到超限、余量不足或观测不完整即取消。报告记录观测峰值、最小余量和采样间隔。有限采样不等于 OS 配额，间隔内可能短暂超限；不调整宿主卷或配额、不整理共享 store。
 
-目录枚举句柄关闭后，观察器重新核对目录类型、身份与规范路径。条目消失，或 checkout 内普通子目录仅发生身份更换时，丢弃整次扫描的部分计数，在原两次重试上限与同一 `30000 + sampleIntervalMs` 截止时间内重新整扫；checkout 根在本次观察内固定绑定，并复核源码根与槽根的原始身份。源码根、槽根、checkout 根、Git 元数据目录、链接、类型或规范路径变化不适用身份重试，持续变化仍返回 UNKNOWN。目录替换错误提供 `change`、`scope`、最多 512 个 Unicode 码点的槽相对 `entry`、`entryTruncated` 与前后 `dev`/`ino` 字符串；`BUDGET_UNKNOWN` 观察失败保留原期限、单调耗时、UTC 观察时间、尝试次数和最新扫描阶段/条目数。并行分支排空时若观察到不可重试错误，保留首错并以 `rescanBlockedBy` 记录禁止重扫的原因，不能用新一轮扫描掩盖已知失败。诊断不包含绝对路径、文件内容或环境，不证明历史未知观察已经完整，也不改变命令期限、原始字节计数或进程关闭门禁。
+单次观察默认采用 `30000 + sampleIntervalMs` 的截止。已提交配置可设置 `source.observationTimeoutMs`，接受 30,000 至 120,000 毫秒的整数。该值只决定单次观察的截止，周期采样仍使用 `sampleIntervalMs`。配置的截止和原先最多两次的重试上限覆盖同次全部整扫。目录枚举句柄关闭后，观察器重新核对目录类型、身份与规范路径。条目消失，或 checkout 内普通子目录仅发生身份更换时，丢弃整次扫描的部分计数。checkout 根在本次观察内固定绑定，并复核源码根与槽根的原始身份。源码根、槽根、checkout 根、Git 元数据目录、链接、类型或规范路径变化不适用身份重试，持续变化仍返回 UNKNOWN。目录替换错误提供 `change`、`scope`、最多 512 个 Unicode 码点的槽相对 `entry`、`entryTruncated` 与前后 `dev`/`ino` 字符串。`BUDGET_UNKNOWN` 观察失败保留原期限、单调耗时、UTC 观察时间、尝试次数和最新扫描阶段及条目数。并行分支排空时若观察到不可重试错误，保留首错并以 `rescanBlockedBy` 记录禁止重扫的原因。诊断仅包含有限字段，完整观察仍执行字节、卷空间、身份和链接检查。
 
 在有期限的预算观察中，普通 checkout 子树发生已确认可重扫的消失或身份变化时，两次重扫分别等待至多 250 ms 和 500 ms。等待沿用原单调截止时间，截止时取消等待，且只在重新核对原 checkout 身份后开始整扫。仅完整且通过守卫的结果进入预算计数。
 
@@ -174,11 +174,15 @@ recover 不要求 Vercel 登录，不安装、不检查、不验收、不推送�
 
 `retire --run-id <UUID>` 只处理精确受管运行的资源归属，不执行安装、测试、推送、部署或验收，不把旧命令和旧报告改写为成功。`recover` 发现无法补齐的 closure 缺口后给出该入口；`recovery.reportExists` 明确区分文件存在事实与预期保存路径。
 
-运行在任何受管命令放行前保存宿主指纹和开机观察。退役只使用运行原先记录的宿主，缺失或不匹配时直接拒绝；不接受人工来源证言替代宿主记录。封存来源固定为 `recorded-run-host`，原文件字节和身份仍须保持。
+运行保存宿主指纹。退役核对原宿主、协调者已停止、原文件身份及字节，以及逐条持久化的原生 scope 停止或未启动见证。Windows 首条 Git 若在绑定前失败，只有匹配的失败收据、已记录的原生空 scope 和从未尝试外部写入才允许退役。裸意图缺少这些证明时，返回 `PROCESS_STATE_UNKNOWN` 和 `RETIREMENT_STOP_UNPROVEN`。存在未决远端效果时应沿原候选核对发布状态。
 
-命令保存检查点；实际宿主重启后再执行同一 retire 命令。Windows 仅在同一宿主的系统 uptime 比检查点至少下降 60 秒时接受新开机周期，Linux 要求 kernel boot_id 改变；PID 消失、睡眠和墙钟变化都不是该证明。基线过短、重启后等待太久、宿主身份读取失败时继续阻断，不静默刷新基线，不自动重启电脑。Windows 读取 MachineGuid，Linux 读取 machine-id 和 kernel boot-id；报告仅保存宿主摘要。
+checkout 的预算截止仍令本次操作失败。在 runner 准入前截止时，SDK 记录未调用 runner 的见证。已核验停止的批次可用有独立大小和剩余空间上限的终态回执保留停止事实，`recover` 仍核对原锁、文件身份和原运行。普通发布继续执行完整预算观察。
 
-Windows 原生 mutex / Linux 对原槽目录 fd 的 flock 串行化 recover 和 retire 元数据事务。取得该 OS 锁仅证明之前的元数据事务不再活动，不能替代旧受管命令的结束证明。各协议只能在该锁内续接自身的遗留声明，外来声明仍受保护。封存再次核对源 commit/config、原文件字节与身份；远端观察单独保存，dev 快进、分叉、不可达或 Vercel 未登录均不阻本地封存，下一次远端写入仍受未决门禁约束。
+`recover --run-id <UUID> --discard-checkout` 要求原运行的原生停止或明确未启动证据，外部写入均未尝试，且无待完成任务。它在归档绑定旧 checkout 身份后丢弃 payload，保留旧状态和收据。中断时普通 recover 可续接，完成前新运行拒绝复用目录。
+
+原运行缺少停止证据时，保留原槽、锁和证据。独立的干净源码 checkout 可以通过提交的新 `source.slotPath` 建立独立槽及锚点。原源码根内已有固定绑定，单独改路径会被拒绝。切换前验证原协调器已结束并在目标系统限制旧写入者。按精确原候选核对 Git refs、部署、版本别名及生产指向，包括限制权限之前已经受理或排队的动作。切换与新发布由同一个按项目和目标串行的外部写入边界覆盖。仍有未决远端效果时保留阻断。新工作区采用独立资源归属，旧运行保留原状态。
+
+Windows 原生 mutex 和 Linux 对槽目录 fd 的 flock 保护 SDK 单次调用，并串行化 recover 和 retire 的元数据事务。调用返回时释放原生租约，保留待恢复的磁盘锁及证据。上层可在同一 Node 进程调用恢复接口。恢复取得同一租约后仍须独立核验每个受管命令的停止或未启动证据。各协议只续接自身的遗留声明，外来声明继续受保护。封存再次核对源 commit/config、原文件字节与身份。远端观察单独保存，下一次远端写入仍须核验历史未决效果。
 
 先将带 checksum 的原始 state、现有收据、锁、所有权和锚点封存到同槽 `retired/<runId>.json`，再精确释放旧 run.lock；history 与 retired 单份均最多 8 MiB，全部计入槽预算。历史空间不足时拒绝新运行，不自动删历史。原 state 与既有收据不改写；原子写入中断和释放锁前后中断都可续验。`retirement.status=retired`、退出 0 仅表示资源封存完成，`historicalVerification=unknown` 与原 effects 保留。下一次 publish 仍走完整门禁并复用同槽，不增加新的发布授权；workspace 模式不支持 retire。
 
@@ -200,7 +204,7 @@ managed prebuilt 可声明 `completion: { idempotent: true, jobs: [...] }`，沿
 
 先status观察；本地关闭未证明时先按原recover门禁处理。普通verify不重放业务任务；明确 `verify --sha <原40位SHA> --retry-completion`（SDK `retryCompletion: true`）才可在原候选追加下一次尝试，最多32次。续验只读原配置及artifact，不安装、构建、复制或修复marker；原失败/未知尝试、archive和发布收据保持不变。completed由同绑定真实journal及正常关闭证明支撑，重复verify不重跑；完成后才解除输入pin。
 
-若原命令停止只能由现有retire的后续开机门禁证明，续验只消费同run/slot/source/anchor绑定的final封存记录作为停止准入；原UNKNOWN不变，不能由此宣称job成功。未final、错误绑定或缺失封存证据仍拒绝。发布收据缺失时也沿这份原始封存意图选择失败descriptor，不制造成功收据。
+续验只消费同 run、slot、source 和 anchor 绑定且具备明确停止证据的 final 封存记录。原 UNKNOWN 和业务结果继续按原记录解释。未 final、错误绑定或缺失停止证据均拒绝。发布收据缺失时，沿原始封存意图选择失败描述。
 
 若协调器在发布收据提交前退出，只允许从anchor绑定、已封存且证明停止的原意图续验；报告保留 `recovery.reportExists: false`，不补造成功收据。输入、配置、metadata或历史变化继续阻断。新checkout的正常开发/发布不依赖历史临时文件；旧中断事务的恢复仍需要其原始本地证据，不能靠删槽、换目录或当前manifest猜成功。
 

@@ -22,6 +22,13 @@ describe('schema 2 source contracts', () => {
     expect(validateReleaseConfig(workspaceConfig)).toEqual(workspaceConfig);
     expect(validateReleaseConfig(managedConfig)).toEqual(managedConfig);
   });
+  it('accepts a bounded observation timeout independently of sampling cadence', () => {
+    const config = { ...managedConfig, source: { ...managedConfig.source, observationTimeoutMs: 60_000 } };
+    expect(validateReleaseConfig(config)).toEqual(config);
+    for (const observationTimeoutMs of [29_999, 120_001, 60_000.5]) {
+      expect(() => validateReleaseConfig({ ...config, source: { ...config.source, observationTimeoutMs } })).toThrow('CONFIG_INVALID');
+    }
+  });
   it.each([
     { ...workspaceConfig, schemaVersion: 1 },
     { ...managedConfig, source: { ...managedConfig.source, maxBytes: 0 } },

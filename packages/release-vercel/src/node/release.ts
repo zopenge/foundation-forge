@@ -16,8 +16,9 @@ export async function runRelease(options: RunReleaseOptions): Promise<ReleaseRep
     if (!['check', 'publish', 'status', 'verify', 'recover', 'retire', 'login'].includes(options.command)
       || (options.sha !== undefined && (!['status', 'verify'].includes(options.command) || !/^[a-f0-9]{40}$/u.test(options.sha)))) throw new ReleaseError('ARGUMENT_INVALID');
     if (options.retryCompletion !== undefined && (options.command !== 'verify' || typeof options.retryCompletion !== 'boolean')) throw new ReleaseError('ARGUMENT_INVALID');
-    if (options.abandonUnstarted !== undefined && (options.command !== 'retire' || typeof options.abandonUnstarted !== 'boolean')) throw new ReleaseError('ARGUMENT_INVALID');
-    if (options.command === 'retire' ? !options.runId || !/^[a-f0-9-]{36}$/u.test(options.runId) : options.runId !== undefined) throw new ReleaseError('ARGUMENT_INVALID');
+    if (options.discardCheckout !== undefined && (options.command !== 'recover' || typeof options.discardCheckout !== 'boolean')) throw new ReleaseError('ARGUMENT_INVALID');
+    if (options.command === 'retire' || options.discardCheckout ? !options.runId || !/^[a-f0-9-]{36}$/u.test(options.runId) : options.runId !== undefined)
+      throw new ReleaseError('ARGUMENT_INVALID');
     const resolveMarkerAuth = options.candidateMarkerAuth;
     if (resolveMarkerAuth !== undefined && (typeof resolveMarkerAuth !== 'function' || options.transport !== undefined))
       throw new ReleaseError('ARGUMENT_INVALID', { field: 'candidateMarkerAuth' });
@@ -28,6 +29,7 @@ export async function runRelease(options: RunReleaseOptions): Promise<ReleaseRep
       if (!managed) throw new ReleaseError('SOURCE_UNSUPPORTED', { reason: 'RETIREMENT_REQUIRES_MANAGED_RUN' });
       return await runManagedRetirement(options);
     }
+    if (options.discardCheckout && !managed) throw new ReleaseError('SOURCE_UNSUPPORTED', { reason: 'ISOLATION_REQUIRES_MANAGED_RUN' });
     if (['status', 'verify', 'recover'].includes(options.command) && managed) return await runManagedReceiptCommand(options, markerHeaders);
     const config = options.config === undefined ? await readConfig(resolve(options.cwd, options.configPath ?? 'release.config.json')) : validateReleaseConfig(options.config);
     if (options.retryCompletion && !config.completion) throw new ReleaseError('SOURCE_UNSUPPORTED', { reason: 'COMPLETION_NOT_CONFIGURED' });

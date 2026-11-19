@@ -6,6 +6,7 @@ import { record, ReleaseError } from './errors.js';
 import { assertMetadataFile, assertMetadataPaths, inspectMetadataFile, metadataDigest, sameMetadataFile, terminalLimit, writeReservedMetadata, type MetadataFile } from './managed-metadata.js';
 import { readRetirementHost, validRetirementHost, type RetirementHost } from './retirement-host.js';
 import { hasNoStartWitness, hasObservationStopWitness, hasVerifiedManagedStop } from './managed-closure.js';
+import { readRetirementRecord, retirementArchivePath } from './retirement-record.js';
 import { matchesObservationBinding } from './managed-observation.js';
 import { pathExists, readBoundedJson } from './managed-io.js';
 import { parseManagedState } from './managed-state.js';
@@ -57,12 +58,20 @@ export async function discardPreparedState(paths: ManagedPaths, terminal: Manage
 async function isArchivedTerminal(paths: ManagedPaths, state: ManagedState, terminal: ManagedTerminal, file: MetadataFile | null): Promise<boolean> {
   if (state.processes.at(-1)?.terminalSha256 || terminal.runId === state.runId || typeof terminal.runId !== 'string'
     || !/^[a-f0-9-]{36}$/u.test(terminal.runId)) return false;
-  const reference = state.history.find(entry => entry.path === `history/${terminal.runId}.json`);
+  const reference = state.history.find(entry => entry.path === `history/${terminal.runId}.json` || entry.path === `retired/${terminal.runId}.json`);
   if (!reference) return false;
   await assertManagedHistory(paths, state);
-  const previous = await readManagedDisposition(paths, terminal.runId);
-  if (!previous || previous.runId !== terminal.runId || previous.slotId !== state.slotId || previous.stopped.source.sha !== terminal.sourceSha
-    || previous.stopped.source.configSha256 !== terminal.configSha256 || !sameMetadataFile(previous.files.terminal, file)) return false;
+  if (reference.path.startsWith('history/')) {
+    const previous = await readManagedDisposition(paths, terminal.runId);
+    if (!previous || previous.runId !== terminal.runId || previous.slotId !== state.slotId || previous.stopped.source.sha !== terminal.sourceSha
+      || previous.stopped.source.configSha256 !== terminal.configSha256 || !sameMetadataFile(previous.files.terminal, file)) return false;
+  } else {
+    const previous = await readRetirementRecord(retirementArchivePath(paths, terminal.runId), paths);
+    if (!previous?.final || previous.runId !== terminal.runId || previous.slotId !== state.slotId
+      || !previous.snapshot.terminal || !sameMetadataFile(previous.snapshot.terminal.file, file)) return false;
+    const source = record(record(JSON.parse(previous.snapshot.state)).source);
+    if (source.sha !== terminal.sourceSha || source.configSha256 !== terminal.configSha256) return false;
+  }
   await assertMetadataFile(resolve(paths.slotRoot, reference.path), reference.file, historyFileLimit);
   await assertMetadataFile(resolve(paths.slotRoot, 'terminal.json'), file, terminalLimit);
   if (JSON.stringify(await readBoundedJson(paths.statePath)) !== JSON.stringify(state)) throw new ReleaseError('SLOT_STATE', { reason: 'TERMINAL_STATE_BINDING' });

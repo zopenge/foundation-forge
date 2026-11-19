@@ -8,7 +8,7 @@ import { resolve } from 'node:path';
 import { hasNoStartWitness, hasVerifiedManagedClosure, hasVerifiedManagedStop } from './managed-closure.js';
 import type { ManagedCommand } from './managed-state-contracts.js';
 import { validRetirementHost } from './retirement-host.js';
-import { metadataReserveBytes } from './managed-metadata.js';
+import { metadataReserveBytes, writeReservedMetadata } from './managed-metadata.js';
 import { checkoutObservationPlan } from './managed-observation.js';
 import { parsePrebuiltResolutions, parsePrebuiltState } from './prebuilt-state.js';
 import { prebuiltCandidateContext } from './version-alias.js';
@@ -55,6 +55,13 @@ export function parseManagedState(value: unknown, source: FrozenSource, slotId: 
   parseCompletionInput(item.completionInput, item.completion !== undefined);
   parsePrebuiltResolutions(item.prebuiltResolutions);
   if (!validRetirementHost(item.host)) throw new ReleaseError('SLOT_STATE', { reason: 'HOST_OBSERVATION' });
+  if (item.coordinatorLease !== undefined && item.coordinatorLease !== 'native-directory')
+    throw new ReleaseError('SLOT_STATE', { reason: 'COORDINATOR_LEASE' });
+  if (item.checkoutIdentity !== undefined) {
+    const checkout = record(item.checkoutIdentity);
+    if (![checkout.dev, checkout.ino].every(part => typeof part === 'string' && /^\d+$/u.test(part)))
+      throw new ReleaseError('SLOT_STATE', { reason: 'CHECKOUT_IDENTITY' });
+  }
   if (!Array.isArray(item.history) || item.history.length > 10_000) throw new ReleaseError('SLOT_STATE', { reason: 'HISTORY_BINDING_MISSING' });
   const paths = new Set<string>();
   for (const value of item.history) {
@@ -145,7 +152,15 @@ export function createManagedStateStore(paths: ManagedPaths, source: FrozenSourc
     writeState: async (state, beforeCommit) => { parseManagedState(state, source, slotId);
       await atomicJson(paths.statePath, state, 1_048_576, paths, guard, config.maxBytes - metadataReserveBytes, config.minFreeBytes + metadataReserveBytes, beforeCommit); },
     readReceipt: async kind => { await guard(); const value = await readBoundedJson(receiptPath(kind)); return value === undefined ? undefined : parseManagedReceipt(value, source, slotId); },
-    writeReceipt: async (kind, receipt) => { parseManagedReceipt(receipt, source, slotId); await write(receiptPath(kind), { ...receipt, report: summarizeReport(receipt.report) }); },
+    writeReceipt: async (kind, receipt, mode) => {
+      parseManagedReceipt(receipt, source, slotId);
+      const value = { ...receipt, report: summarizeReport(receipt.report) }, path = receiptPath(kind);
+      if (mode === 'observation-deadline') {
+        if (value.report.ok || value.report.error?.code !== 'BUDGET_UNKNOWN' || value.report.error.details.reason !== 'OBSERVATION_DEADLINE')
+          throw new ReleaseError('SLOT_STATE', { reason: 'DEADLINE_RECEIPT' });
+        await writeReservedMetadata(path, value, paths, config.minFreeBytes, guard);
+      } else await write(path, value);
+    },
     writeAnchor: async (anchor: ManagedAnchor) => { if (anchor.slotId !== slotId || anchor.sourceRoot !== source.root || anchor.configPath !== source.configPath) throw new ReleaseError('SLOT_STATE'); await write(paths.anchorPath, anchor, 65_536); },
   };
 }

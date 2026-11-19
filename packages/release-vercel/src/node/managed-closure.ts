@@ -1,11 +1,12 @@
 import type { ManagedCommand } from './managed-state-contracts.js';
 
-/** SDK 在调用 runner 前观察到取消；该见证不声称存在 OS 进程或关闭事实。 */
+/** SDK 见证 runner 未被调用；该见证不声称存在 OS 进程或关闭事实。 */
 export function hasNoStartWitness(command: ManagedCommand): boolean {
   const witness = command.notStarted;
   return command.kind === undefined && command.status === 'stopped' && command.observationComplete
     && command.pid === undefined && command.identity === undefined && command.scope === undefined && command.closure === undefined
-    && command.descendants.length === 0 && witness?.schemaVersion === 1 && witness.reason === 'cancelled-before-runner'
+    && command.descendants.length === 0 && witness?.schemaVersion === 1
+    && (witness.reason === 'cancelled-before-runner' || witness.reason === 'budget-before-runner')
     && typeof witness.observedAt === 'string' && Number.isFinite(Date.parse(witness.observedAt))
     && typeof witness.binding === 'string' && /^[a-f0-9-]{36}:[a-f0-9-]{36}:[a-f0-9-]{36}$/u.test(witness.binding)
     && witness.binding.split(':')[1] === command.id;

@@ -6,6 +6,7 @@ import { createManagedExecution } from './managed-execution.js';
 import { record, ReleaseError } from './errors.js';
 import type { FrozenSource, ManagedPaths } from './managed-state-contracts.js';
 import type { ManagedSlot } from './managed-slot-contracts.js';
+import type { OwnedLock } from './lock.js';
 import { assertPathChain, fileIdentity, measureManagedUsage, pathExists, readBoundedJson, sameIdentity, within } from './managed-io.js';
 import { gitBlob, gitRecords } from './git-stream.js';
 import { acquireLock } from './lock.js';
@@ -19,6 +20,7 @@ import { archiveManagedDisposition, hasManagedDisposition } from './managed-disp
 import { assertManagedHistory } from './managed-history.js';
 import { admitCompletionSlot } from './completion-history.js';
 import type { ManagedSession } from './managed-session-contracts.js';
+import { acquireManagedCoordinatorLease, readRetirementHost } from './retirement-host.js';
 
 export async function assertManagementUntracked(source: FrozenSource, execution: Execution): Promise<void> {
   assertNoGitContext();
@@ -118,10 +120,17 @@ export async function openManagedSlot(source: FrozenSource, execution: Execution
     configPath: source.configPath, repository: source.config.git.repository, sourceIdentity: paths.sourceIdentity, slotIdentity: paths.slotIdentity });
   const admissionBytes = 1024 + metadataReserveBytes + (created ? Buffer.byteLength(ownerJson) : 0);
   if (Buffer.byteLength(ownerJson) > 65_536 || usage.bytes + admissionBytes > budget.maxBytes || usage.freeBytes - admissionBytes < budget.minFreeBytes) throw new ReleaseError('BUDGET_EXCEEDED', { reason: 'SLOT_ADMISSION' });
-  const rawLock = await acquireLock(paths.lockPath, { runId, identity: coordinator });
+  const host = command && await readRetirementHost(execution.signal);
+  const coordinatorLease = host ? { ...await acquireManagedCoordinatorLease(paths, host, execution.signal), host } : undefined;
+  let rawLock: OwnedLock;
+  try { rawLock = await acquireLock(paths.lockPath, { runId, identity: coordinator, ...(coordinatorLease ? { coordinatorLease: 'native-directory' } : {}) }); }
+  catch (error) { await coordinatorLease?.release(); throw error; }
   const management = createManagedExecution(source.root, source.config, undefined, []);
-  const assertOwned = async () => { await assertManagedPaths(paths); await assertManagementUntracked(source, management); await rawLock.assertOwned(); };
-  const lock = { assertOwned, release: async () => { await assertOwned(); await rawLock.release(); } };
+  const assertMetadataOwned = async () => { await coordinatorLease?.assertOwned(); await rawLock.assertOwned(); };
+  const assertOwned = async () => { await assertManagedPaths(paths); await assertManagementUntracked(source, management); await assertMetadataOwned(); };
+  const lock = { assertOwned, release: async () => {
+    try { await assertOwned(); await rawLock.release(); } finally { await coordinatorLease?.release(); }
+  } };
   try {
     if (await pathExists(paths.recoveryLockPath)) throw new ReleaseError('LOCKED', { reason: 'RECOVERY_ACTIVE' });
     if (created) await writeFile(paths.ownershipPath, ownerJson, { encoding: 'utf8', flag: 'wx' });
@@ -129,11 +138,12 @@ export async function openManagedSlot(source: FrozenSource, execution: Execution
     const store = createManagedStateStore(paths, source, slotId, guard);
     const state = await store.read();
     if (state) await assertManagedHistory(paths, state);
-    if (state && !await hasManagedDisposition(paths, state) && !await hasFinalizedRetirement(paths, state)) {
+    if (state && !await hasManagedDisposition(paths, state, true) && !await hasFinalizedRetirement(paths, state)) {
       if (state.status !== 'closed' || state.pendingPush || Object.values(state.effects).includes('unknown') || !state.processes.every(hasVerifiedManagedClosure)) throw new ReleaseError('RECOVERY_REQUIRED', { runId: state.runId });
       await archiveManagedDisposition(paths, state, state, guard, undefined, true);
     }
     const completionResume = await admitCompletionSlot(paths, slotId, source, command, state, execution.signal);
-    return { paths, source, slotId, lock, store, runId, coordinator, ...(completionResume ? { completionResume } : {}), assertMetadataOwned: () => rawLock.assertOwned() };
+    return { paths, source, slotId, lock, store, runId, coordinator, ...(coordinatorLease ? { coordinatorLease } : {}),
+      ...(completionResume ? { completionResume } : {}), assertMetadataOwned };
   } catch (error) { await lock.release(); throw error; }
 }

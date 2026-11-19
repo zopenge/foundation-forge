@@ -41,7 +41,7 @@ it.each(['state', 'receipt'])('validates completion inside durable %s before acc
   const value = await protocol(), completion = createCompletionState(value.source, value.prebuilt, value.runId), slotId = randomUUID();
   const state: ManagedState = { schemaVersion: 3, slotId, runId: value.runId, source: value.source,
     command: 'publish', coordinator: { pid: 1, startToken: 'protocol' },
-    host: { platform: 'win32', hostId: 'e'.repeat(64), uptimeSeconds: 1000 }, history: [], stage: 'completion', status: 'closed', processes: [],
+    host: { platform: 'win32', hostId: 'e'.repeat(64) }, history: [], stage: 'completion', status: 'closed', processes: [],
     effects: { developmentPush: 'not-attempted', releasePush: 'not-attempted', deploymentCreate: 'accepted', deploymentPromote: 'unknown' },
     prebuilt: value.prebuilt, completion, completionInput: value.input };
   const corrupted = { ...completion, context: { ...completion.context, productionUrl: 'https://forged.invalid' } };
@@ -61,7 +61,7 @@ it('requires a private original-input binding for durable completion while keepi
     upload: { dev: '1', ino: '4' }, manifest: { identity: { dev: '1', ino: '5' }, sha256: 'f'.repeat(64) } };
   const state = { schemaVersion: 3, slotId, runId: value.runId, source: value.source,
     command: 'publish', coordinator: { pid: 1, startToken: 'protocol' },
-    host: { platform: 'win32', hostId: 'e'.repeat(64), uptimeSeconds: 1000 }, history: [], stage: 'completion', status: 'closed', processes: [],
+    host: { platform: 'win32', hostId: 'e'.repeat(64) }, history: [], stage: 'completion', status: 'closed', processes: [],
     effects: { developmentPush: 'not-attempted', releasePush: 'not-attempted', deploymentCreate: 'accepted', deploymentPromote: 'unknown' },
     prebuilt: value.prebuilt, completion, completionInput: input };
   expect(parseManagedState(state, value.source, slotId)).toEqual(state);

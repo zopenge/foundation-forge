@@ -19,6 +19,7 @@ import * as recoveryBoundary from '../src/node/managed-recovery.js';
 import { currentCoordinator } from '../src/node/process-identities.js';
 import * as processBoundary from '../src/node/process-identities.js';
 import { ReleaseError } from '../src/node/errors.js';
+import { checkoutObservationPlan } from '../src/node/managed-observation.js';
 
 vi.mock('node:fs/promises', async importOriginal => ({ ...await importOriginal<typeof filesystem>() }));
 vi.mock('../src/node/source.js', async importOriginal => ({ ...await importOriginal<typeof sourceBoundary>() }));
@@ -33,7 +34,7 @@ const transport: ReleaseTransport = { api: async path => {
   if (path.startsWith('/v6/deployments')) return { deployments: [] };
   throw new Error('unexpected API');
 }, buildInfo: async () => { throw new Error('retirement must not run acceptance'); } };
-const fixture = async ({ maxBytes = 2 ** 31 } = {}) => {
+const fixture = async ({ maxBytes = 2 ** 31, interrupted = false } = {}) => {
   const f = await managedSessionFixture(); fixtures.push(f);
   Object.assign(f.config.source, { maxBytes });
   const bytes = Buffer.from(JSON.stringify(f.config));
@@ -42,20 +43,20 @@ const fixture = async ({ maxBytes = 2 ** 31 } = {}) => {
   await writeFile(resolve(f.cwd, 'release.config.json'), bytes);
   await filesystem.mkdir(f.slot.paths.checkoutRoot, { recursive: true });
   const session = await createManagedSession(f.slot, 'publish'), state = session.state;
+  const checkout = await filesystem.lstat(f.slot.paths.checkoutRoot, { bigint: true });
+  state.checkoutIdentity = { dev: String(checkout.dev), ino: String(checkout.ino) };
   // 当前协议的未决意图，不启动命令、不伪造 identity/scope/closure/terminal。
-  state.processes.push({ id: randomUUID(), name: 'fixture-interrupted-command', status: 'intent', descendants: [], observationComplete: false });
+  if (interrupted) state.processes.push({ id: randomUUID(), name: 'fixture-interrupted-command', status: 'intent', descendants: [], observationComplete: false });
   const current = await currentCoordinator();
   // 合成旧 startToken，仅作为 PID 实例不匹配的组件输入；仍由真实 reader 查询当前实例。
   Object.assign(state, { coordinator: { pid: current.pid, startToken: `earlier-instance:${current.startToken}` } });
   const native = await readRetirementHost();
-  // 开机观测是退役函数已有的内部注入边界；不把模拟重启报告成真实 OS 停止证据。
-  Object.assign(state, { host: { ...native, uptimeSeconds: 1000 } });
   await session.persist();
   const slot = f.slot.paths.slotRoot, statePath = f.slot.paths.statePath;
   const previousLock = JSON.parse(await readFile(f.slot.paths.lockPath, 'utf8'));
   await writeFile(f.slot.paths.lockPath, JSON.stringify({ ...previousLock, pid: state.coordinator.pid, identity: state.coordinator }));
   const original = await readFile(statePath, 'utf8'), lock = await readFile(f.slot.paths.lockPath, 'utf8');
-  let host: RetirementHost = { ...native, uptimeSeconds: 1030 };
+  let host = native;
   const initial = '1'.repeat(40), successor = '2'.repeat(40), refs = { dev: initial, main: initial };
   const ignore = Buffer.from('tmp/\nstate/\n'), ignoreOid = createHash('sha1').update(Buffer.from(`blob ${ignore.length}\0`)).update(ignore).digest('hex');
   await writeFile(resolve(f.cwd, '.gitignore'), ignore);
@@ -85,13 +86,12 @@ const fixture = async ({ maxBytes = 2 ** 31 } = {}) => {
   });
   const options = { command: 'retire' as const, cwd: f.cwd, runId: state.runId, transport };
   const run = () => runManagedRetirement(options, () => Promise.resolve(host));
-  const reboot = () => { host = { ...host, uptimeSeconds: 10, ...(host.platform === 'linux' ? { bootId: randomUUID() } : {}) }; };
-  return { ...f, slot, statePath, state, original, lock, options, run, reboot, initial, refs, git,
+  return { ...f, slot, statePath, state, original, lock, options, run, initial, refs, git,
     advanceRemote: () => { refs.dev = successor; }, execution: new Execution(f.cwd, f.config, undefined, []),
     setHost: (value: RetirementHost) => { host = value; }, getHost: () => host };
 };
 const unstartedFixture = async () => {
-  const f = await fixture(), commandId = f.state.processes[0]?.id;
+  const f = await fixture({ interrupted: true }), commandId = f.state.processes[0]?.id;
   if (!commandId) throw Error('fixture command missing');
   const observedAt = new Date().toISOString();
   Object.assign(f.state, { stage: 'checkout', status: 'unknown' });
@@ -116,13 +116,22 @@ const unstartedFixture = async () => {
   const receiptPath = resolve(f.slot, 'latest-publish.json');
   const receipt = JSON.stringify({ schemaVersion: 2, slotId: f.state.slotId, source: f.source, report });
   await writeFile(receiptPath, receipt);
-  const abandon = () => runManagedRetirement({ ...f.options, abandonUnstarted: true }, () => Promise.resolve(f.getHost()));
-  return { ...f, original, receiptPath, receipt, abandon };
+  return { ...f, original, receiptPath, receipt };
 };
 
-it.runIf(process.platform === 'win32')('explicitly abandons an unbound first-Git failure through the public SDK without rewriting UNKNOWN or claiming a reboot', async () => {
+async function prepareWithoutArchive(f: Awaited<ReturnType<typeof fixture>>) {
+  const rename = filesystem.rename;
+  const interrupted = vi.spyOn(filesystem, 'rename').mockImplementation(async (from, to) => {
+    if (to === resolve(f.slot, 'retired', `${f.state.runId}.json`)) throw Object.assign(new Error('fixture archive failure'), { code: 'EACCES' });
+    await rename(from, to);
+  });
+  try { expect(await f.run()).toMatchObject({ ok: false, retirement: { status: 'prepared' } }); }
+  finally { interrupted.mockRestore(); }
+}
+
+it.runIf(process.platform === 'win32')('retires a bound empty first-Git scope through the public command while preserving UNKNOWN', async () => {
   const f = await unstartedFixture();
-  const result = await runRelease({ ...f.options, abandonUnstarted: true });
+  const result = await runRelease(f.options);
   expect(result, JSON.stringify(result.error)).toMatchObject({ ok: true, command: 'retire', processes: { status: 'unknown', knownCount: 0 },
     retirement: { status: 'retired', historicalVerification: 'unknown', origin: 'recorded-run-host', cessation: 'recorded-empty-unstarted-scope' } });
   expect(await readFile(f.statePath, 'utf8')).toBe(f.original);
@@ -135,11 +144,11 @@ it.runIf(process.platform === 'win32')('explicitly abandons an unbound first-Git
   const next = await openManagedSlot(f.source, f.execution);
   expect(next.slotId).toBe(f.state.slotId); expect(next.runId).not.toBe(f.state.runId); await next.lock.release();
 });
-it.runIf(process.platform === 'win32')('keeps ordinary retirement gated and can reuse its exact prepared snapshot only after explicit abandonment', async () => {
+it.runIf(process.platform === 'win32')('reuses the exact prepared snapshot after an interrupted retirement write', async () => {
   const f = await unstartedFixture();
-  expect(await f.run()).toMatchObject({ ok: false, error: { details: { reason: 'SUBSEQUENT_BOOT_REQUIRED' } } });
+  await prepareWithoutArchive(f);
   const checkpoint = await readFile(resolve(f.slot, 'retirement.json'), 'utf8');
-  expect(await f.abandon()).toMatchObject({ ok: true, retirement: { cessation: 'recorded-empty-unstarted-scope' } });
+  expect(await f.run()).toMatchObject({ ok: true, retirement: { cessation: 'recorded-empty-unstarted-scope' } });
   expect(await readFile(resolve(f.slot, 'retirement.json'), 'utf8')).toBe(checkpoint);
   expect(await readFile(f.statePath, 'utf8')).toBe(f.original); expect(await readFile(f.receiptPath, 'utf8')).toBe(f.receipt);
 });
@@ -150,36 +159,150 @@ it.runIf(process.platform === 'win32')('rechecks owner after abandonment archive
     if (fail && path === resolve(f.slot, 'run.lock')) throw Object.assign(Error('fixture lock release failed'), { code: 'EACCES' });
     return realUnlink(path);
   });
-  expect(await f.abandon()).toMatchObject({ ok: false });
+  expect(await f.run()).toMatchObject({ ok: false });
   const archivePath = resolve(f.slot, 'retired', `${f.state.runId}.json`), archive = await readFile(archivePath, 'utf8');
   const observation = vi.spyOn(recoveryBoundary, 'inspectManagedRecovery').mockResolvedValue({ owner: 'active', processes: 'unknown', knownCount: 0 });
   fail = false;
-  expect(await f.abandon()).toMatchObject({ ok: false, error: { details: { reason: 'OWNER_NOT_INACTIVE' } } });
+  expect(await f.run()).toMatchObject({ ok: false, error: { details: { reason: 'OWNER_NOT_INACTIVE' } } });
   expect(await readFile(resolve(f.slot, 'run.lock'), 'utf8')).toBe(f.lock);
   observation.mockRestore();
-  expect(await f.abandon()).toMatchObject({ ok: true, retirement: { cessation: 'recorded-empty-unstarted-scope' } });
   expect(await f.run()).toMatchObject({ ok: true, retirement: { cessation: 'recorded-empty-unstarted-scope' } });
   expect(await readFile(archivePath, 'utf8')).toBe(archive);
   expect(await readFile(f.statePath, 'utf8')).toBe(f.original); expect(await readFile(f.receiptPath, 'utf8')).toBe(f.receipt);
 });
-it.runIf(process.platform === 'win32')('rejects abandonment when the original snapshot changed after preparation', async () => {
+it.runIf(process.platform === 'win32')('rejects a changed original snapshot after retirement', async () => {
   const f = await unstartedFixture(); await f.run();
   await writeFile(f.statePath, f.original + ' ');
-  expect(await f.abandon()).toMatchObject({ ok: false, error: { details: { reason: 'RETIREMENT_INPUT_CHANGED' } } });
-  expect(await readFile(resolve(f.slot, 'run.lock'), 'utf8')).toBe(f.lock);
+  expect(await f.run()).toMatchObject({ ok: false, error: { details: { reason: 'RETIREMENT_INPUT_CHANGED' } } });
+  await expect(readFile(resolve(f.slot, 'run.lock'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
 });
-it('does not turn a missing startup proof into retirement merely because the operator explicitly requests abandonment', async () => {
-  const f = await fixture();
-  expect(await runRelease({ ...f.options, abandonUnstarted: true }))
-    .toMatchObject({ ok: false, error: { details: { reason: 'UNSTARTED_ABANDONMENT_INELIGIBLE' } } });
+it('does not retire a bare intent without either a no-start or a scope-stop witness', async () => {
+  const f = await fixture({ interrupted: true });
+  expect(await runRelease(f.options))
+    .toMatchObject({ ok: false, error: { code: 'PROCESS_STATE_UNKNOWN', details: { reason: 'RETIREMENT_STOP_UNPROVEN' } } });
   expect(await readFile(f.statePath, 'utf8')).toBe(f.original); expect(await readFile(resolve(f.slot, 'run.lock'), 'utf8')).toBe(f.lock);
   await expect(readFile(resolve(f.slot, 'retirement.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+});
+
+it('keeps the lock when a checkout batch has two bound closures and a bare third intent', async () => {
+  const f = await fixture(), plan = checkoutObservationPlan(f.source), now = new Date().toISOString();
+  const observations = plan.slice(0, 2).map((item, index) => {
+    const id = randomUUID(), identity = { pid: 4100 + index, startToken: 'fixture' };
+    const scope = { scopeId: randomUUID(), binding: `${f.state.runId}:${id}:${randomUUID()}` };
+    // 合成协议输入只证明解析和拒绝逻辑。
+    return { id, name: item.name, status: 'closed' as const, observationComplete: true, descendants: [], identity, scope,
+      closure: { observedAt: now, termination: 'exit' as const, exitCode: 0,
+        ownedScope: { ...scope, rootIdentity: identity, observedAt: now, status: 'closed' as const, reason: 'normal' as const, empty: true } } };
+  });
+  const raw = { ...f.state, stage: 'checkout', status: 'unknown', processes: [{ id: randomUUID(),
+    name: 'checkout-frozen', status: 'unknown', kind: 'checkout-observation', plan, observationComplete: false, descendants: [],
+    observations: [...observations, { id: randomUUID(), name: 'git-stream', status: 'intent', observationComplete: false, descendants: [] }] }] };
+  const bytes = JSON.stringify(raw);
+  await writeFile(f.statePath, bytes);
+  expect(await f.run()).toMatchObject({ ok: false, error: { code: 'PROCESS_STATE_UNKNOWN', details: { reason: 'RETIREMENT_STOP_UNPROVEN' } } });
+  expect(await runRelease({ command: 'recover', cwd: f.cwd, runId: f.state.runId, discardCheckout: true }))
+    .toMatchObject({ ok: false, error: { code: 'PROCESS_STATE_UNKNOWN', details: { reason: 'CLOSURE_UNPROVEN' } } });
+  expect(await readFile(f.statePath, 'utf8')).toBe(bytes);
+  expect(await readFile(resolve(f.slot, 'run.lock'), 'utf8')).toBe(f.lock);
+  await expect(readFile(resolve(f.slot, 'recover.lock'))).rejects.toMatchObject({ code: 'ENOENT' });
+});
+
+it('keeps a locally stopped slot protected when a remote write is unresolved', async () => {
+  const f = await fixture();
+  const raw = { ...f.state, effects: { ...f.state.effects, releasePush: 'unknown' } };
+  await writeFile(f.statePath, JSON.stringify(raw));
+  expect(await f.run()).toMatchObject({ ok: false, effects: { releasePush: 'unknown' }, processes: { status: 'closed' },
+    error: { code: 'RECOVERY_REQUIRED', details: { reason: 'RETIREMENT_EFFECT_UNPROVEN' } } });
+  expect(await readFile(resolve(f.slot, 'run.lock'), 'utf8')).toBe(f.lock);
+  expect(f.git.mock.calls.some(([args]) => ['push', 'fetch'].includes(args[0] ?? ''))).toBe(false);
+});
+
+it('discards the stopped checkout above the slot budget and preserves its archived journal', async () => {
+  const f = await fixture({ maxBytes: 4 * 2 ** 20 }), checkout = resolve(f.slot, 'checkout');
+  const first = await filesystem.lstat(checkout, { bigint: true });
+  const request = { command: 'recover' as const, cwd: f.cwd, runId: f.state.runId, discardCheckout: true };
+  await writeFile(resolve(checkout, 'owned-payload.txt'), Buffer.alloc(5 * 2 ** 20));
+  expect(await runRelease(request)).toMatchObject({ ok: true, recovery: { checkoutDiscarded: true } });
+  await expect(filesystem.lstat(checkout)).rejects.toMatchObject({ code: 'ENOENT' });
+  const archive = JSON.parse(await readFile(resolve(f.slot, 'history', `${f.state.runId}.json`), 'utf8'));
+  expect(archive.snapshot.state).toBe(f.original);
+  expect(archive.checkoutIsolation).toEqual({ dev: String(first.dev), ino: String(first.ino), quarantineId: expect.stringMatching(/^[a-f0-9-]{36}$/u) });
+  const next = await openManagedSlot(f.source, f.execution);
+  await filesystem.mkdir(next.paths.checkoutRoot);
+  await expect(readFile(resolve(next.paths.checkoutRoot, 'owned-payload.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
+  await next.lock.release();
+});
+
+it('refuses to discard a different directory before any isolation archive is created', async () => {
+  const f = await fixture(), checkout = resolve(f.slot, 'checkout'), original = resolve(f.slot, 'retirement-work', 'fixture-original');
+  await filesystem.mkdir(resolve(f.slot, 'retirement-work'));
+  await filesystem.rename(checkout, original);
+  await filesystem.mkdir(checkout);
+  await writeFile(resolve(checkout, 'replacement'), 'keep');
+  expect(await runRelease({ command: 'recover', cwd: f.cwd, runId: f.state.runId, discardCheckout: true }))
+    .toMatchObject({ ok: false, error: { code: 'SLOT_STATE', details: { reason: 'CHECKOUT_ISOLATION_CHANGED' } } });
+  expect(await readFile(resolve(checkout, 'replacement'), 'utf8')).toBe('keep');
+  expect(await readFile(resolve(f.slot, 'run.lock'), 'utf8')).toBe(f.lock);
+  await expect(readFile(resolve(f.slot, 'history', `${f.state.runId}.json`))).rejects.toMatchObject({ code: 'ENOENT' });
+});
+
+it('reopens an exact archived Git publication when its original failure receipt is missing', async () => {
+  const f = await fixture(), anchorPath = resolve(f.cwd, 'state/forge-vercel-release/managed.json');
+  const anchor = JSON.parse(await readFile(anchorPath, 'utf8'));
+  anchor.latestPublish = { sha: f.sha, runId: f.state.runId, configSha256: f.source.configSha256 };
+  await writeFile(anchorPath, JSON.stringify(anchor));
+  const original = { ...f.state, stage: 'deployment', status: 'unknown', effects: { developmentPush: 'pushed', releasePush: 'pushed' } };
+  await writeFile(f.statePath, JSON.stringify(original));
+  expect(await runRelease({ command: 'recover', cwd: f.cwd, transport })).toMatchObject({ ok: true, recovery: { reportExists: false } });
+  const receipt = await recoveryBoundary.selectManagedPublication(f.cwd, f.source.configPath, f.sha);
+  expect(receipt.report).toMatchObject({ ok: false, command: 'publish', runId: f.state.runId, candidateSha: f.sha,
+    effects: original.effects, error: { code: 'RECOVERY_REQUIRED', details: { reason: 'ARCHIVED_PUBLICATION_INTENT' } } });
+});
+
+it('resumes a recorded checkout discard after a partial failure even through ordinary recovery', async () => {
+  const f = await fixture(), checkout = resolve(f.slot, 'checkout'), remove = filesystem.rm;
+  const injected = vi.spyOn(filesystem, 'rm').mockImplementation(async (path, options) => {
+    if (String(path).endsWith('.checkout')) throw Object.assign(new Error('fixture cleanup unavailable'), { code: 'EPERM' });
+    await remove(path, options);
+  });
+  const request = { command: 'recover' as const, cwd: f.cwd, runId: f.state.runId, discardCheckout: true };
+  try { expect(await runRelease(request)).toMatchObject({ ok: false }); }
+  finally { injected.mockRestore(); }
+  expect(await readFile(resolve(f.slot, 'run.lock'), 'utf8')).toBe(f.lock);
+  expect(await f.run()).toMatchObject({ ok: false, error: { details: { reason: 'CHECKOUT_ISOLATION_PENDING' } } });
+  expect(await runRelease({ command: 'recover', cwd: f.cwd })).toMatchObject({ ok: true, recovery: { checkoutDiscarded: true } });
+  await expect(filesystem.lstat(checkout)).rejects.toMatchObject({ code: 'ENOENT' });
+});
+
+it('keeps a replacement directory intact when resuming a previously archived discard', async () => {
+  const f = await fixture(), checkout = resolve(f.slot, 'checkout'), remove = filesystem.rm;
+  const injected = vi.spyOn(filesystem, 'rm').mockImplementation(async (path, options) => {
+    if (String(path).endsWith('.checkout')) throw Object.assign(new Error('fixture cleanup unavailable'), { code: 'EPERM' });
+    await remove(path, options);
+  });
+  try { expect((await runRelease({ command: 'recover', cwd: f.cwd, runId: f.state.runId, discardCheckout: true })).ok).toBe(false); }
+  finally { injected.mockRestore(); }
+  await filesystem.mkdir(checkout);
+  await writeFile(resolve(checkout, 'replacement'), 'keep');
+  expect(await runRelease({ command: 'recover', cwd: f.cwd })).toMatchObject({ ok: false, error: { details: { reason: 'CHECKOUT_ISOLATION_CHANGED' } } });
+  expect(await readFile(resolve(checkout, 'replacement'), 'utf8')).toBe('keep');
+  expect(await readFile(resolve(f.slot, 'run.lock'), 'utf8')).toBe(f.lock);
+});
+
+it('requires the independently persisted terminal when a stopped state claims its digest', async () => {
+  const f = await fixture(), id = randomUUID();
+  const raw = { ...f.state, processes: [{ id, name: 'git', status: 'stopped', observationComplete: true, descendants: [],
+    terminalSha256: 'a'.repeat(64), notStarted: { schemaVersion: 1, reason: 'budget-before-runner',
+      binding: `${f.state.runId}:${id}:${randomUUID()}`, observedAt: new Date().toISOString() } }] };
+  await writeFile(f.statePath, JSON.stringify(raw));
+  expect(await f.run()).toMatchObject({ ok: false, error: { code: 'SLOT_STATE', details: { reason: 'TERMINAL_MISSING' } } });
+  expect(await readFile(resolve(f.slot, 'run.lock'), 'utf8')).toBe(f.lock);
 });
 it.runIf(process.platform === 'win32')('refuses abandonment when the original coordinator identity cannot be observed', async () => {
   const f = await unstartedFixture();
   vi.spyOn(recoveryBoundary, 'inspectManagedRecovery').mockResolvedValue({ owner: 'unknown', processes: 'unknown', knownCount: 0 });
   vi.spyOn(processBoundary, 'identityReader').mockReturnValue({ readIdentity: async () => { throw Error('fixture reader unavailable'); } });
-  expect(await f.abandon()).toMatchObject({ ok: false, error: { details: { reason: 'OWNER_NOT_INACTIVE', owner: 'unknown' } } });
+  expect(await f.run()).toMatchObject({ ok: false, error: { details: { reason: 'OWNER_NOT_INACTIVE', owner: 'unknown' } } });
   expect(await readFile(resolve(f.slot, 'run.lock'), 'utf8')).toBe(f.lock);
   await expect(readFile(resolve(f.slot, 'retirement.json'))).rejects.toMatchObject({ code: 'ENOENT' });
 });
@@ -191,28 +314,22 @@ it.runIf(process.platform === 'win32').each(['archive-write', 'cancel-after-arch
     await realRename(from, to);
     if (to === archivePath && fault === 'cancel-after-archive') controller.abort();
   });
-  const result = await runManagedRetirement({ ...f.options, abandonUnstarted: true, signal: controller.signal }, () => Promise.resolve(f.getHost()));
+  const result = await runManagedRetirement({ ...f.options, signal: controller.signal }, () => Promise.resolve(f.getHost()));
   expect(result.ok).toBe(false);
   if (fault === 'cancel-after-archive') expect(result.error?.code).toBe('CANCELLED');
   else await expect(readFile(archivePath)).rejects.toMatchObject({ code: 'ENOENT' });
-  expect(result.recovery?.nextCommand).toContain('--abandon-unstarted');
+  expect(result.recovery?.nextCommand).toContain(`retire --run-id ${f.state.runId}`);
   expect(await readFile(resolve(f.slot, 'run.lock'), 'utf8')).toBe(f.lock);
   expect(await readFile(f.statePath, 'utf8')).toBe(f.original); expect(await readFile(f.receiptPath, 'utf8')).toBe(f.receipt);
   injected.mockRestore();
-  expect(await f.abandon()).toMatchObject({ ok: true, retirement: { cessation: 'recorded-empty-unstarted-scope' } });
+  expect(await f.run()).toMatchObject({ ok: true, retirement: { cessation: 'recorded-empty-unstarted-scope' } });
 });
-it('requires a subsequent boot for the current protocol and preserves unknown history after retirement', async () => {
+it('retires a run containing no launched scopes and preserves the original state', async () => {
   const f = await fixture();
-  const first = await f.run();
   expect(f.state.schemaVersion).toBe(3);
-  expect(f.state.processes[0]).toMatchObject({ status: 'intent', observationComplete: false });
-  expect(f.state.processes[0]?.closure).toBeUndefined();
-  expect(first).toMatchObject({ ok: false, retirement: { status: 'prepared', origin: 'recorded-run-host', historicalVerification: 'unknown' }, error: { details: { reason: 'SUBSEQUENT_BOOT_REQUIRED' } } });
-  expect(await f.run()).toMatchObject({ ok: false, error: { details: { reason: 'SUBSEQUENT_BOOT_REQUIRED' } } });
-  expect(await readFile(f.statePath, 'utf8')).toBe(f.original);
-  expect(await readFile(resolve(f.slot, 'run.lock'), 'utf8')).toBe(f.lock);
-  f.reboot(); const retired = await f.run();
-  expect(retired, JSON.stringify(retired.error)).toMatchObject({ ok: true, command: 'retire', processes: { status: 'unknown' }, retirement: { status: 'retired', historicalVerification: 'unknown', cessation: 'observed-subsequent-boot' }, effects: { developmentPush: 'not-attempted', releasePush: 'not-attempted' } });
+  expect(f.state.processes).toEqual([]);
+  const retired = await f.run();
+  expect(retired, JSON.stringify(retired.error)).toMatchObject({ ok: true, command: 'retire', processes: { status: 'closed' }, retirement: { status: 'retired', historicalVerification: 'unknown', cessation: 'recorded-stopped-scopes' }, effects: { developmentPush: 'not-attempted', releasePush: 'not-attempted' } });
   expect(await readFile(f.statePath, 'utf8')).toBe(f.original);
   await expect(readFile(resolve(f.slot, 'run.lock'))).rejects.toMatchObject({ code: 'ENOENT' });
   const archive = JSON.parse(await readFile(retired.retirement?.archivePath ?? '', 'utf8')) as { snapshot: { state: string } };
@@ -224,18 +341,18 @@ it('requires a subsequent boot for the current protocol and preserves unknown hi
   expect(f.git.mock.calls.some(([args]) => ['push', 'fetch'].includes(args[0] ?? ''))).toBe(false);
 });
 it('does not allow a changed snapshot or host to replace recorded retirement evidence', async () => {
-  const f = await fixture(); await f.run();
+  const f = await fixture(); await prepareWithoutArchive(f);
   const checkpoint = await readFile(resolve(f.slot, 'retirement.json'), 'utf8');
-  f.setHost({ ...f.getHost(), hostId: 'b'.repeat(64), uptimeSeconds: 1 });
+  f.setHost({ ...f.getHost(), hostId: 'b'.repeat(64) });
   expect(await f.run()).toMatchObject({ ok: false, error: { details: { reason: 'RETIREMENT_HOST_CHANGED' } } });
   expect(await readFile(resolve(f.slot, 'retirement.json'), 'utf8')).toBe(checkpoint);
-  f.setHost({ ...await readRetirementHost(), uptimeSeconds: 10 });
+  f.setHost(await readRetirementHost());
   await writeFile(f.statePath, `${f.original} `);
   expect(await f.run()).toMatchObject({ ok: false, error: { details: { reason: 'RETIREMENT_INPUT_CHANGED' } } });
   expect(await readFile(resolve(f.slot, 'run.lock'), 'utf8')).toBe(f.lock);
 });
 it('the public command requires an exact run id and normal recovery still preserves missing closure', async () => {
-  const f = await fixture();
+  const f = await fixture({ interrupted: true });
   expect(await runRelease({ ...f.options, runId: '00000000-0000-4000-8000-000000000000' })).toMatchObject({ ok: false, error: { details: { reason: 'RETIREMENT_RUN_MISMATCH' } } });
   const recovery = await runRelease({ cwd: f.cwd, command: 'recover', transport });
   expect(recovery).toMatchObject({ ok: false, error: { code: 'PROCESS_STATE_UNKNOWN' }, recovery: { reportExists: false } });
@@ -244,7 +361,7 @@ it('the public command requires an exact run id and normal recovery still preser
   expect(normal).toMatchObject({ ok: false, error: { code: 'PROCESS_STATE_UNKNOWN', details: { runId: f.state.runId, nextCommand: expect.stringContaining(`retire --run-id ${f.state.runId}`) } } });
 });
 it('resumes after archive persistence and after lock release without rewriting historical evidence', async () => {
-  const f = await fixture(); await f.run(); f.reboot();
+  const f = await fixture();
   const realUnlink = filesystem.unlink;
   let failRunLock = true, failClaim = false;
   vi.spyOn(filesystem, 'unlink').mockImplementation(async path => {
@@ -276,7 +393,7 @@ it('keeps a live original coordinator and a foreign recovery claim protected', a
   await expect(readFile(resolve(f.slot, 'retirement.json'))).rejects.toMatchObject({ code: 'ENOENT' });
 });
 it('retires local resources after a remote successor without requiring Vercel authentication', async () => {
-  const f = await fixture(); await f.run(); f.reboot(); f.advanceRemote();
+  const f = await fixture(); f.advanceRemote();
   const unavailable: ReleaseTransport = { api: async () => { throw new Error('Vercel login must not gate local retirement'); }, buildInfo: async () => { throw new Error('no acceptance'); } };
   const retired = await runManagedRetirement({ ...f.options, transport: unavailable }, () => Promise.resolve(f.getHost()));
   expect(retired, JSON.stringify(retired.error)).toMatchObject({ ok: true, retirement: { status: 'retired' } });
@@ -285,21 +402,21 @@ it('retires local resources after a remote successor without requiring Vercel au
   expect(archive.final.observation.developmentRef.relation).toBe('superseded');
   expect(archive.snapshot.state).toBe(f.original);
 });
-it('rejects corruption of the recorded boot evidence even when the new values look plausible', async () => {
-  const f = await fixture(); await f.run();
+it('rejects corruption of recorded host evidence even when the new values look plausible', async () => {
+  const f = await fixture(); await prepareWithoutArchive(f);
   const checkpointPath = resolve(f.slot, 'retirement.json'), checkpoint = JSON.parse(await readFile(checkpointPath, 'utf8'));
-  checkpoint.host.uptimeSeconds += 10_000; await writeFile(checkpointPath, JSON.stringify(checkpoint)); f.reboot();
+  checkpoint.host.hostId = 'b'.repeat(64); await writeFile(checkpointPath, JSON.stringify(checkpoint));
   expect(await f.run()).toMatchObject({ ok: false, error: { code: 'SLOT_STATE', details: { reason: 'RETIREMENT_CHECKSUM' } } });
   expect(await readFile(resolve(f.slot, 'run.lock'), 'utf8')).toBe(f.lock);
 });
 it('never releases a run if archive peak bytes exceed its frozen resource budget', async () => {
-  const f = await fixture({ maxBytes: 2_097_152 }); await f.run(); f.reboot();
+  const f = await fixture({ maxBytes: 2_097_152 }); await prepareWithoutArchive(f);
   await writeFile(resolve(f.slot, 'checkout/budget.bin'), Buffer.alloc(2_097_152));
   expect(await f.run()).toMatchObject({ ok: false, error: { code: 'BUDGET_EXCEEDED' } });
   expect(await readFile(resolve(f.slot, 'run.lock'), 'utf8')).toBe(f.lock);
 });
 it('keeps the old lock on cancellation after archiving and permits a later explicit completion', async () => {
-  const f = await fixture(); await f.run(); f.reboot();
+  const f = await fixture();
   const controller = new AbortController(), realRename = filesystem.rename;
   vi.spyOn(filesystem, 'rename').mockImplementation(async (from, to) => { await realRename(from, to); if (to === resolve(f.slot, 'retired', `${f.state.runId}.json`)) controller.abort(); });
   const cancelled = await runManagedRetirement({ ...f.options, signal: controller.signal }, () => Promise.resolve(f.getHost()));
@@ -308,31 +425,28 @@ it('keeps the old lock on cancellation after archiving and permits a later expli
   expect(await f.run()).toMatchObject({ ok: true, retirement: { status: 'retired' } });
 });
 it('resumes its own atomic coordination claim after a real coordinator crash', async () => {
-  const f = await fixture(); await f.run();
+  const f = await fixture(); await prepareWithoutArchive(f);
   const child = spawn(process.execPath, [resolve(import.meta.dirname, 'helpers/retirement-claim-worker.mjs')], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
   let stderr = ''; child.stderr?.on('data', chunk => { stderr += String(chunk); }); const closed = once(child, 'close');
   try {
     const ready = once(child, 'message'); child.send({ cwd: f.cwd });
     expect(await Promise.race([ready.then(([message]) => message), closed.then(() => ({ error: stderr }))])).toEqual({ ready: true });
     expect(child.kill('SIGKILL')).toBe(true); await closed; expect(child.signalCode).toBe('SIGKILL');
-    expect(await f.run()).toMatchObject({ ok: false, retirement: { status: 'prepared' } });
+    await prepareWithoutArchive(f);
     await expect(readFile(resolve(f.slot, 'recover.lock'))).rejects.toMatchObject({ code: 'ENOENT' });
     expect(await readFile(resolve(f.slot, 'run.lock'), 'utf8')).toBe(f.lock);
   } finally { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); await closed; }
 });
 it('retirement distinguishes a different coordinator instance without upgrading missing child closure', async () => {
-  const f = await fixture(), current = await currentCoordinator();
+  const f = await fixture({ interrupted: true }), current = await currentCoordinator();
   const historical = { pid: current.pid, startToken: `earlier-instance:${current.startToken}` };
   const state = { ...f.state, coordinator: historical };
   const original = JSON.stringify(state), lock = JSON.stringify({ ...JSON.parse(f.lock), pid: historical.pid, identity: historical });
   await writeFile(f.statePath, original); await writeFile(resolve(f.slot, 'run.lock'), lock);
   const normal = await runRelease({ command: 'recover', cwd: f.cwd, transport });
   expect(normal).toMatchObject({ ok: false, processes: { status: 'unknown' }, recovery: { observation: { owner: 'inactive' } } });
-  const prepared = await f.run();
-  expect(prepared, JSON.stringify(prepared.error)).toMatchObject({ ok: false, retirement: { status: 'prepared' }, error: { details: { reason: 'SUBSEQUENT_BOOT_REQUIRED' } } });
-  f.reboot();
-  expect(await f.run()).toMatchObject({ ok: true, retirement: { status: 'retired' }, processes: { status: 'unknown' } });
-  expect(await f.run()).toMatchObject({ ok: true, retirement: { status: 'retired' } });
+  expect(await f.run()).toMatchObject({ ok: false, processes: { status: 'unknown' }, error: { details: { reason: 'RETIREMENT_STOP_UNPROVEN' } } });
+  expect(await readFile(resolve(f.slot, 'run.lock'), 'utf8')).toBe(lock);
   expect(await readFile(f.statePath, 'utf8')).toBe(original);
 });
 it('never claims a missing checkpoint was prepared when its atomic rename fails', async () => {

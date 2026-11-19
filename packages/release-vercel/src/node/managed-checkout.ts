@@ -6,7 +6,7 @@ import { assertCandidate, assertRepository } from './git.js';
 import { assertSourceFrozen, readCommittedConfig } from './source.js';
 import { assertManagedPaths } from './managed-paths.js';
 import { gitBlob } from './git-stream.js';
-import { pathExists } from './managed-io.js';
+import { fileIdentity, pathExists } from './managed-io.js';
 import { record, ReleaseError } from './errors.js';
 
 export async function assertCheckoutFrozen(session: ManagedSession): Promise<void> {
@@ -29,6 +29,8 @@ export async function prepareCheckout(session: ManagedSession): Promise<void> {
     await session.executionAt(paths.slotRoot).git(['-c', 'core.longpaths=true', 'clone', '--no-checkout', '--no-local', '--template=', '--config', 'core.autocrlf=false', '--config', 'core.eol=lf', '--config', 'core.longpaths=true', '--origin', source.config.git.remote, '--', source.fetchUrl, paths.checkoutRoot]);
   } else { await assertRepository(execution, source.config); await assertCandidate(execution, source.config); }
   await assertManagedPaths(paths); await assertSourceFrozen(source, original);
+  await slot.lock.assertOwned();
+  session.state.checkoutIdentity = await fileIdentity(paths.checkoutRoot);
   await assertRepository(execution, source.config);
   await execution.git(['fetch', '--no-tags', '--no-recurse-submodules', '--', source.root, source.sha]);
   await assertSourceFrozen(source, original);

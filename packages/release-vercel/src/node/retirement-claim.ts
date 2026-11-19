@@ -1,16 +1,17 @@
 import { randomUUID } from 'node:crypto';
-import { link, unlink } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { link, mkdir, unlink } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
 import type { ManagedPaths, ManagedState } from './managed-state-contracts.js';
 import { assertPathChain, fileIdentity, readBoundedJson, sameIdentity } from './managed-io.js';
 import { currentCoordinator } from './process-identities.js';
 import { record, ReleaseError } from './errors.js';
 import { retirementDigest, writeRetirementJson } from './retirement-record.js';
+import { writeReservedMetadata } from './managed-metadata.js';
 import type { LocalDirectoryLease } from '@openge/forge-process-control-node';
 
 /** 调用方必须先持有原生 retirement lease；仅此协议的死亡声明可在该锁内接管。 */
 export async function claimRetirement(paths: ManagedPaths, state: ManagedState, snapshotSha256: string, lease: LocalDirectoryLease, guard: () => Promise<void>, signal?: AbortSignal,
-  kind: 'retirement-claim' | 'managed-recovery-claim' = 'retirement-claim') {
+  kind: 'retirement-claim' | 'managed-recovery-claim' = 'retirement-claim', isolation = false) {
   await lease.assertOwned();
   await assertPathChain(paths.slotRoot, paths.recoveryLockPath);
   const previous = await readBoundedJson(paths.recoveryLockPath, 65_536);
@@ -27,7 +28,11 @@ export async function claimRetirement(paths: ManagedPaths, state: ManagedState, 
   const value = { schemaVersion: 1, kind, runId: state.runId, slotId: state.slotId, snapshotSha256,
     token: randomUUID(), identity: await currentCoordinator(signal) };
   const staged = resolve(paths.slotRoot, 'retirement-work/claim.json');
-  await writeRetirementJson(staged, value, paths, state, guard);
+  if (isolation) {
+    if (state.source.config.source.mode !== 'managed-commit') throw new ReleaseError('SOURCE_UNSUPPORTED');
+    await guard(); await assertPathChain(paths.slotRoot, dirname(staged)); await mkdir(dirname(staged), { recursive: true });
+    await writeReservedMetadata(staged, value, paths, state.source.config.source.minFreeBytes, guard);
+  } else await writeRetirementJson(staged, value, paths, state, guard);
   try { await link(staged, paths.recoveryLockPath); }
   catch (error) { if (record(error).code === 'EEXIST') throw new ReleaseError('LOCKED'); throw error; }
   const identity = await fileIdentity(paths.recoveryLockPath);

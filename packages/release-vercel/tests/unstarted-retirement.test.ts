@@ -24,7 +24,7 @@ const fixture = (command: 'publish' | 'check' = 'publish') => {
   const effects = { developmentPush: 'not-attempted', releasePush: 'not-attempted' };
   const coordinator = { pid: 1234, startToken: '/Date(1000)/' }, at = '2026-11-09T02:01:28.193Z';
   const state = { schemaVersion: 3, slotId, runId, source, command, coordinator,
-    host: { platform: 'win32', hostId: 'd'.repeat(64), uptimeSeconds: 2534.531 }, history: [], stage: 'checkout', status: 'unknown', effects,
+    host: { platform: 'win32', hostId: 'd'.repeat(64) }, history: [], stage: 'checkout', status: 'unknown', effects,
     processes: [{ id: commandId, name: 'git', status: 'unknown', descendants: [], observationComplete: false,
       closure: { observedAt: at, exitCode: null, termination: 'termination-failure', requestedTermination: 'abort',
         ownedScope: { scopeId: '50000000-0000-4000-8000-000000000001', binding: `${runId}:${commandId}:${nonce}`,
@@ -111,23 +111,21 @@ const archive = (snapshot = fixture()) => {
   const state = JSON.parse(snapshot.state) as { runId: string; slotId: string; host: RetirementHost };
   return sealRetirementRecord({ schemaVersion: 1, kind: 'interrupted-run-retirement', runId: state.runId, slotId: state.slotId,
     snapshot, snapshotSha256: retirementDigest(snapshot), origin: 'recorded-run-host', host: state.host,
-    preparedAt: '2026-11-09T08:10:00.000Z', final: { host: { ...state.host, uptimeSeconds: state.host.uptimeSeconds + 100 },
+    preparedAt: '2026-11-09T08:10:00.000Z', final: { host: { ...state.host },
       retiredAt: '2026-11-09T08:11:00.000Z', cessation: 'recorded-empty-unstarted-scope',
       observation: { owner: 'inactive', processes: 'unknown', observedAt: '2026-11-09T08:11:00.000Z',
         developmentRef: { sha: '', relation: 'unknown' }, releaseRef: { sha: '', relation: 'unknown' } } } });
 };
-it('validates a same-boot archive from its complete original failure snapshot and explicit cessation', () => {
+it('validates a retirement archive from its complete original failure snapshot and scope evidence', () => {
   const value = archive();
   expect(parseRetirementRecord(value)).toEqual(value);
   expect(value.final?.cessation).toBe('recorded-empty-unstarted-scope');
 });
-it('requires subsequent boot evidence for ordinary retirement without an abandonment tag', () => {
+it('rejects an archive missing its cessation evidence selector', () => {
   const value = archive();
   if (!value.final) throw Error('fixture final missing');
   Reflect.deleteProperty(value.final, 'cessation');
   expect(() => parseRetirementRecord(sealRetirementRecord(value))).toThrowError(expect.objectContaining({ code: 'SLOT_STATE' }));
-  Reflect.set(value.final.host, 'uptimeSeconds', 1);
-  expect(parseRetirementRecord(sealRetirementRecord(value)).final?.host.uptimeSeconds).toBe(1);
 });
 it.each(['unknown-tag', 'host-mismatch', 'snapshot-host-mismatch', 'wrong-receipt', 'bound-root', 'wrong-run', 'wrong-slot'])(
   'rejects a checksum-consistent but ineligible abandonment archive: %s', kind => {
@@ -137,7 +135,7 @@ it.each(['unknown-tag', 'host-mismatch', 'snapshot-host-mismatch', 'wrong-receip
     const value = archive(snapshot);
     if (!value.final) throw Error('fixture final missing');
     if (kind === 'unknown-tag') {
-      Reflect.set(value.final, 'cessation', 'operator-reset'); Reflect.set(value.final.host, 'uptimeSeconds', 1);
+      Reflect.set(value.final, 'cessation', 'operator-reset');
     }
     if (kind === 'wrong-run') Reflect.set(value, 'runId', '60000000-0000-4000-8000-000000000001');
     if (kind === 'wrong-slot') Reflect.set(value, 'slotId', '60000000-0000-4000-8000-000000000001');
