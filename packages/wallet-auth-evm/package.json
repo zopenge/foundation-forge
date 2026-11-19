@@ -1,6 +1,6 @@
 {
   "name": "@openge/forge-wallet-auth-evm",
-  "version": "0.1.0-rc.0",
+  "version": "0.1.0",
   "description": "EVM Sign-In with Ethereum message generation and signature verification",
   "type": "module",
   "main": "./dist/index.js",
