@@ -1,6 +1,6 @@
 {
   "name": "@openge/forge-wallet-auth",
-  "version": "0.1.0-rc.0",
+  "version": "0.1.0",
   "description": "Portable wallet authentication challenges and proof contracts",
   "type": "module",
   "main": "./dist/index.js",

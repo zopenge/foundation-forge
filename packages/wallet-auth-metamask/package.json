@@ -1,6 +1,6 @@
 {
   "name": "@openge/forge-wallet-auth-metamask",
-  "version": "0.1.0-rc.0",
+  "version": "0.1.0",
   "description": "Explicit MetaMask browser discovery, connection, and signing",
   "type": "module",
   "main": "./dist/browser.js",
