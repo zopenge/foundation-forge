@@ -1,5 +1,11 @@
 # @openge/forge-release-vercel
 
+## 0.12.0
+
+### Minor Changes
+
+- 9b7412b: 受管 SDK 调用通过独立的原生租约管理生命周期，上层可在同一 Node 进程恢复。恢复和退役核验原运行的停止或未启动证据。预算观察截止时保留可核验的终态记录和原失败。新增带精确运行 ID 的 checkout 丢弃入口及独立的单次观察截止配置。
+
 ## 0.11.4
 
 ### Patch Changes
