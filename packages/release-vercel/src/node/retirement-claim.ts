@@ -6,10 +6,10 @@ import { assertPathChain, fileIdentity, readBoundedJson, sameIdentity } from './
 import { currentCoordinator } from './process-identities.js';
 import { record, ReleaseError } from './errors.js';
 import { retirementDigest, writeRetirementJson } from './retirement-record.js';
-import type { RetirementLease } from './retirement-lease.js';
+import type { LocalDirectoryLease } from '@openge/forge-process-control-node';
 
 /** 调用方必须先持有原生 retirement lease；仅此协议的死亡声明可在该锁内接管。 */
-export async function claimRetirement(paths: ManagedPaths, state: ManagedState, snapshotSha256: string, lease: RetirementLease, guard: () => Promise<void>, signal?: AbortSignal,
+export async function claimRetirement(paths: ManagedPaths, state: ManagedState, snapshotSha256: string, lease: LocalDirectoryLease, guard: () => Promise<void>, signal?: AbortSignal,
   kind: 'retirement-claim' | 'managed-recovery-claim' = 'retirement-claim') {
   await lease.assertOwned();
   await assertPathChain(paths.slotRoot, paths.recoveryLockPath);

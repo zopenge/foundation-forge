@@ -1,15 +1,15 @@
 import { mkdir, unlink } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
+import { acquireLocalDirectoryLease, type LocalDirectoryLease } from '@openge/forge-process-control-node';
 import type { ReleaseDiagnostic, ReleaseRecoveryObservation, ReleaseReport, RunReleaseOptions } from '../contracts.js';
 import type { ManagedState } from './managed-state-contracts.js';
-import { hasSubsequentBoot, readRetirementHost, validRetirementHost, type RetirementHost } from './retirement-host.js';
+import { hasSubsequentBoot, readRetirementHost, retirementLeaseNamespace, validRetirementHost, type RetirementHost } from './retirement-host.js';
 import { frozenSource, inspectManagedRecovery, observeRefsForDisposition, readManagedLocation, type ManagedLocation } from './managed-recovery.js';
 import { assertHistoricalSource } from './source.js';
 import { parseManagedState } from './managed-state.js';
 import { assertActive, record, ReleaseError } from './errors.js';
 import { assertManagedPaths, assertManagementUntracked } from './managed-paths.js';
 import { assertPathChain, pathExists, readBoundedJson } from './managed-io.js';
-import { acquireRetirementLease } from './retirement-lease.js';
 import { assertRetirementSnapshot, captureRetirementSnapshot, hasFinalizedRetirement, readRetirementRecord, retirementArchivePath, retirementDigest, sealRetirementRecord, writeRetirementJson } from './retirement-record.js';
 import type { RetirementRecord } from './retirement-contracts.js';
 import { claimRetirement } from './retirement-claim.js';
@@ -25,7 +25,7 @@ import { assertManagedHistory } from './managed-history.js';
 export async function runManagedRetirement(options: RunReleaseOptions, hostReader: (signal?: AbortSignal) => Promise<RetirementHost> = readRetirementHost): Promise<ReleaseReport> {
   const startedAt = new Date().toISOString();
   let location: ManagedLocation | undefined, state: ManagedState | undefined, evidence: RetirementRecord | undefined;
-  let lease: Awaited<ReturnType<typeof acquireRetirementLease>> | undefined, claim: Awaited<ReturnType<typeof claimRetirement>> | undefined;
+  let lease: LocalDirectoryLease | undefined, claim: Awaited<ReturnType<typeof claimRetirement>> | undefined;
   let failure: ReleaseDiagnostic | undefined, retirement: ReleaseReport['retirement'], archivePath: string | undefined;
   try {
     assertActive(options.signal);
@@ -39,7 +39,8 @@ export async function runManagedRetirement(options: RunReleaseOptions, hostReade
     const host = await hostReader(options.signal);
     if (!validRetirementHost(host)) throw new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'HOST_OBSERVATION_UNKNOWN' });
     if (state.host.hostId !== host.hostId || state.host.platform !== host.platform) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'RETIREMENT_HOST_CHANGED' });
-    lease = await acquireRetirementLease(location.paths, host, options.signal);
+    lease = await acquireLocalDirectoryLease(location.paths.slotRoot, { scope: { namespace: retirementLeaseNamespace, discriminator: host.hostId },
+      expectedIdentity: location.paths.slotIdentity, signal: options.signal });
     const paths = location.paths, current = state, execution = createManagedExecution(source.root, source.config, options.signal, []);
     archivePath = retirementArchivePath(paths, state.runId);
     const finalized = await readRetirementRecord(archivePath, paths);

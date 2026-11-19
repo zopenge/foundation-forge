@@ -5,6 +5,7 @@ import { hostname, uptime } from 'node:os';
 import { promisify } from 'node:util';
 import { assertActive, record, ReleaseError } from './errors.js';
 
+export const retirementLeaseNamespace = 'FoundationForge.Retirement';
 export interface RetirementHost {
   readonly platform: 'win32' | 'linux';
   readonly hostId: string;

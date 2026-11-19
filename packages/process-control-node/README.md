@@ -50,6 +50,23 @@ Commands must not delegate execution to WMI, system services or another external
 process owner. Normal closure differs from successful forced cleanup: cleanup
 can prove emptiness while completion remains unknown.
 
+Use `acquireLocalDirectoryLease(directory, options)` for a nonblocking,
+cross-process lock on an existing plain directory on Windows x64 or Linux/glibc
+x64. Pass its canonical absolute path and a stable `scope.namespace`, with an
+optional stable `scope.discriminator`. Windows uses a named mutex derived from
+this scope and the directory identity. Linux uses an exclusive `flock` on the
+directory descriptor. Use a dedicated directory for each independent lock on
+either platform, and share the same scope across all participants.
+
+The lease returns its `identity` (`dev` and `ino` as decimal strings),
+`assertOwned()` to recheck that the path still resolves to the held directory,
+and `release()` for use in `finally`. Supply `expectedIdentity` to require a
+previously observed identity. A busy lock rejects with `LOCKED`, and a replaced
+or noncanonical path rejects with `DIRECTORY_CHANGED`. The optional `signal`
+can cancel acquisition. After acquisition, the caller owns release. The OS
+releases a dead holder's mutex or descriptor. Command cessation, recovery
+journals, and ownership of remote writes require their own evidence.
+
 Complete usage, backend selection, examples, termination semantics, and provider boundaries are maintained in the [中文使用文档](https://github.com/zopenge/foundation-forge/blob/main/docs/packages/process-execution/process-control-node.md).
 
 For repository-wide capability discovery, see the [Foundation Forge documentation](https://github.com/zopenge/foundation-forge/blob/main/docs/README.md).

@@ -3,7 +3,9 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { log } from 'node:console';
 import process from 'node:process';
-import { createWindowsNativeProcessIdentityReader, createWindowsProcessControl } from '@openge/forge-process-control-node';
+import { mkdir, mkdtemp, realpath, rmdir } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { acquireLocalDirectoryLease, createWindowsNativeProcessIdentityReader, createWindowsProcessControl } from '@openge/forge-process-control-node';
 
 // 独立SDK消费者：以外部Core reader复核身份，更新后的身份不能复用首次授权。
 let token = '/Date(123)/', reads = 0;
@@ -42,3 +44,18 @@ if (process.platform === 'win32' && process.arch === 'x64') {
   }
 }
 log('Process-control Node tarball consumer verified explicit identity composition and fresh termination.');
+
+if (process.arch === 'x64' && ['win32', 'linux'].includes(process.platform)) {
+  const base = resolve('tmp'); await mkdir(base, { recursive: true });
+  const directory = await realpath(await mkdtemp(resolve(base, 'lease-')));
+  try {
+    const options = { scope: { namespace: 'FoundationForge.ConsumerLease' } };
+    const lease = await acquireLocalDirectoryLease(directory, options);
+    try {
+      await lease.assertOwned();
+      await assert.rejects(acquireLocalDirectoryLease(directory, options), { code: 'LOCKED' });
+    } finally { await lease.release(); }
+    await (await acquireLocalDirectoryLease(directory, { ...options, expectedIdentity: lease.identity })).release();
+  } finally { await rmdir(directory); }
+  log('Process-control Node tarball consumer verified the public local directory lease.');
+}

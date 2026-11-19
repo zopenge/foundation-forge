@@ -57,7 +57,6 @@
     "@openge/forge-http-transport": "workspace:^",
     "@openge/forge-process-control": "workspace:^",
     "@openge/forge-process-control-node": "workspace:^",
-    "koffi": "3.3.3",
     "vercel": "64.7.0"
   }
 }

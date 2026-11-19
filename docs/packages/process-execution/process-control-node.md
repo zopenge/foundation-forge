@@ -14,7 +14,7 @@ pnpm add @openge/forge-process-control @openge/forge-process-control-node
 
 ## 可用入口
 
-- `@openge/forge-process-control-node`：唯一入口，导出 Windows/Posix Provider factory。
+- `@openge/forge-process-control-node`：唯一入口，导出 Windows/Posix Provider factory 和 `acquireLocalDirectoryLease`。
 
 ## 核心能力
 
@@ -25,6 +25,10 @@ pnpm add @openge/forge-process-control @openge/forge-process-control-node
 - 终止前重新校验 PID/start token；支持单进程与进程树终止。
 
 ## 快速使用
+
+`acquireLocalDirectoryLease(directory, { scope, expectedIdentity?, signal? })` 为已存在的普通本地目录提供跨进程非阻塞互斥。传入规范化绝对路径和稳定的 `scope.namespace`，可选 `scope.discriminator`。Windows x64 按 scope 和目录身份取得命名 mutex。Linux/glibc x64 对目录描述符持有独占 `flock`，每把独立锁使用专属目录。
+
+返回值包含十进制字符串 `dev`、`ino` 组成的 `identity`，`assertOwned()` 重新核对持有状态与目录身份，调用方在 `finally` 中调用 `release()`。可传 `expectedIdentity` 要求目录身份与此前观测一致。并发占用返回 `LOCKED`，目录替换返回 `DIRECTORY_CHANGED`。`signal` 用于取得锁前的取消，取得后仍由持有者释放。持有者退出由 OS 解除互斥，子进程关闭和远端写入所有权由调用方分别核验。
 
 ```ts
 import { createWindowsProcessControl } from '@openge/forge-process-control-node';

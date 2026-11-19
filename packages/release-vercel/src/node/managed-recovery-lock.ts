@@ -1,14 +1,14 @@
 import { unlink } from 'node:fs/promises';
 import type { ManagedPaths, ManagedState } from './managed-state-contracts.js';
 import type { OwnedLock } from './lock.js';
-import { record, ReleaseError } from './errors.js';
+import { localLeaseDiagnostic, record, ReleaseError } from './errors.js';
 import { assertManagedPaths, assertManagementUntracked } from './managed-paths.js';
 import { fileIdentity, measureManagedUsage, pathExists, readBoundedJson, sameIdentity } from './managed-io.js';
 import { parseManagedState } from './managed-state.js';
 import { createManagedExecution } from './managed-execution.js';
 import { hasManagedDisposition } from './managed-disposition.js';
-import { acquireRetirementLease } from './retirement-lease.js';
-import { readRetirementHost } from './retirement-host.js';
+import { acquireLocalDirectoryLease } from '@openge/forge-process-control-node';
+import { readRetirementHost, retirementLeaseNamespace } from './retirement-host.js';
 import { claimRetirement } from './retirement-claim.js';
 import { retirementDigest } from './retirement-record.js';
 import { assertMetadataFile, inspectMetadataFile } from './managed-metadata.js';
@@ -24,7 +24,9 @@ export async function claimManagedRecovery(paths: ManagedPaths, state: ManagedSt
   if (usage.bytes + 1024 > config.maxBytes || usage.freeBytes - 1024 < config.minFreeBytes) throw new ReleaseError('BUDGET_EXCEEDED', { reason: 'RECOVERY_ADMISSION' });
   await assertManagedHistory(paths, state);
   const stateFile = await inspectMetadataFile(paths.statePath);
-  const lease = await acquireRetirementLease(paths, await readRetirementHost(signal), signal);
+  const host = await readRetirementHost(signal);
+  const lease = await acquireLocalDirectoryLease(paths.slotRoot, { scope: { namespace: retirementLeaseNamespace, discriminator: host.hostId },
+    expectedIdentity: paths.slotIdentity, signal });
   const guard = async () => { await lease.assertOwned(); await assertManagedPaths(paths); await assertManagementUntracked(state.source, management); await assertMetadataFile(paths.statePath, stateFile); };
   let rawClaim: OwnedLock;
   try { rawClaim = await claimRetirement(paths, state, retirementDigest({ runId: state.runId, slotId: state.slotId, stateFile }), lease, guard, signal, 'managed-recovery-claim'); }
@@ -52,7 +54,8 @@ export async function claimManagedRecovery(paths: ManagedPaths, state: ManagedSt
     return { claim, oldLock: { assertOwned, release: async () => { await assertOwned(); await unlink(paths.lockPath); } } };
   } catch (error) {
     try { await claim.release(); }
-    catch { throw new ReleaseError('LOCK_OWNERSHIP', { reason: 'RECOVERY_CLAIM_LOST', priorCode: error instanceof ReleaseError ? error.code : 'IO_FAILED' }); }
+    catch { throw new ReleaseError('LOCK_OWNERSHIP', { reason: 'RECOVERY_CLAIM_LOST',
+      priorCode: error instanceof ReleaseError ? error.code : localLeaseDiagnostic(error)?.code ?? 'IO_FAILED' }); }
     throw error;
   }
 }

@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { calculateBytesIntegrity } from '@openge/forge-artifact-integrity';
 import type { ReleaseConfig, ReleaseDeployment, ReleaseDiagnostic, ReleaseReport, ReleaseStep, RunReleaseOptions } from '../contracts.js';
 import { validateReleaseConfig } from './config.js';
-import { assertActive, record, redact, ReleaseError } from './errors.js';
+import { assertActive, localLeaseDiagnostic, record, redact, ReleaseError } from './errors.js';
 import { Execution, vercelInvocation } from './execution.js';
 import { assertCandidate, assertRepository } from './git.js';
 import { acquireLock, type OwnedLock } from './lock.js';
@@ -11,8 +11,8 @@ import { publishCandidate } from './publication.js';
 
 const digest = async (value: unknown) => (await calculateBytesIntegrity(new TextEncoder().encode(JSON.stringify(value)))).sha256;
 export function diagnostic(error: unknown): ReleaseDiagnostic {
-  return error instanceof ReleaseError ? { code: error.code, details: error.details }
-    : { code: 'IO_FAILED', details: { reason: redact(error instanceof Error ? error.message : String(error)).slice(0, 1000) } };
+  return localLeaseDiagnostic(error) ?? (error instanceof ReleaseError ? { code: error.code, details: error.details }
+    : { code: 'IO_FAILED', details: { reason: redact(error instanceof Error ? error.message : String(error)).slice(0, 1000) } });
 }
 export async function readConfig(path: string): Promise<ReleaseConfig> {
   try { return validateReleaseConfig(JSON.parse(await readFile(path, 'utf8')) as unknown); }

@@ -14,3 +14,6 @@ export {
 } from './provider.js';
 export { createWindowsOwnedProcessScopeProvider, createLinuxOwnedProcessScopeProvider } from './owned-process-scope.js';
 export { createWindowsNativeProcessIdentityReader } from './windows-native-identity.js';
+export { acquireLocalDirectoryLease, LocalDirectoryLeaseError,
+  type LocalDirectoryIdentity, type LocalDirectoryLease, type LocalDirectoryLeaseErrorCode,
+  type LocalDirectoryLeaseOptions, type LocalDirectoryLeaseScope } from './local-directory-lease.js';

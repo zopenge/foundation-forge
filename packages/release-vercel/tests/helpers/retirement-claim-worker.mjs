@@ -1,6 +1,6 @@
 import process from 'node:process';
-import { acquireRetirementLease } from '../../dist/node/retirement-lease.js';
-import { readRetirementHost } from '../../dist/node/retirement-host.js';
+import { acquireLocalDirectoryLease } from '@openge/forge-process-control-node';
+import { readRetirementHost, retirementLeaseNamespace } from '../../dist/node/retirement-host.js';
 import { captureRetirementSnapshot, retirementDigest } from '../../dist/node/retirement-record.js';
 import { claimRetirement } from '../../dist/node/retirement-claim.js';
 import { readManagedLocation } from '../../dist/node/managed-recovery.js';
@@ -13,7 +13,8 @@ process.once('message', async ({ cwd, mode }) => {
     const state = await readBoundedJson(paths.statePath);
     if (mode === 'recover') await claimManagedRecovery(paths, state);
     else {
-      const host = await readRetirementHost(), lease = await acquireRetirementLease(paths, host);
+      const host = await readRetirementHost(), lease = await acquireLocalDirectoryLease(paths.slotRoot,
+        { scope: { namespace: retirementLeaseNamespace, discriminator: host.hostId }, expectedIdentity: paths.slotIdentity });
       await claimRetirement(paths, state, retirementDigest(await captureRetirementSnapshot(paths)), lease, () => lease.assertOwned());
     }
     process.send?.({ ready: true });
