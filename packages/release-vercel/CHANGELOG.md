@@ -1,5 +1,13 @@
 # @openge/forge-release-vercel
 
+## 0.11.3
+
+### Patch Changes
+
+- 78528b4: 公开 `acquireLocalDirectoryLease`，在 Windows x64 和 Linux/glibc x64 上按规范化目录身份持有本机互斥。`forge-release-vercel` 的恢复与退役共用该实现并保留原锁绑定，进程停止证据和远端写入所有权仍独立核验。
+- Updated dependencies [78528b4]
+  - @openge/forge-process-control-node@0.7.0
+
 ## 0.11.2
 
 ### Patch Changes
