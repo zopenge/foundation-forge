@@ -1,0 +1,47 @@
+{
+  "name": "@openge/forge-wallet-auth-metamask",
+  "version": "0.1.0-rc.0",
+  "description": "Explicit MetaMask browser discovery, connection, and signing",
+  "type": "module",
+  "main": "./dist/browser.js",
+  "types": "./dist/browser.d.ts",
+  "exports": {
+    "./browser": {
+      "types": "./dist/browser.d.ts",
+      "import": "./dist/browser.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "eslint . --max-warnings 0",
+    "typecheck": "tsc -p tsconfig.json --noEmit --pretty false",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22.14.0"
+  },
+  "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zopenge/foundation-forge.git",
+    "directory": "packages/wallet-auth-metamask"
+  },
+  "homepage": "https://github.com/zopenge/foundation-forge#readme",
+  "bugs": {
+    "url": "https://github.com/zopenge/foundation-forge/issues"
+  },
+  "dependencies": {
+    "@openge/forge-wallet-auth": "workspace:^"
+  }
+}
