@@ -1,5 +1,11 @@
 # @openge/forge-release-vercel
 
+## 0.11.4
+
+### Patch Changes
+
+- bac6b8c: Pace bounded budget rescans after an observed checkout payload refresh while preserving the shared observation deadline and full-scan accounting.
+
 ## 0.11.3
 
 ### Patch Changes
