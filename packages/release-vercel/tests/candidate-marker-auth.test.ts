@@ -93,7 +93,9 @@ async function network(provider: (request: IncomingMessage, response: ServerResp
 it('binds credentials after native candidate observation and shares them through publish and completion', async () => {
   const acceptance = [{ command: 'node', args: ['-e',
     `const samples = ${JSON.stringify([token, cookie].map(value => Buffer.from(value).toString('base64')))}.map(value => Buffer.from(value, 'base64').toString()); if (Object.values(process.env).some(value => samples.some(sample => value.includes(sample)))) process.exit(1);`] }];
-  const value = await fixture(true, acceptance, { idempotent: true, jobs: [{ command: 'node', args: ['-e', 'process.exit(0)'] }] });
+  // 两次受管别名查询和两次真实 TLS 读取共用阶段预算，单次请求仍限 1 秒。
+  const value = await fixture(true, acceptance, { idempotent: true, jobs: [{ command: 'node', args: ['-e', 'process.exit(0)'] }] },
+    { deploymentMs: 10_000 });
   const versionHost = `fixture-${value.sha}.vercel.app`;
   const networkFixture = await network(async (request, response) => {
     const path = request.url ?? '', method = request.method;
