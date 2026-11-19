@@ -1,6 +1,7 @@
 import { lstat, open, opendir, readlink, realpath, rename, statfs, unlink } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
+import { performance } from 'node:perf_hooks';
 import type { FileIdentity, ManagedPaths, MetadataFile } from './managed-state-contracts.js';
 import { record, ReleaseError } from './errors.js';
 import type { ScanFailureWitness } from './managed-scan-witness.js';
@@ -99,6 +100,7 @@ async function assertInternalLink(root: string, path: string, active: () => void
 }
 export interface ManagedUsageProgress {
   failureWitness?: ScanFailureWitness;
+  checkoutPayloadChanged?: boolean;
   entriesVisited: number;
   phase: 'path-guard' | 'scan' | 'root' | 'entry' | 'link' | 'directory-open' | 'directory-read' | 'anchor' | 'volume' | 'complete';
 }
@@ -122,20 +124,22 @@ async function assertDirectoryIdentity(paths: ManagedPaths, path: string, before
       before: { dev: before.dev.toString(), ino: before.ino.toString() }, after: { dev: after.dev.toString(), ino: after.ino.toString() } });
   }
 }
-export async function readManagedDirectoryNames(path: string, maxEntries: number, signal?: AbortSignal,
-  progress?: ManagedUsageProgress, inspectEntry?: () => void): Promise<string[]> {
+interface ManagedDirectoryEntry { readonly name: string; readonly ordinary: boolean }
+export async function readManagedDirectoryEntries(path: string, maxEntries: number, signal?: AbortSignal,
+  progress?: ManagedUsageProgress, inspectEntry?: () => void): Promise<ManagedDirectoryEntry[]> {
   if (!Number.isSafeInteger(maxEntries) || maxEntries < 0 || maxEntries > entryLimit) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'ENTRY_LIMIT' });
   const active = () => { if (signal?.aborted) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'OBSERVATION_DEADLINE' }); };
   const directory = await opendir(path);
   if (signal?.aborted) { await directory.close(); active(); }
   if (progress) progress.phase = 'directory-read';
-  const children: string[] = [];
+  const children: ManagedDirectoryEntry[] = [];
   // Windows 搜索句柄会阻止安装器重命名子树；先关闭一层枚举，再逐项读取新鲜元数据。
   for await (const entry of directory) {
     active();
     if (children.length >= maxEntries) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'ENTRY_LIMIT' });
     inspectEntry?.();
-    children.push(entry.name);
+    // 类型仅用于首次 lstat 消失时的退避资格，正常遍历仍以新鲜元数据为准。
+    children.push({ name: entry.name, ordinary: entry.isFile() || entry.isDirectory() });
   }
   return children;
 }
@@ -160,7 +164,7 @@ export async function measureManagedUsageOnce(paths: ManagedPaths, signal?: Abor
     if (entries + pendingEntries >= entryLimit) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'ENTRY_LIMIT' });
     pendingEntries++;
   };
-  const visit = async (path: string): Promise<void> => {
+  const visit = async (path: string, ordinary = false): Promise<void> => {
     const branches = new Set<Promise<void>>();
     let directoryBefore: { readonly dev: bigint; readonly ino: bigint } | undefined, directoryChecked = false;
     try {
@@ -168,24 +172,27 @@ export async function measureManagedUsageOnce(paths: ManagedPaths, signal?: Abor
     if (++entries > entryLimit) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'ENTRY_LIMIT' });
     phase('entry');
     const stat = await lstat(path, { bigint: true });
+    const isDirectory = stat.isDirectory(), isFile = stat.isFile();
+    ordinary = isDirectory || isFile;
     if (stat.isSymbolicLink()) {
       phase('link');
       await assertInternalLink(paths.slotRoot, path, active);
       if (!sameIdentity(stat, await lstat(path, { bigint: true }))) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'LINK_REPLACED' });
       bytes += Number(stat.size);
-    } else if (stat.isDirectory()) {
+    } else if (isDirectory) {
       directoryBefore = stat;
       phase('directory-open');
       // 已访问与所有祖先尚待处理的名称共用原条目上限，不能为关闭句柄引入无界快照。
-      const children = await readManagedDirectoryNames(path, entryLimit - entries - pendingEntries, signal, progress, reserveEntry);
+      const children = await readManagedDirectoryEntries(path, entryLimit - entries - pendingEntries, signal, progress, reserveEntry);
       for (const [index, child] of children.entries()) {
         active(); pendingEntries--;
         // 不等待分支许可；没有空位时沿当前分支前进，避免递归持有许可后互相等待。
         // 文件和目录共用原有分支额度；每项仍重新读取元数据，不复用枚举类型。
-        if (availableBranches === 0 || index === children.length - 1) await visit(resolve(path, child));
+        const childPath = resolve(path, child.name);
+        if (availableBranches === 0 || index === children.length - 1) await visit(childPath, child.ordinary);
         else {
           availableBranches--;
-          const branch: Promise<void> = visit(resolve(path, child)).catch(error => { fail(error); })
+          const branch: Promise<void> = visit(childPath, child.ordinary).catch(error => { fail(error); })
             .finally(() => { availableBranches++; branches.delete(branch); });
           branches.add(branch);
         }
@@ -194,10 +201,19 @@ export async function measureManagedUsageOnce(paths: ManagedPaths, signal?: Abor
       await Promise.all(branches);
       // 释放搜索句柄后重新核对目录；不返回已变化子树的部分计数。
       active(); await assertDirectoryIdentity(paths, path, stat); directoryChecked = true;
-    } else if (stat.isFile()) bytes += Number(stat.size);
+    } else if (isFile) bytes += Number(stat.size);
     else throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'FILE_TYPE' });
     if (!Number.isSafeInteger(bytes)) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'SIZE_OVERFLOW' });
-    } catch (error) { throw fail(error, path); }
+    } catch (error) {
+      if (!failed && progress && directoryScope(paths, path) === 'checkout-entry') {
+        const raw = record(error), argument = raw.path;
+        progress.checkoutPayloadChanged = error instanceof ReleaseError
+          ? error.details.reason === 'DIRECTORY_REPLACED' && error.details.change === 'identity'
+          : ordinary && raw.code === 'ENOENT'
+            && typeof argument === 'string' && isAbsolute(argument) && relative(path, argument) === '';
+      }
+      throw fail(error, path);
+    }
     finally {
       await Promise.all(branches);
       // 可重试首错不能省略在途目录的末尾复核；已知链接或命名空间更换必须阻止重扫。
@@ -237,7 +253,17 @@ export async function measureManagedUsageOnce(paths: ManagedPaths, signal?: Abor
     throw observed;
   }
 }
-export async function measureManagedUsage(paths: ManagedPaths, signal?: AbortSignal, scan = measureManagedUsageOnce, progress?: ManagedUsageProgress): Promise<{ bytes: number; freeBytes: number }> {
+function waitForUsageRescan(milliseconds: number, signal: AbortSignal | undefined): Promise<void> {
+  return new Promise<void>(accept => {
+    const finish = () => { clearTimeout(timer); signal?.removeEventListener('abort', finish); accept(); };
+    const timer = setTimeout(finish, milliseconds);
+    if (signal?.aborted) finish();
+    else signal?.addEventListener('abort', finish, { once: true });
+  });
+}
+
+export async function measureManagedUsage(paths: ManagedPaths, signal?: AbortSignal, scan = measureManagedUsageOnce,
+  progress?: ManagedUsageProgress, deadline?: number): Promise<{ bytes: number; freeBytes: number }> {
   const active = () => { if (signal?.aborted) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'OBSERVATION_DEADLINE' }); };
   active();
   const checkout = await lstat(paths.checkoutRoot, { bigint: true }).catch((error: unknown) => {
@@ -254,12 +280,23 @@ export async function measureManagedUsage(paths: ManagedPaths, signal?: AbortSig
     }
   };
   for (let attempt = 0; ; attempt++) {
+    if (progress) progress.checkoutPayloadChanged = false;
     try { const value = await scan(paths, signal, progress); await assertCheckout(); return value; }
     catch (error) {
       // 普通子树变化只能丢弃整扫；根、链接与命名空间变化不能借重扫重新绑定。
       if (attempt >= 2 || !(error instanceof ReleaseError) || !canRescanUsage(error)
         || error.details.reason === 'DIRECTORY_REPLACED' && !checkout) throw error;
       await assertCheckout();
+      // 只给已观察到的普通 checkout 子树变化留出稳定时间，沿用整次观察的截止时间。
+      if (checkout && progress?.checkoutPayloadChanged && deadline !== undefined) {
+        const remaining = () => deadline - performance.now();
+        const available = Math.ceil(remaining());
+        if (available > 0) await waitForUsageRescan(Math.min(250 * (attempt + 1), available), signal);
+        active();
+        if (remaining() <= 0) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'OBSERVATION_DEADLINE' });
+        await assertCheckout();
+        if (remaining() <= 0) throw new ReleaseError('BUDGET_UNKNOWN', { reason: 'OBSERVATION_DEADLINE' });
+      }
     }
   }
 }

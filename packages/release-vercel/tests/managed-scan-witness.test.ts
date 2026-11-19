@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { setImmediate as tick } from 'node:timers/promises';
 import { afterEach, expect, it, vi } from 'vitest';
-import { observeBudget } from '../src/node/managed-budget.js';
+import { BudgetMonitor, observeBudget } from '../src/node/managed-budget.js';
 import { measureManagedUsageOnce } from '../src/node/managed-io.js';
 import { record, ReleaseError } from '../src/node/errors.js';
 import { ScanFailureWitness } from '../src/node/managed-scan-witness.js';
@@ -73,6 +73,41 @@ const until = async (condition: () => boolean, finished: Promise<unknown>) => {
   try { await Promise.race([checking, finished.then(() => { throw new Error('scan ended before checkpoint'); })]); }
   finally { stopped = true; await Promise.allSettled([checking]); }
 };
+
+async function refreshFixture(kind: 'disappearance' | 'directory-identity' | 'junction' = 'disappearance') {
+  const fixture = await prepare();
+  const services = resolve(fixture.paths.checkoutRoot, '.vercel/output/services');
+  const moved = resolve(fixture.root, 'moved-services'), marker = resolve(services, 'build.bin');
+  await mkdir(resolve(services, '..'), { recursive: true });
+  if (kind === 'junction') {
+    const target = resolve(fixture.paths.checkoutRoot, 'link-target');
+    await mkdir(target); await symlink(target, services, 'junction');
+  } else await mkdir(services);
+  await writeFile(marker, Buffer.alloc(123));
+  const lockBytes = (await lstat(fixture.paths.lockPath)).size;
+  let now = 0, movedAway = false, calls = 0, refreshing = true;
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  vi.spyOn(performance, 'now').mockImplementation(() => now);
+  checkpoint.before = async path => {
+    if (!refreshing) return;
+    if (kind === 'directory-identity') {
+      if (path !== marker) return;
+      await rename(services, resolve(fixture.root, `previous-services-${calls}`));
+      await mkdir(services); await writeFile(marker, Buffer.alloc(123));
+      return;
+    }
+    if (path !== services) return;
+    // 关闭父目录搜索句柄后才移走条目，让原生 lstat 产生 ENOENT。
+    await rename(services, moved); movedAway = true;
+  };
+  const scan: typeof measureManagedUsageOnce = (...args) => track((async () => {
+    calls++;
+    try { return await measureManagedUsageOnce(...args); }
+    finally { if (movedAway) { await rename(moved, services); movedAway = false; } }
+  })());
+  return { ...fixture, marker, lockBytes, scan, calls: () => calls,
+    settle: () => { refreshing = false; }, advance: async (ms: number) => { now += ms; await vi.advanceTimersByTimeAsync(ms); } };
+}
 afterEach(async () => {
   await drain();
   checkpoint.before = async () => {}; checkpoint.after = async () => {}; checkpoint.canonical = async () => {}; checkpoint.ordered.clear();
@@ -277,6 +312,102 @@ it.each(['payload', 'control', 'lock-lookalike', 'recovery-lookalike', 'owner-lo
     expect(first.observedOffsetMs).toBeLessThanOrEqual(row.elapsedMs);
   }
   for (const value of [victim, fixture.root, 'owned', 'PRIVATE_SENTINEL']) expect(JSON.stringify(rows)).not.toContain(value);
+});
+
+it('waits out a 219ms checkout refresh and counts only the successful whole observation', async () => {
+  const fixture = await refreshFixture();
+  const monitor = new BudgetMonitor(fixture.paths, fixture.limits, (paths, limits) => observeBudget(paths, limits, fixture.scan));
+  const result = track(monitor.sample());
+  try {
+    await until(() => vi.getTimerCount() === 2, result);
+    await fixture.advance(219);
+    expect(fixture.calls()).toBe(1);
+    expect(monitor.summary()).toMatchObject({ sampleCount: 0, maxObservedBytes: 0 });
+    fixture.settle(); await writeFile(fixture.marker, Buffer.alloc(512));
+    await fixture.advance(31); await result;
+    expect(fixture.calls()).toBe(2);
+    expect(monitor.summary()).toMatchObject({ sampleCount: 1, observationsComplete: true, maxObservedBytes: fixture.lockBytes + 512 });
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { await fixture.advance(31_000); await Promise.allSettled([result]); }
+});
+
+it('cancels a pending checkout retry at the original deadline without recording another scan', async () => {
+  const fixture = await refreshFixture();
+  const result = track(failure(observeBudget(fixture.paths, fixture.limits, async (...args) => {
+    if (fixture.calls() === 0) await fixture.advance(30_900);
+    return fixture.scan(...args);
+  })));
+  try {
+    await until(() => vi.getTimerCount() === 2, result);
+    await fixture.advance(99);
+    expect(fixture.calls()).toBe(1);
+    await fixture.advance(1);
+    const error = await result;
+    expect(error.details).toMatchObject({ reason: 'OBSERVATION_DEADLINE', budgetMs: 31_000, elapsedMs: 31_000, scanAttempts: 1 });
+    expect(attempts(error)).toEqual([expect.objectContaining({ outcome: 'rejected', retried: false,
+      failure: { reason: 'IO_OBSERVATION', ioCode: 'ENOENT' },
+      failureWitness: { first: expect.objectContaining({ operation: 'lstat', role: 'checkout-payload' }), selection: 'first' } })]);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { await fixture.advance(31_000); await Promise.allSettled([result]); }
+});
+
+it('refuses to rebind a checkout root replaced during the retry wait', async () => {
+  const fixture = await refreshFixture();
+  const result = track(failure(observeBudget(fixture.paths, fixture.limits, fixture.scan)));
+  try {
+    await until(() => vi.getTimerCount() === 2, result);
+    await rename(fixture.paths.checkoutRoot, resolve(fixture.root, 'previous-checkout'));
+    await mkdir(fixture.paths.checkoutRoot);
+    await fixture.advance(250);
+    const error = await result;
+    expect(error.details).toMatchObject({ reason: 'DIRECTORY_REPLACED', scope: 'checkout-root', change: 'identity', scanAttempts: 1 });
+    expect(attempts(error)).toEqual([expect.objectContaining({ outcome: 'rejected', retried: false })]);
+  } finally { await fixture.advance(31_000); await Promise.allSettled([result]); }
+});
+
+it('paces both retries for repeated replacement of a regular checkout directory', async () => {
+  const fixture = await refreshFixture('directory-identity');
+  const result = track(failure(observeBudget(fixture.paths, fixture.limits, fixture.scan)));
+  try {
+    await until(() => vi.getTimerCount() === 2, result);
+    await fixture.advance(250);
+    await until(() => fixture.calls() === 2 && vi.getTimerCount() === 2, result);
+    await fixture.advance(499);
+    expect(fixture.calls()).toBe(2);
+    await fixture.advance(1);
+    const error = await result;
+    expect(error.details).toMatchObject({ reason: 'DIRECTORY_REPLACED', scope: 'checkout-entry', scanAttempts: 3 });
+    expect(attempts(error)).toMatchObject([
+      { startedOffsetMs: 0, outcome: 'rejected', retried: true },
+      { startedOffsetMs: 250, outcome: 'rejected', retried: true },
+      { startedOffsetMs: 750, outcome: 'rejected', retried: false },
+    ]);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { await fixture.advance(31_000); await Promise.allSettled([result]); }
+});
+
+it('retains immediate retries when an enumerated checkout junction disappears', async () => {
+  const fixture = await refreshFixture('junction');
+  const result = track(failure(observeBudget(fixture.paths, fixture.limits, fixture.scan)));
+  try {
+    const waited = await until(() => vi.getTimerCount() === 2, result).then(() => true, () => false);
+    expect(waited).toBe(false);
+    expect((await result).details).toMatchObject({ reason: 'IO_OBSERVATION', ioCode: 'ENOENT', scanAttempts: 3 });
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { await fixture.advance(31_000); await Promise.allSettled([result]); }
+});
+
+it.each(['EACCES', 'EPERM'])('does not retry a checkout payload %s failure', async code => {
+  const fixture = await prepare(), denied = resolve(fixture.paths.checkoutRoot, 'entry');
+  await writeFile(denied, 'owned');
+  checkpoint.before = async path => {
+    if (path === denied) throw Object.assign(new Error('controlled access denial'), { code, syscall: 'lstat', path });
+  };
+  const error = await failure(observeBudget(fixture.paths, fixture.limits));
+  expect(error.details).toMatchObject({ reason: 'IO_OBSERVATION', ioCode: code, scanAttempts: 1 });
+  expect(attempts(error)).toEqual([expect.objectContaining({ retried: false, failureWitness: {
+    first: expect.objectContaining({ ioCode: code, role: 'checkout-payload' }), blocking: { relation: 'first' }, selection: 'first',
+  } })]);
 });
 
 it('retains a later unsafe blocker separately from the first directory failure', async () => {

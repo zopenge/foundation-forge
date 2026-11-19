@@ -82,7 +82,7 @@ export async function observeBudget(paths: ManagedPaths, config: ManagedSourceCo
         attempt.ended = performance.now();
         if (progress) { attempt.entriesVisited = progress.entriesVisited; attempt.phase = progress.phase; }
       }
-    }, progress);
+    }, progress, started + budgetMs);
     return { ...value, observedAt: Date.now() };
   };
   try { return await Promise.race([observation(), deadline]); }

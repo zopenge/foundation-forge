@@ -2,7 +2,7 @@ import { lstat, mkdir, readFile, rename, symlink, writeFile } from 'node:fs/prom
 import type { Dirent } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, expect, it, vi, type TestContext } from 'vitest';
-import { measureManagedUsage, measureManagedUsageOnce, readManagedDirectoryNames } from '../src/node/managed-io.js';
+import { measureManagedUsage, measureManagedUsageOnce, readManagedDirectoryEntries } from '../src/node/managed-io.js';
 import { observeBudget } from '../src/node/managed-budget.js';
 import { managedBudgetFixture } from './helpers/managed-budget-fixture.js';
 
@@ -110,11 +110,11 @@ it('bounds directory names by the remaining shared entry budget and closes on ov
   const source = resolve(fixture.paths.slotRoot, 'bounded'), destination = resolve(fixture.paths.slotRoot, 'overflow-closed');
   await mkdir(source);
   for (const name of ['a', 'b', 'c']) await writeFile(resolve(source, name), name);
-  await expect(readManagedDirectoryNames(source, 2)).rejects.toMatchObject({ code: 'BUDGET_UNKNOWN', details: { reason: 'ENTRY_LIMIT' } });
+  await expect(readManagedDirectoryEntries(source, 2)).rejects.toMatchObject({ code: 'BUDGET_UNKNOWN', details: { reason: 'ENTRY_LIMIT' } });
   await rename(source, destination);
   expect(await readFile(resolve(destination, 'c'), 'utf8')).toBe('c');
-  expect((await readManagedDirectoryNames(destination, 3)).sort()).toEqual(['a', 'b', 'c']);
-  await expect(readManagedDirectoryNames(destination, Infinity)).rejects.toMatchObject({ code: 'BUDGET_UNKNOWN', details: { reason: 'ENTRY_LIMIT' } });
+  expect((await readManagedDirectoryEntries(destination, 3)).map(entry => entry.name).sort()).toEqual(['a', 'b', 'c']);
+  await expect(readManagedDirectoryEntries(destination, Infinity)).rejects.toMatchObject({ code: 'BUDGET_UNKNOWN', details: { reason: 'ENTRY_LIMIT' } });
 });
 
 it('discards a replaced regular checkout subtree and counts only a fresh whole scan', async () => {
@@ -358,7 +358,7 @@ it('closes a directory when cancellation is already visible after open', async (
   const source = resolve(fixture.paths.slotRoot, 'cancel'), destination = resolve(fixture.paths.slotRoot, 'cancel-closed');
   await mkdir(source); await writeFile(resolve(source, 'entry'), 'owned');
   const controller = new AbortController(); controller.abort();
-  await expect(readManagedDirectoryNames(source, 1, controller.signal)).rejects.toMatchObject({ code: 'BUDGET_UNKNOWN', details: { reason: 'OBSERVATION_DEADLINE' } });
+  await expect(readManagedDirectoryEntries(source, 1, controller.signal)).rejects.toMatchObject({ code: 'BUDGET_UNKNOWN', details: { reason: 'OBSERVATION_DEADLINE' } });
   await rename(source, destination);
   expect(await readFile(resolve(destination, 'entry'), 'utf8')).toBe('owned');
 });
