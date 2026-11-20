@@ -94,7 +94,8 @@ export async function runManagedRetirement(options: RunReleaseOptions, hostReade
     const ownedClaim = claim, writeGuard = async () => { await guard(); await ownedClaim.assertOwned(); };
     const restore = () => restoreManagedTerminal(paths, current, {
       allowReleasedLock: !hasOldLock, ...(options.signal ? { signal: options.signal } : {}) });
-    let observation = await inspectManagedRecovery((await restore()).state, paths, options.signal, undefined, lease);
+    const recordedDrainedCommandId = cessation === 'recorded-empty-drained-scope' ? current.processes.at(-1)?.id : undefined;
+    let observation = await inspectManagedRecovery((await restore()).state, paths, options.signal, undefined, lease, recordedDrainedCommandId);
     processes = observation.processes;
     if (observation.owner === 'unknown') {
       try {
@@ -106,15 +107,15 @@ export async function runManagedRetirement(options: RunReleaseOptions, hostReade
     }
     if (observation.owner !== 'inactive') throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'OWNER_NOT_INACTIVE', owner: observation.owner });
     if (hasUnresolvedRetirementEffects(current)) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'RETIREMENT_EFFECT_UNPROVEN' });
-    if (!cessation || (cessation === 'recorded-stopped-scopes' && observation.processes !== 'closed'))
+    if (!cessation || (cessation !== 'recorded-empty-unstarted-scope' && observation.processes !== 'closed'))
       throw new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'RETIREMENT_STOP_UNPROVEN' });
     if (!finalized) {
       const checkpointPath = resolve(paths.slotRoot, 'retirement.json');
       if (retirementDigest(await readRetirementRecord(checkpointPath, paths)) !== retirementDigest(selected)) await writeRetirementJson(checkpointPath, selected, paths, current, writeGuard);
       retirement = { status: 'prepared', historicalVerification: 'unknown', origin: selected.origin };
-      const refs: ReleaseRecoveryObservation = cessation === 'recorded-empty-unstarted-scope'
-        ? { ...observation, observedAt: new Date().toISOString(), developmentRef: { sha: '', relation: 'unknown' }, releaseRef: { sha: '', relation: 'unknown' } }
-        : await observeRefsForDisposition(execution, source, observation);
+      const refs: ReleaseRecoveryObservation = cessation === 'recorded-stopped-scopes'
+        ? await observeRefsForDisposition(execution, source, observation)
+        : { ...observation, observedAt: new Date().toISOString(), developmentRef: { sha: '', relation: 'unknown' }, releaseRef: { sha: '', relation: 'unknown' } };
       await assertHistoricalSource(source, options.signal); await writeGuard();
       await assertPathChain(paths.slotRoot, dirname(archivePath)); await mkdir(dirname(archivePath), { recursive: true });
       evidence = sealRetirementRecord({ ...selected, final: { host, retiredAt: new Date().toISOString(), observation: refs, cessation } });

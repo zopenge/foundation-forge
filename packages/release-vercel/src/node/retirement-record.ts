@@ -7,6 +7,7 @@ import { assertPathChain, fileIdentity, measureManagedUsage, readBoundedJson, re
 import { record, ReleaseError } from './errors.js';
 import { validRetirementHost } from './retirement-host.js';
 import { isUnstartedRetirementSnapshot } from './unstarted-retirement.js';
+import { isDrainedRetirementSnapshot } from './drained-retirement.js';
 import { parseManagedState } from './managed-state.js';
 import { hasVerifiedManagedStop } from './managed-closure.js';
 import { assertMetadataFile, inspectMetadataFile, metadataDigest, terminalLimit } from './managed-metadata.js';
@@ -24,6 +25,7 @@ export function retirementCessation(state: ManagedState, snapshot: RetirementSna
   if (hasUnresolvedRetirementEffects(state)) return undefined;
   if (state.processes.every(hasVerifiedManagedStop)) return 'recorded-stopped-scopes';
   if (isUnstartedRetirementSnapshot(snapshot)) return 'recorded-empty-unstarted-scope';
+  if (isDrainedRetirementSnapshot(state, snapshot)) return 'recorded-empty-drained-scope';
 }
 export const retirementArchivePath = (paths: ManagedPaths, runId: string): string => resolve(paths.slotRoot, 'retired', `${runId}.json`);
 export async function captureRetirementSnapshot(paths: ManagedPaths): Promise<RetirementSnapshot> {
@@ -71,7 +73,7 @@ export function parseRetirementRecord(value: unknown): RetirementRecord {
       || final.cessation === undefined || final.cessation !== retirementCessation(originalState, evidence.snapshot)
       || typeof final.retiredAt !== 'string' || !Number.isFinite(Date.parse(final.retiredAt))
       || record(final.observation).owner !== 'inactive'
-      || record(final.observation).processes !== (final.cessation === 'recorded-stopped-scopes' ? 'closed' : 'unknown')
+      || record(final.observation).processes !== (final.cessation === 'recorded-empty-unstarted-scope' ? 'unknown' : 'closed')
       || !['developmentRef', 'releaseRef'].every(key => ['candidate', 'before', 'superseded', 'diverged', 'unknown'].includes(String(record(record(final.observation)[key]).relation)))) {
       throw new ReleaseError('SLOT_STATE', { reason: 'RETIREMENT_CESSATION' });
     }

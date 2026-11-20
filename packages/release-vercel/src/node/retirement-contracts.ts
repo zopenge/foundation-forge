@@ -16,5 +16,5 @@ export interface RetirementRecord {
   readonly host: RetirementHost; readonly preparedAt: string;
   readonly checksum: string;
   readonly final?: { readonly host: RetirementHost; readonly retiredAt: string; readonly observation: ReleaseRecoveryObservation;
-    readonly cessation: 'recorded-empty-unstarted-scope' | 'recorded-stopped-scopes' };
+    readonly cessation: 'recorded-empty-unstarted-scope' | 'recorded-stopped-scopes' | 'recorded-empty-drained-scope' };
 }

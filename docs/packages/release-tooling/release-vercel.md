@@ -184,6 +184,8 @@ recover 不要求 Vercel 登录，不安装、不检查、不验收、不推送�
 
 运行保存宿主指纹。退役核对原宿主、协调者已停止、原文件身份及字节，以及逐条持久化的原生 scope 停止或未启动见证。Windows 首条 Git 若在绑定前失败，只有匹配的失败收据、已记录的原生空 scope 和从未尝试外部写入才允许退役。裸意图缺少这些证明时，返回 `PROCESS_STATE_UNKNOWN` 和 `RETIREMENT_STOP_UNPROVEN`。存在未决远端效果时应沿原候选核对发布状态。
 
+Windows 最后一项受管检查失败时，精确绑定的原生 Job 记录 `descendants-remained` 且最终 `empty: true`，并有根退出码、匹配的 `CLOSURE_UNPROVEN` 收据、此前各命令停止证明，且发布效果均为 `not-attempted`，可按原运行 ID 退役。退役重新核对进程实例，归档原失败收据与原 `unknown` state。旧锁释放后，在开始下一次运行前从同一源码根调用普通 `recover`，可复验归档并返回原 run、source、配置及效果，报告 `ok: true` 和 `processes.status: closed`。这是本地停止凭证，原检查仍为失败。
+
 checkout 的预算截止仍令本次操作失败。在 runner 准入前截止时，SDK 记录未调用 runner 的见证。已核验停止的批次可用有独立大小和剩余空间上限的终态回执保留停止事实，`recover` 仍核对原锁、文件身份和原运行。普通发布继续执行完整预算观察。
 
 `recover --run-id <UUID> --discard-checkout` 要求原运行的原生停止或明确未启动证据，外部写入均未尝试，且无待完成任务。它在归档绑定旧 checkout 身份后丢弃 payload，保留旧状态和收据。中断时普通 recover 可续接，完成前新运行拒绝复用目录。

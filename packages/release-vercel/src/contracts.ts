@@ -163,7 +163,7 @@ export interface ReleaseReport {
     readonly status: 'prepared' | 'retired';
     readonly historicalVerification: 'unknown';
     readonly origin?: 'recorded-run-host';
-    readonly cessation?: 'recorded-stopped-scopes' | 'recorded-empty-unstarted-scope';
+    readonly cessation?: 'recorded-stopped-scopes' | 'recorded-empty-unstarted-scope' | 'recorded-empty-drained-scope';
     readonly archivePath?: string;
   };
   readonly runId?: string;

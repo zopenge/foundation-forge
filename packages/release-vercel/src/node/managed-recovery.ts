@@ -36,7 +36,7 @@ import { hasVerifiedManagedStop } from './managed-closure.js';
 import { managedCommandIdentities } from './managed-observation.js';
 import { discardPreparedState, restoreManagedTerminal } from './managed-terminal.js';
 import { archiveManagedDisposition, assertDispositionSnapshot, discardIsolatedCheckout, hasManagedDisposition, readManagedDisposition } from './managed-disposition.js';
-import { hasFinalizedRetirement } from './retirement-record.js';
+import { hasFinalizedRetirement, readRetirementRecord, retirementArchivePath } from './retirement-record.js';
 import { assertManagedHistory } from './managed-history.js';
 import { runCompletion } from './completion.js';
 import { observedCompletionState, parseCompletionState } from './completion-state.js';
@@ -92,6 +92,32 @@ export async function observeRefsForDisposition(execution: Execution, source: Fr
       developmentRef: { sha: '', relation: 'unknown' }, releaseRef: { sha: '', relation: 'unknown' } };
   }
 }
+
+/** 旧失败原样保留；在已释放旧锁的槽位上只读复验精确退役范围。 */
+async function observeDrainedRetirement(paths: ManagedPaths, state: ManagedState, signal?: AbortSignal): Promise<RecoveryObservation | undefined> {
+  if (await pathExists(paths.lockPath)) return;
+  const archive = await readRetirementRecord(retirementArchivePath(paths, state.runId), paths);
+  if (archive?.final?.cessation !== 'recorded-empty-drained-scope') return;
+  const host = await readRetirementHost(signal);
+  if (host.hostId !== state.host.hostId || host.platform !== state.host.platform)
+    throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'RECOVERY_HOST_CHANGED' });
+  const lease = await acquireManagedCoordinatorLease(paths, host, signal);
+  try {
+    const guard = async () => {
+      await lease.assertOwned(); await assertManagedPaths(paths);
+      if (await pathExists(paths.lockPath) || await pathExists(paths.recoveryLockPath)) throw new ReleaseError('LOCKED', { reason: 'RECOVERY_ACTIVE' });
+      await assertManagedHistory(paths, state);
+      if (!await hasFinalizedRetirement(paths, state)) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'RETIREMENT_INCOMPLETE' });
+    };
+    await guard();
+    const observed = await inspectManagedRecovery(state, paths, signal, undefined, lease, state.processes.at(-1)?.id);
+    if (observed.owner !== 'inactive' || observed.processes !== 'closed')
+      throw new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'CLOSURE_UNPROVEN', owner: observed.owner, processes: observed.processes });
+    await guard();
+    return observed;
+  } finally { await lease.release(); }
+}
+
 async function recoverManagedPublication(options: RunReleaseOptions): Promise<ReleaseReport> {
   const startedAt = new Date().toISOString();
   let location: ManagedLocation | undefined, source: FrozenSource | undefined, state: ManagedState | undefined;
@@ -109,6 +135,12 @@ async function recoverManagedPublication(options: RunReleaseOptions): Promise<Re
       throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'CHECKOUT_ISOLATION_RUN_MISMATCH', runId: state.runId });
     await assertHistoricalSource(source, options.signal);
     const paths = location.paths, original = state;
+    if (!options.discardCheckout) {
+      const retired = await observeDrainedRetirement(paths, state, options.signal);
+      if (retired) return receiptReport(options, { startedAt, stage: 'complete', source, location, runId: state.runId, effects,
+        steps: [], kind: state.command === 'check' ? 'check' : 'publish', reportExists: true, observation: retired,
+        refs: { ...retired, observedAt: new Date().toISOString() }, next: 'publish' });
+    }
     const observeRecovery = async (allowReleasedLock: boolean, heldLease?: Pick<OwnedLock, 'assertOwned'>) => {
       const restored = await restoreManagedTerminal(paths, original, { allowReleasedLock, ...(options.signal ? { signal: options.signal } : {}) });
       const observed = await inspectManagedRecovery(restored.state, paths, options.signal, undefined, heldLease);
@@ -357,7 +389,7 @@ export async function runManagedReceiptCommand(options: RunReleaseOptions, candi
 
 export interface RecoveryObservation { readonly owner: 'inactive' | 'active' | 'unknown'; readonly processes: 'closed' | 'running' | 'unknown'; readonly knownCount: number }
 export async function inspectManagedRecovery(state: ManagedState, paths: ManagedPaths, signal?: AbortSignal, reader = identityReader(),
-  heldLease?: Pick<OwnedLock, 'assertOwned'>): Promise<RecoveryObservation> {
+  heldLease?: Pick<OwnedLock, 'assertOwned'>, recordedDrainedCommandId?: string): Promise<RecoveryObservation> {
   assertActive(signal); await assertManagedPaths(paths);
   const controller = new AbortController(), timer = setTimeout(() => controller.abort(), Math.min(30_000, state.source.config.limits.commandMs));
   const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
@@ -365,7 +397,9 @@ export async function inspectManagedRecovery(state: ManagedState, paths: Managed
   const unresolved = state.processes.filter(command => !hasVerifiedManagedStop(command));
   const pendingIdentities = new Map(unresolved.flatMap(managedCommandIdentities).map(value => [`${String(value.pid)}:${value.startToken}`, value]));
   let owner: RecoveryObservation['owner'] = 'unknown';
-  let unknown = unresolved.length > 0, running = false;
+  // 显式退役已核过收据及 Job 空集合；只有该命令可由本次身份观测补足停止事实。
+  const observingDrained = unresolved.length === 1 && unresolved[0]?.id === recordedDrainedCommandId;
+  let unknown = unresolved.length > 0 && !observingDrained, running = false;
   try {
     try {
       if (state.coordinatorLease === 'native-directory') {
@@ -391,7 +425,9 @@ export async function inspectManagedRecovery(state: ManagedState, paths: Managed
       try {
         const observed = await reader.readIdentity({ pid: identity.pid, signal: combined });
         if (observed.status === 'FOUND') {
-          if (observed.identity.startToken === identity.startToken) running = true; else unknown = true;
+          if (observed.identity.pid !== identity.pid) unknown = true;
+          else if (observed.identity.startToken === identity.startToken) running = true;
+          else if (!observingDrained) unknown = true;
         }
       } catch { assertActive(signal); unknown = true; }
     }
