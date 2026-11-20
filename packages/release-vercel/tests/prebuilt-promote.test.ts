@@ -48,10 +48,16 @@ afterEach(async () => {
 async function assertClosed(): Promise<void> { await Promise.all(closures); expect(sockets.size).toBe(0); }
 
 describe('single public API promotion with real socket ownership', () => {
-  it('submits one exact production promotion and resolves only after connection closure', async () => {
+  it.each([201, 202])('accepts promotion HTTP %i after one exact request and connection closure', async status => {
+    reply = (_request, response) => { response.writeHead(status); response.end(); };
     await promotePrebuiltOnce(prebuiltConfiguration(), 'dpl_candidate', new AbortController().signal);
     await assertClosed();
     expect(requests).toEqual([{ method: 'POST', url: '/v10/projects/prj_fixture/promote/dpl_candidate?teamId=team_fixture', body: '{}' }]);
+  });
+  it('leaves promotion unconfirmed after an undocumented HTTP 200 response', async () => {
+    await expect(promotePrebuiltOnce(prebuiltConfiguration(), 'dpl_candidate', new AbortController().signal))
+      .rejects.toMatchObject({ code: 'VERCEL_API', details: { status: 200 } });
+    await assertClosed(); expect(requests).toHaveLength(1);
   });
   it('does not retry when the accepted request loses its response', async () => {
     reply = request => { request.socket.destroy(); };
@@ -117,6 +123,12 @@ describe('version alias HTTP boundary', () => {
     const result = await adapter()?.assign?.('dpl_candidate', hostname, new AbortController().signal);
     await assertClosed(); expect(result).toEqual({ alias: hostname, uid: 'alias_fixture' });
     expect(requests).toEqual([{ method: 'POST', url: '/v2/deployments/dpl_candidate/aliases?teamId=team_fixture', body: JSON.stringify({ alias: hostname }) }]);
+  });
+  it('does not widen the alias assignment response contract to HTTP 201', async () => {
+    reply = (_request, response) => { response.writeHead(201); response.end(JSON.stringify({ alias: hostname, uid: 'alias_fixture' })); };
+    await expect(adapter()?.assign?.('dpl_candidate', hostname, new AbortController().signal))
+      .rejects.toMatchObject({ code: 'VERCEL_API', details: { status: 201 } });
+    await assertClosed(); expect(requests).toHaveLength(1);
   });
   it('does not retry an alias assignment whose accepted response is lost', async () => {
     reply = request => { request.socket.destroy(); };

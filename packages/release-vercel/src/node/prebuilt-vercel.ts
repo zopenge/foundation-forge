@@ -26,7 +26,7 @@ export function candidateOrigin(value: unknown): string {
 /** 单次公开 API 写入；固定 CLI 的 promote 内部会重试 POST，不能用于未决效果协议。 */
 export async function promotePrebuiltOnce(config: ReleaseConfig, deploymentId: string, signal: AbortSignal, apiHttp?: NodeHttpTransportOptions): Promise<void> {
   const path = `/v10/projects/${encodeURIComponent(config.vercel.projectId)}/promote/${candidateId(deploymentId)}?teamId=${encodeURIComponent(config.vercel.teamId)}`;
-  await prebuiltApiOnce(config, path, 'POST', '{}', signal, false, config.limits.requestMs, apiHttp);
+  await prebuiltApiOnce(config, path, 'POST', '{}', signal, { acceptStatuses: [201, 202], http: apiHttp });
 }
 function aliasHostname(config: ReleaseConfig, hostname: string): string {
   const sha = /-([a-f0-9]{40})\.vercel\.app$/u.exec(hostname)?.[1];
@@ -38,7 +38,7 @@ function jsonBody(body: Buffer): Record<string, unknown> {
   catch { throw new ReleaseError('VERCEL_API', { reason: 'INVALID_JSON' }); }
 }
 async function readApiOnce(config: ReleaseConfig, path: string, signal: AbortSignal, allowMissing: boolean, timeoutMs: number, apiHttp?: NodeHttpTransportOptions) {
-  try { return await prebuiltApiOnce(config, path, 'GET', '', signal, allowMissing, timeoutMs, apiHttp); }
+  try { return await prebuiltApiOnce(config, path, 'GET', '', signal, { acceptStatuses: allowMissing ? [200, 404] : [200], timeoutMs, http: apiHttp }); }
   catch (error) {
     if (error instanceof ReleaseError) throw error;
     throw new ReleaseError('VERCEL_API', { reason: 'REQUEST_UNCONFIRMED' });
@@ -59,7 +59,7 @@ export async function assignPrebuiltVersionAliasOnce(config: ReleaseConfig, depl
   signal: AbortSignal, apiHttp?: NodeHttpTransportOptions): Promise<VersionAliasAssignment> {
   aliasHostname(config, hostname);
   const path = `/v2/deployments/${candidateId(deploymentId)}/aliases?teamId=${encodeURIComponent(config.vercel.teamId)}`;
-  const response = await prebuiltApiOnce(config, path, 'POST', JSON.stringify({ alias: hostname }), signal, false, config.limits.requestMs, apiHttp);
+  const response = await prebuiltApiOnce(config, path, 'POST', JSON.stringify({ alias: hostname }), signal, { http: apiHttp });
   const value = jsonBody(response.body);
   if (value.alias !== hostname || typeof value.uid !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/u.test(value.uid)
     || (value.oldDeploymentId !== undefined && typeof value.oldDeploymentId !== 'string'))
@@ -144,7 +144,8 @@ export class PrebuiltVerification {
     return this.access.aliasRead(adapter, hostname, this.signal, deadline);
   }
   async project(deadline?: number, allowPending = false): Promise<Record<string, unknown>> {
-    const project = record(await this.api(`/v9/projects/${encodeURIComponent(this.config.vercel.projectId)}`, deadline));
+    // Vercel 只在显式请求 rollbackInfo 时返回实际的推广或回滚任务状态。
+    const project = record(await this.api(`/v9/projects/${encodeURIComponent(this.config.vercel.projectId)}?rollbackInfo=true`, deadline));
     if (project.id !== this.config.vercel.projectId || project.accountId !== this.config.vercel.teamId || project.link != null) {
       throw new ReleaseError('DEPLOYMENT_SOURCE', { reason: 'PREBUILT_PROJECT' });
     }

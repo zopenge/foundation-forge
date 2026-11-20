@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { ReleaseReport } from '../../src/contracts.js';
 import type { ManagedReceipt } from '../../src/node/managed-state-contracts.js';
 import { createManagedSession } from '../../src/node/managed-process.js';
 import { createManagedStateStore } from '../../src/node/managed-state.js';
@@ -14,20 +15,21 @@ export async function managedPhaseSession(options?: Parameters<typeof managedSes
   let session: Awaited<ReturnType<typeof createManagedSession>>;
   try { session = await createManagedSession(base.slot, 'publish', signal); }
   catch (error) { await lock.release(); await base.dispose(); throw error; }
-  const report = (ok: boolean): ManagedReceipt => {
+  const report = (ok: boolean, deployment?: ReleaseReport['deployment']): ManagedReceipt => {
     const candidateContext = prebuiltCandidateContext(session.slot.source.config, session.state.prebuilt);
     return { schemaVersion: 2, slotId: session.slot.slotId, source: session.slot.source,
-    report: { schemaVersion: 2, command: session.state.command, ok, runId: session.state.runId, candidateSha: session.slot.source.sha,
+    report: { schemaVersion: 2, command: session.state.command, ok, runId: session.state.runId, candidateSha: session.slot.source.sha, slotId: session.slot.slotId,
       sourceRoot: base.cwd, configPath: session.slot.source.configPath, configSha256: session.slot.source.configSha256,
       startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), stage: session.state.stage, steps: [],
       effects: structuredClone(session.state.effects), ...(session.state.prebuilt ? { prebuilt: structuredClone(session.state.prebuilt) } : {}),
+      ...(deployment ? { deployment } : {}), ...(session.state.status === 'closed' ? { processes: { status: 'closed' as const, knownCount: 0 } } : {}),
       ...(session.state.completion ? { completion: structuredClone(session.state.completion) } : {}),
       ...(candidateContext ? { candidateContext } : {}),
       ...(!ok ? { error: { code: 'VERCEL_API', details: { reason: 'PHASE_INPUT' } } } : {}) } };
   };
-  const archive = async (ok: boolean) => {
+  const archive = async (ok: boolean, deployment?: ReleaseReport['deployment']) => {
     session.state.status = 'closed'; await session.persist();
-    const receipt = report(ok);
+    const receipt = report(ok, deployment);
     if (session.state.command === 'publish') await session.slot.store.writeReceipt('publish', receipt);
     await archiveManagedDisposition(session.slot.paths, session.state, session.state, () => lock.assertOwned(), undefined, false, receipt.report);
     return receipt;

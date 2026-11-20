@@ -100,8 +100,11 @@ it('binds credentials after native candidate observation and shares them through
   const networkFixture = await network(async (request, response) => {
     const path = request.url ?? '', method = request.method;
     let result: unknown;
-    if (method === 'POST' && path.startsWith('/v10/projects/')) result = await value.transport.promote?.(candidate.deploymentId, new AbortController().signal);
-    else if (method === 'POST' && path.startsWith('/v2/deployments/')) result = await value.transport.versionAlias?.assign?.(candidate.deploymentId, versionHost, new AbortController().signal);
+    if (method === 'POST' && path.startsWith('/v10/projects/')) {
+      await value.transport.promote?.(candidate.deploymentId, new AbortController().signal);
+      response.writeHead(201); response.end(); return;
+    }
+    if (method === 'POST' && path.startsWith('/v2/deployments/')) result = await value.transport.versionAlias?.assign?.(candidate.deploymentId, versionHost, new AbortController().signal);
     else if (path.startsWith(`/v4/aliases/${versionHost}?`)) {
       result = await value.transport.versionAlias?.read(versionHost, new AbortController().signal);
       if (!result) response.statusCode = 404;
@@ -122,6 +125,9 @@ it('binds credentials after native candidate observation and shares them through
   expect(await value.creates()).toBe(1);
   expect(networkFixture.providerRequests.filter(request => request.method === 'POST' && request.path?.includes('/promote/')))
     .toEqual([expect.objectContaining({ path: '/v10/projects/prj_fixture/promote/dpl_candidate?teamId=team_fixture' })]);
+  const projectReads = networkFixture.providerRequests.filter(request => request.method === 'GET' && request.path?.startsWith('/v9/projects/'));
+  expect(projectReads.length).toBeGreaterThan(0);
+  for (const request of projectReads) expect(request.path).toBe('/v9/projects/prj_fixture?rollbackInfo=true&teamId=team_fixture');
   for (const request of networkFixture.providerRequests) expect(request.headers.authorization).toBe('Bearer provider-token-fixture');
   const protectedReads = networkFixture.markerRequests.filter(request => request.headers.host === 'candidate.vercel.app');
   expect(protectedReads.length).toBeGreaterThan(2);

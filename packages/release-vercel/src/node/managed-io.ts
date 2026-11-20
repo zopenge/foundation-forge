@@ -30,7 +30,7 @@ export async function assertPathChain(root: string, path: string): Promise<void>
     } catch (error) { if (record(error).code === 'ENOENT') return; throw error; }
   }
 }
-export async function readBoundedText(path: string, maxBytes = 1_048_576): Promise<string | undefined> {
+export async function readBoundedText(path: string, maxBytes = 1_048_576, expected?: MetadataFile): Promise<string | undefined> {
   let handle;
   try {
     const before = await lstat(path, { bigint: true });
@@ -38,18 +38,22 @@ export async function readBoundedText(path: string, maxBytes = 1_048_576): Promi
     handle = await open(path, 'r');
     const after = await handle.stat({ bigint: true });
     if (!sameIdentity(before, after)) throw new ReleaseError('SLOT_STATE', { reason: 'FILE_REPLACED' });
+    if (expected && !sameIdentity(expected.identity, after)) throw new ReleaseError('SLOT_STATE', { reason: 'HISTORY_CONTENT_CHANGED' });
     const bytes = Buffer.alloc(maxBytes + 1); let offset = 0;
     while (offset < bytes.length) { const result = await handle.read(bytes, offset, bytes.length - offset, null); if (result.bytesRead === 0) break; offset += result.bytesRead; }
     if (offset > maxBytes) throw new ReleaseError('SLOT_STATE', { reason: 'FILE_SIZE' });
-    return new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, offset));
+    const content = bytes.subarray(0, offset);
+    if (expected && createHash('sha256').update(content).digest('hex') !== expected.sha256)
+      throw new ReleaseError('SLOT_STATE', { reason: 'HISTORY_CONTENT_CHANGED' });
+    return new TextDecoder('utf-8', { fatal: true }).decode(content);
   } catch (error) {
     if (record(error).code === 'ENOENT') return undefined;
     if (error instanceof ReleaseError) throw error;
     throw new ReleaseError('SLOT_STATE', { reason: 'JSON_READ' });
   } finally { await handle?.close(); }
 }
-export async function readBoundedJson(path: string, maxBytes = 1_048_576): Promise<unknown> {
-  const text = await readBoundedText(path, maxBytes);
+export async function readBoundedJson(path: string, maxBytes = 1_048_576, expected?: MetadataFile): Promise<unknown> {
+  const text = await readBoundedText(path, maxBytes, expected);
   try { return text === undefined ? undefined : JSON.parse(text) as unknown; }
   catch { throw new ReleaseError('SLOT_STATE', { reason: 'JSON_READ' }); }
 }

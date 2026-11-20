@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { ca, origin, proxy } from '../../http-transport/tests/loopback.js';
 import { prebuiltApiOnce } from '../src/node/prebuilt-http.js';
 import { prebuiltConfiguration } from './helpers/prebuilt-configuration.js';
+import { promotePrebuiltOnce } from '../src/node/prebuilt-vercel.js';
 
 const endpoint = vi.hoisted(() => ({ url: '' }));
 vi.mock('node:https', async original => ({ ...await original<typeof import('node:https')>(), request: () => {
@@ -27,7 +28,11 @@ it('routes one GET and one POST through CONNECT and keeps explicit direct indepe
   const calls: { method: string | undefined; body: string; token: string | undefined }[] = [];
   const server = await origin((request, response) => {
     let body = ''; request.setEncoding('utf8'); request.on('data', (chunk: string) => { body += chunk; });
-    request.on('end', () => { calls.push({ method: request.method, body, token: request.headers.authorization }); response.end('{}'); });
+    request.on('end', () => {
+      calls.push({ method: request.method, body, token: request.headers.authorization });
+      if (request.url?.startsWith('/v10/projects/prj_fixture/promote/dpl_candidate?')) { response.writeHead(201); response.end(); }
+      else response.end('{}');
+    });
   }, true);
   closers.push(server.close); endpoint.url = server.url;
   const gateway = await proxy(server.port); closers.push(gateway.close);
@@ -35,13 +40,15 @@ it('routes one GET and one POST through CONNECT and keeps explicit direct indepe
   const directOptions = { route: 'direct', environment: { HTTPS_PROXY: gateway.url }, tls: { ca } } as const;
   const config = { ...prebuiltConfiguration(), limits: { ...prebuiltConfiguration().limits, requestMs: 2000 } };
   const signal = new AbortController().signal;
-  await expect(prebuiltApiOnce(config, '/fixture', 'GET', '', signal, false, 2000, proxyOptions)).resolves.toMatchObject({ status: 200 });
-  await expect(prebuiltApiOnce(config, '/fixture', 'POST', '{"value":1}', signal, false, 2000, proxyOptions)).resolves.toMatchObject({ status: 200 });
-  await expect(prebuiltApiOnce(config, '/fixture', 'GET', '', signal, false, 2000, directOptions)).resolves.toMatchObject({ status: 200 });
-  expect(gateway.requests).toHaveLength(2);
+  await expect(prebuiltApiOnce(config, '/fixture', 'GET', '', signal, { http: proxyOptions })).resolves.toMatchObject({ status: 200 });
+  await expect(prebuiltApiOnce(config, '/fixture', 'POST', '{"value":1}', signal, { http: proxyOptions })).resolves.toMatchObject({ status: 200 });
+  await expect(promotePrebuiltOnce(config, 'dpl_candidate', signal, proxyOptions)).resolves.toBeUndefined();
+  await expect(prebuiltApiOnce(config, '/fixture', 'GET', '', signal, { http: directOptions })).resolves.toMatchObject({ status: 200 });
+  expect(gateway.requests).toHaveLength(3);
   expect(calls).toEqual([
     { method: 'GET', body: '', token: 'Bearer fixture-token' },
     { method: 'POST', body: '{"value":1}', token: 'Bearer fixture-token' },
+    { method: 'POST', body: '{}', token: 'Bearer fixture-token' },
     { method: 'GET', body: '', token: 'Bearer fixture-token' },
   ]);
   await vi.waitFor(() => { expect(gateway.sockets.size).toBe(0); expect(server.sockets.size).toBe(0); });
@@ -59,8 +66,8 @@ it('drains the tunnel on cancellation after a POST is received and never resends
   closers.push(server.close); endpoint.url = server.url;
   const gateway = await proxy(server.port); closers.push(gateway.close);
   const base = prebuiltConfiguration(), config = { ...base, limits: { ...base.limits, requestMs: 2000 } };
-  const result = expect(prebuiltApiOnce(config, '/fixture', 'POST', '{}', controller.signal, false, 2000,
-    { route: 'proxy', proxyUrl: gateway.url, tls: { ca } })).rejects.toMatchObject({ code: 'CANCELLED' });
+  const result = expect(prebuiltApiOnce(config, '/fixture', 'POST', '{}', controller.signal,
+    { http: { route: 'proxy', proxyUrl: gateway.url, tls: { ca } } })).rejects.toMatchObject({ code: 'CANCELLED' });
   await Promise.race([received, result]);
   controller.abort(); await result;
   expect(posts).toBe(1); expect(gateway.requests).toHaveLength(1);
@@ -72,7 +79,7 @@ it('bounds routed response bytes and closes the connection after rejecting them'
   const server = await origin((_request, response) => response.end('x'.repeat(1024)), true);
   closers.push(server.close); endpoint.url = server.url;
   const base = prebuiltConfiguration(), config = { ...base, limits: { ...base.limits, requestMs: 2000, maxOutputBytes: 32 } };
-  await expect(prebuiltApiOnce(config, '/fixture', 'GET', '', new AbortController().signal, false, 2000,
-    { route: 'direct', tls: { ca } })).rejects.toMatchObject({ code: 'VERCEL_API', details: { reason: 'OUTPUT_LIMIT' } });
+  await expect(prebuiltApiOnce(config, '/fixture', 'GET', '', new AbortController().signal,
+    { http: { route: 'direct', tls: { ca } } })).rejects.toMatchObject({ code: 'VERCEL_API', details: { reason: 'OUTPUT_LIMIT' } });
   await vi.waitFor(() => expect(server.sockets.size).toBe(0));
 });

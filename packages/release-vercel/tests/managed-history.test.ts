@@ -5,7 +5,7 @@ import { git, managedFixture } from './helpers/managed-fixture.js';
 import { freezeManagedSource } from '../src/node/source.js';
 import { openManagedSlot } from '../src/node/managed-paths.js';
 import { createManagedSession } from '../src/node/managed-process.js';
-import { archiveManagedDisposition, dispositionPath } from '../src/node/managed-disposition.js';
+import { archiveManagedDisposition, dispositionPath, readManagedDisposition } from '../src/node/managed-disposition.js';
 import { assertManagedRemoteSettled } from '../src/node/managed-remote-state.js';
 import { randomUUID } from 'node:crypto';
 
@@ -35,6 +35,18 @@ it('blocks the next local admission when prior history was removed after a compl
   const f = await fixture(); f.next.state.status = 'closed'; await f.next.persist(); await f.current.lock.release();
   await rename(f.history, resolve(f.root, 'original-history.json'));
   await expect(openManagedSlot(f.source, f.execution)).rejects.toMatchObject({ code: 'SLOT_STATE' });
+});
+it('parses only the archive bytes bound by the supplied history digest', async () => {
+  const f = await fixture();
+  try {
+    const ref = f.next.state.history.find(item => item.path === `history/${f.old.runId}.json`);
+    if (!ref) throw new Error('missing history reference');
+    await expect(readManagedDisposition(f.current.paths, f.old.runId, ref.file)).resolves.toMatchObject({ runId: f.old.runId });
+    await expect(readManagedDisposition(f.current.paths, f.old.runId, { ...ref.file, sha256: '0'.repeat(64) }))
+      .rejects.toMatchObject({ code: 'SLOT_STATE', details: { reason: 'HISTORY_CONTENT_CHANGED' } });
+    await expect(readManagedDisposition(f.current.paths, f.old.runId, { ...ref.file, identity: { ...ref.file.identity, ino: '0' } }))
+      .rejects.toMatchObject({ code: 'SLOT_STATE', details: { reason: 'HISTORY_CONTENT_CHANGED' } });
+  } finally { await f.current.lock.release(); }
 });
 it('never authorizes release by dropping an incomplete command from the historical state', async () => {
   const f = await fixture();

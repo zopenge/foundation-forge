@@ -69,9 +69,9 @@ export function parseManagedDisposition(value: unknown): ManagedDisposition {
     || !commandsMatch || !result.stopped.processes.every(hasVerifiedManagedStop)) throw new ReleaseError('SLOT_STATE', { reason: 'HISTORY_STOP' });
   return result;
 }
-export async function readManagedDisposition(paths: ManagedPaths, runId: string): Promise<ManagedDisposition | undefined> {
+export async function readManagedDisposition(paths: ManagedPaths, runId: string, expected?: MetadataFile): Promise<ManagedDisposition | undefined> {
   const path = dispositionPath(paths, runId); await assertMetadataPaths(paths); await assertPathChain(paths.slotRoot, path);
-  const value = await readBoundedJson(path, historyLimit);
+  const value = await readBoundedJson(path, historyLimit, expected);
   return value === undefined ? undefined : parseManagedDisposition(value);
 }
 export async function assertDispositionSnapshot(paths: ManagedPaths, evidence: ManagedDisposition, includeLock = true): Promise<void> {

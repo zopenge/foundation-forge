@@ -84,7 +84,7 @@ check 仅构建、检查和冻结本地产物，不访问云。publish 在消费
 
 默认项目、候选、生产 alias 和版本 alias API 读取使用固定 `api.vercel.com` 的单次 native HTTPS GET，仍核对原 project/team。请求不重试、不重定向、不读取宿主代理配置。每次 GET 的上限为 30 秒、64 KiB，配置较小的 requestMs/maxOutputBytes 仍生效；已有轮询绝对截止只会进一步缩短本次请求。受管路径、锁、历史、前台关闭和预算门禁继续执行，但宿主管理成本不计入 HTTP 请求计时，轮询总截止也不重置。成功、错误、取消和超时都等 request 与 socket 真实关闭后才交付；关闭和后续管理检查可使返回晚于请求截止，已过期请求仍为失败。不为 native GET 生成虚构的 CLI scope。
 
-固定 CLI 的 promote/api POST 内部有重试，因此提升使用相同官方公开 endpoint 的单次 HTTPS 请求，受超时、输出和连接关闭约束，不修改或深引 CLI 实现。自定义 transport 的 promote 也必须只写一次并响应取消。普通 publish 每次执行 install、prepare、checks 和制品封存。
+固定 CLI 的 promote/api POST 内部有重试，因此提升使用相同官方公开 endpoint 的单次 HTTPS 请求，受超时、输出和连接关闭约束，不修改或深引 CLI 实现。HTTP `201` 和 `202` 确认请求已受理。项目查询显式传入 `rollbackInfo=true`，确认精确候选的提升任务成功后，再核对生产 alias、制品标记和源码修订。自定义 transport 的 promote 也必须只写一次并响应取消。普通 publish 每次执行 install、prepare、checks 和制品封存。
 
 同一提交和配置失败后，只有原发布收据匹配已归档的停止证明，且该候选全部历史效果均为 `not-attempted`，才可重新封存不同字节。原收据保存在该次运行的历史记录中。已有接受或未知效果时继续绑定原制品。新运行仍在调用方的外部串行约束下执行准入与目标检查。
 
@@ -177,6 +177,8 @@ pnpm 安装过程中，受管根内的 symlink 或 Windows junction 可以暂时
 执行结果、OS 停止、本地处置和远端副作用分别记录。可靠停止且本地所有权可信时，普通入口或 recover 可先收尾旧运行；失败、取消和 unknown 原文保存在不可变 history/<runId>.json。release-ready 表示具备精确解锁资格，不宣称后续 unlink 已成功；可选 outcome 保存解锁前的执行结果。新状态绑定前代历史的摘要和文件身份，后来的 check 不会覆盖旧远端未决事实，历史缺失或被同内容替换也会拒绝。
 
 recover 不要求 Vercel 登录，不安装、不检查、不验收、不推送、不部署、不回滚。dev 后续提交、分叉或远端不可达不再占住已安全结束的本地资源，但每次新的远端写入前都必须重新只读核验全部历史未决意图。candidate 或 superseded 只说明当前远端事实；before、diverged、unknown 继续阻止远端写入，原 effects 不改写。若响应丢失的旧意图与本次 SHA、仓库、目标分支完全相同，且新鲜观察确认远端已指向候选，则记 already-current 并跳过该次 push，其余推送仍为普通精确 SHA、非 force 操作。身份不明、协调者仍活动或缺少停止见证时继续阻止复用；PID 消失不能补造证明。workspace 不支持 recover。
+
+未配置版本 alias 的 prebuilt 推广效果未决时，后续 publish 可消费已经封存的成功 `verify`。门禁核对同槽早先原意图的文件身份和摘要、原发布回执、冻结源码及配置、制品和候选。配置了 completion 时，原发布和验证的两份归档还须包含已完成的原生任务证据。符合条件的旧版归档同样适用，证明追加在后续运行，原历史和回执保持原样。缺少合格证明时继续走现有实时观察。
 
 ### 显式中断封存
 

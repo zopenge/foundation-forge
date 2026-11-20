@@ -61,7 +61,7 @@ it.each(['none', 'alias', 'promote', 'acceptance'] as const)('reports the blocke
   expect(sampleTime).toBeGreaterThanOrEqual(Date.parse(report.startedAt));
   expect(sampleTime).toBeLessThanOrEqual(Date.parse(report.finishedAt));
   expect(JSON.stringify(report)).not.toContain('unreported-');
-  expect(probe.requests).toEqual(['/v9/projects/prj_fixture?teamId=team_fixture', probe.candidatePath]);
+  expect(probe.requests).toEqual(['/v9/projects/prj_fixture?rollbackInfo=true&teamId=team_fixture', probe.candidatePath]);
   expect(probe.expectNoCall).not.toHaveBeenCalled();
 
   if (pending === 'none') {

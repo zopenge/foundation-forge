@@ -4,8 +4,8 @@ import { createNodeHttpTransport } from '@openge/forge-http-transport/node';
 import type { ReleaseConfig } from '../contracts.js';
 import { assertActive, ReleaseError } from './errors.js';
 
-function responseError(status: number, method: 'GET' | 'POST', allowMissing: boolean): ReleaseError | undefined {
-  if (status === 200 || (method === 'POST' && status === 202) || (allowMissing && status === 404)) return;
+function responseError(status: number, acceptStatuses: readonly number[]): ReleaseError | undefined {
+  if (acceptStatuses.includes(status)) return;
   return new ReleaseError(status === 401 || status === 403 ? 'AUTH_REQUIRED' : 'VERCEL_API', { status });
 }
 
@@ -29,7 +29,8 @@ async function routedRequest(url: URL, options: NodeHttpTransportOptions, init: 
 
 /** 仅访问固定Vercel API；一次请求、有限正文，等自有socket和request均关闭后交付。 */
 export async function prebuiltApiOnce(config: ReleaseConfig, path: string, method: 'GET' | 'POST', body: string,
-  signal: AbortSignal, allowMissing = false, timeoutMs = config.limits.requestMs, http?: NodeHttpTransportOptions): Promise<{ readonly status: number; readonly body: Buffer }> {
+  signal: AbortSignal, { acceptStatuses = method === 'POST' ? [200, 202] : [200], timeoutMs = config.limits.requestMs, http }:
+    { readonly acceptStatuses?: readonly number[]; readonly timeoutMs?: number; readonly http?: NodeHttpTransportOptions | undefined } = {}): Promise<{ readonly status: number; readonly body: Buffer }> {
   assertActive(signal); const token = process.env.VERCEL_TOKEN;
   if (!token) throw new ReleaseError('AUTH_REQUIRED', { reason: 'PREBUILT_TOKEN_REQUIRED' });
   const requestMs = Math.min(config.limits.requestMs, timeoutMs, method === 'GET' ? 30_000 : Infinity);
@@ -43,7 +44,7 @@ export async function prebuiltApiOnce(config: ReleaseConfig, path: string, metho
     try {
       const result = await routedRequest(url, http, { method, signal: AbortSignal.any([signal, deadline]),
         redirect: 'manual', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, ...(method === 'POST' ? { body } : {}) }, maxBytes);
-      const failure = responseError(result.status, method, allowMissing);
+      const failure = responseError(result.status, acceptStatuses);
       if (failure) throw failure;
       assertActive(signal);
       if (deadline.aborted) throw deadline.reason;
@@ -78,7 +79,7 @@ export async function prebuiltApiOnce(config: ReleaseConfig, path: string, metho
       response.on('error', error => { failure ??= error; request.destroy(); });
       response.on('end', () => {
         status = response.statusCode ?? 0;
-        const rejected = responseError(status, method, allowMissing);
+        const rejected = responseError(status, acceptStatuses);
         accepted = !rejected;
         failure ??= rejected;
       });

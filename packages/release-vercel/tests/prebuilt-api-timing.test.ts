@@ -138,7 +138,7 @@ describe('default prebuilt API request ownership', () => {
     expect({ outcome, failure }).toEqual(cancel
       ? { outcome: 'failed', failure: expect.objectContaining({ code: budgetFailure ? 'BUDGET_EXCEEDED' : 'CANCELLED' }) }
       : { outcome: 'succeeded', failure: undefined });
-    expect(requests).toEqual([{ method: 'GET', path: '/v9/projects/prj_fixture?teamId=team_fixture', authorization: 'Bearer fixture-token' }]);
+    expect(requests).toEqual([{ method: 'GET', path: '/v9/projects/prj_fixture?rollbackInfo=true&teamId=team_fixture', authorization: 'Bearer fixture-token' }]);
     expect(execution.budget.summary()).toMatchObject({ observationsComplete: true });
     expect(execution.budget.summary().sampleCount).toBeGreaterThanOrEqual(2);
   });
@@ -273,7 +273,7 @@ describe('default prebuilt API request ownership', () => {
     const access = createPrebuiltTransport(execution, config, true, undefined, {
       api: async path => { paths.push(path); return project; }, buildInfo: async () => ({}) });
     await track(new PrebuiltVerification(config, access).project());
-    expect(paths).toEqual(['/v9/projects/prj_fixture?teamId=team_fixture']); expect(requests).toEqual([]);
+    expect(paths).toEqual(['/v9/projects/prj_fixture?rollbackInfo=true&teamId=team_fixture']); expect(requests).toEqual([]);
   });
 
   it.each(['DEPLOYMENT_TIMEOUT', 'AUTH_REQUIRED'] as const)('preserves the custom alias reader original %s error', async code => {
