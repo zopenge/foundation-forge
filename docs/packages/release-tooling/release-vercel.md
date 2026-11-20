@@ -84,7 +84,9 @@ check 仅构建、检查和冻结本地产物，不访问云。publish 在消费
 
 默认项目、候选、生产 alias 和版本 alias API 读取使用固定 `api.vercel.com` 的单次 native HTTPS GET，仍核对原 project/team。请求不重试、不重定向、不读取宿主代理配置。每次 GET 的上限为 30 秒、64 KiB，配置较小的 requestMs/maxOutputBytes 仍生效；已有轮询绝对截止只会进一步缩短本次请求。受管路径、锁、历史、前台关闭和预算门禁继续执行，但宿主管理成本不计入 HTTP 请求计时，轮询总截止也不重置。成功、错误、取消和超时都等 request 与 socket 真实关闭后才交付；关闭和后续管理检查可使返回晚于请求截止，已过期请求仍为失败。不为 native GET 生成虚构的 CLI scope。
 
-固定 CLI 的 promote/api POST 内部有重试，因此提升使用相同官方公开 endpoint 的单次 HTTPS 请求，受超时、输出和连接关闭约束，不修改或深引 CLI 实现。自定义 transport 的 promote 也必须只写一次并响应取消。普通 publish 仍执行 install、prepare、checks 和制品封存，不提供无 deployment ID 的免重跑续发入口。
+固定 CLI 的 promote/api POST 内部有重试，因此提升使用相同官方公开 endpoint 的单次 HTTPS 请求，受超时、输出和连接关闭约束，不修改或深引 CLI 实现。自定义 transport 的 promote 也必须只写一次并响应取消。普通 publish 每次执行 install、prepare、checks 和制品封存。
+
+同一提交和配置失败后，只有原发布收据匹配已归档的停止证明，且该候选全部历史效果均为 `not-attempted`，才可重新封存不同字节。原收据保存在该次运行的历史记录中。已有接受或未知效果时继续绑定原制品。新运行仍在调用方的外部串行约束下执行准入与目标检查。
 
 项目 rootDirectory 必须未设置、为空或为 `.`；独立上传根只有 `.vercel`，因此嵌套根配置在记录创建意图之前拒绝，避免一个可提前识别的配置错误留下无 ID 的未知创建。POSIX 上传副本显式恢复记录的文件模式，不依赖调用方 umask。
 
@@ -135,6 +137,12 @@ const report = await runRelease({
 runRelease 支持 command、cwd、configPath、workspace 专用 config 对象、sha、signal、transport、onLoginOutput。`retire` 和带 `discardCheckout: true` 的 `recover` 接收 `runId`。managed 必须用已提交文件。transport 替换 API/buildInfo 及可选的 prebuilt promote 外部边界，必须响应取消、关闭自有资源，且不得重试提升写入。onLoginOutput 显示脱敏认证指引。公开签名不携带第三方实现类型。
 
 Node 调用方可另传 `buildInfoHttp`，类型为 [`forge-http-transport`](../networking/http-transport.md) 的 `NodeHttpTransportOptions`，例如 `{ route: 'proxy', environment: proxyEnvironmentSnapshot }`。它只影响匿名 build-info/制品 marker 读取；默认显式 direct，不读取宿主代理环境。每次读取后关闭连接，覆盖成功、取消、超限、HTTP/JSON 错误。重定向不跟随。完整自定义 transport 优先于该选项。网络参数不写入持久 release config、摘要或回执，不改变 Vercel CLI/API 写入、认证、重试与发布状态机。
+
+受管 prebuilt 可用 `vercelApiHttp` 为 `api.vercel.com` 的原生请求选择同一套路由，包括版本 alias 写入和提升。默认直连。`{ route: 'proxy', environment: proxyEnvironmentSnapshot }` 使用快照里的 `HTTPS_PROXY` 和 `NO_PROXY`，小写变量优先。调用方也可显式传 `proxyUrl` 及 `tls`。每次请求独占连接资源，限制响应正文并等待关闭。写入只提交一次。使用自定义 `transport` 时由调用方负责路由。固定 staging CLI 使用自己的网络配置。
+
+已取得 deployment ID 的受管候选可以通过 `runRelease({ command: 'publish', cwd, resumePrebuilt: { runId, sha, configSha256, artifactSha256, deploymentId } })` 在原槽续发。原 schema 2 收据和停止归档仍可用。SDK 核对精确 checkout 和封存字节，从 `deployment` 的候选观察继续，按原顺序执行适用的版本 alias 准入及绑定、验收、提升准入及提升、completion。`FORGE_RELEASE_COMMAND` 仍为 `publish`，原有阶段环境沿用。尚未尝试绑定版本 alias 时，`status` 可以确认候选 READY 和 marker。已接受或未知的提升只观察。待办 completion 使用现有 `status` 和显式续验入口。
+
+调用方在整个转换中继续持有目标侧串行锁。绑定或输入在准入前被拒绝时保留当前 `latest-publish`。接续创建独立运行 ID，写出结果后成为新的 `latest-publish`，原收据继续存于归档。中断导致新收据未写出时，可先恢复旧运行，再用 `status` 返回的精确归档身份续发。
 
 ## 恢复与资源所有权
 

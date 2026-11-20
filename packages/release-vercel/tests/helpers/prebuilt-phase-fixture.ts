@@ -44,7 +44,7 @@ export async function prebuiltPhaseFixture({ withAlias = false, completion, sign
       assign: async (id, hostname) => { assignments++; bindings.set(hostname, id); hooks.alias?.(); return { alias: hostname, uid: 'phaseAlias' }; },
     },
   };
-  const publish = () => publishCandidate({ ...engine.context, transport, effects: base.session.state.effects,
+  const publish = (resumePrebuilt = false) => publishCandidate({ ...engine.context, transport, resumePrebuilt, effects: base.session.state.effects,
     stage: async stage => { base.session.state.stage = stage; await base.session.persist(); },
     prebuilt: { ...engine.prebuilt, state: base.session.state.prebuilt, save: async value => {
       await engine.prebuilt.save(value);

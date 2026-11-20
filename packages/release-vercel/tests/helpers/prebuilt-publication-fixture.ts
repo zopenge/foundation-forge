@@ -7,10 +7,10 @@ const boundary = vi.hoisted(() => ({ counter: '', mode: 'ok' }));
 // 只有创建部署的外部 CLI 被换成随仓库维护的真实 Node 子进程；Git、槽位、锁、事务及关闭协议均真实运行。
 vi.mock('../../src/node/execution.js', async importOriginal => {
   const original = await importOriginal<typeof import('../../src/node/execution.js')>();
-  return { ...original, vercelInvocation: (args: readonly string[]) => {
+  return { ...original, vercelInvocation: vi.fn((args: readonly string[]) => {
     if (args[0] !== '--global-config' || args[2] !== 'deploy') throw new Error('unexpected CLI operation in controlled-cloud fixture');
     return { command: process.execPath, args: [resolve(import.meta.dirname, 'prebuilt-cli.mjs'), boundary.counter, boundary.mode, ...args] };
-  } };
+  }) };
 });
 import { ReleaseError } from '../../src/node/errors.js';
 import { managedFixture } from './managed-fixture.js';

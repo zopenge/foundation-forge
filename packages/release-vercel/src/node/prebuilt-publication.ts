@@ -2,7 +2,7 @@ import type { PrebuiltReleaseState, ReleaseDeployment } from '../contracts.js';
 import type { ExecutionContext } from './publication-context.js';
 import { assertActive, record, ReleaseError } from './errors.js';
 import { vercelInvocation } from './execution.js';
-import { assertPrebuiltArtifact, freezePrebuiltArtifact } from './prebuilt-artifact.js';
+import { assertPrebuiltArtifact, assertRecordedPrebuiltArtifact, freezePrebuiltArtifact, type PrebuiltArtifact } from './prebuilt-artifact.js';
 import { candidateId, candidateOrigin, createPrebuiltTransport, PrebuiltVerification } from './prebuilt-vercel.js';
 import { observePrebuiltCandidate } from './prebuilt-recovery.js';
 import { request } from './vercel.js';
@@ -29,7 +29,7 @@ export async function publishPrebuiltCandidate(context: ExecutionContext, comman
     throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'VERSION_ALIAS_UNRESOLVED' });
   if (command === 'status' || command === 'verify') {
     const found = await observePrebuiltCandidate(config, selected,
-      createPrebuiltTransport(execution, config, false, context.buildInfoHttp, context.transport, context.candidateMarkerHeaders), signal);
+      createPrebuiltTransport(execution, config, false, context.buildInfoHttp, context.transport, context.candidateMarkerHeaders, context.vercelApiHttp), signal);
     if (command === 'verify') {
       await save(found.observed);
       await context.stage('acceptance');
@@ -44,33 +44,46 @@ export async function publishPrebuiltCandidate(context: ExecutionContext, comman
   }
   const values = { FORGE_RELEASE_COMMAND: command, FORGE_RELEASE_SHA: sha,
     ...versionAliasBuildEnvironment(config, sha, config.delivery.versionAlias ? await configDigest(config) : '') };
-  await context.stage('checks');
-  for (const [index, check] of config.checks.entries()) await execution.run(`check:${index}`, check, 'CHECK_FAILED', values);
-  await context.assertFrozen(); await context.stage('artifact');
-  const artifact = await freezePrebuiltArtifact(execution.cwd, config, sha, signal, bytes => prebuilt.reserve(bytes));
   const versionOrigin = versionAliasOrigin(config, sha);
-  const initial: PrebuiltReleaseState = { sourceSha: sha, configSha256: artifact.configSha256, artifactSha256: artifact.artifactSha256,
-    fileCount: artifact.files.length + artifact.links.length, byteLength: artifact.byteLength, createEffect: 'not-attempted', promoteEffect: 'not-attempted', acceptanceVerified: false, promotionVerified: false,
-    ...(versionOrigin ? { versionAlias: { hostname: new URL(versionOrigin).hostname, effect: 'not-attempted', verified: false } } : {}) };
-  if (selected && (selected.sourceSha !== sha || selected.configSha256 !== artifact.configSha256 || selected.artifactSha256 !== artifact.artifactSha256)) {
-    throw new ReleaseError('ARTIFACT_CHANGED', { reason: 'RECORDED_CANDIDATE_CHANGED' });
+  let artifact: PrebuiltArtifact | undefined, initial = selected;
+  if (context.resumePrebuilt) {
+    if (command !== 'publish' || initial?.createEffect !== 'accepted' || !initial.deploymentId)
+      throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'PREBUILT_RESUME_BINDING' });
+    await context.stage('deployment');
+  } else {
+    await context.stage('checks');
+    for (const [index, check] of config.checks.entries()) await execution.run(`check:${index}`, check, 'CHECK_FAILED', values);
+    await context.assertFrozen(); await context.stage('artifact');
+    artifact = await freezePrebuiltArtifact(execution.cwd, config, sha, signal, bytes => prebuilt.reserve(bytes));
+    if (initial && (initial.sourceSha !== sha || initial.configSha256 !== artifact.configSha256 || initial.artifactSha256 !== artifact.artifactSha256))
+      throw new ReleaseError('ARTIFACT_CHANGED', { reason: 'RECORDED_CANDIDATE_CHANGED' });
+    initial ??= await save({ sourceSha: sha, configSha256: artifact.configSha256, artifactSha256: artifact.artifactSha256,
+      fileCount: artifact.files.length + artifact.links.length, byteLength: artifact.byteLength, createEffect: 'not-attempted', promoteEffect: 'not-attempted', acceptanceVerified: false, promotionVerified: false,
+      ...(versionOrigin ? { versionAlias: { hostname: new URL(versionOrigin).hostname, effect: 'not-attempted', verified: false } } : {}) });
   }
-  let state = selected ?? await save(initial);
+  const sealed = initial;
+  let state = sealed;
   if (command === 'check') return;
   const verify = new PrebuiltVerification(config,
-    createPrebuiltTransport(execution, config, true, context.buildInfoHttp, context.transport, context.candidateMarkerHeaders), signal);
+    createPrebuiltTransport(execution, config, true, context.buildInfoHttp, context.transport, context.candidateMarkerHeaders, context.vercelApiHttp), signal);
   const promote = verify.transport.promote?.bind(verify.transport);
   if (!promote) throw new ReleaseError('SOURCE_UNSUPPORTED', { reason: 'PREBUILT_PROMOTION_TRANSPORT_REQUIRED' });
-  const guard = async () => { assertActive(signal); await context.assertFrozen(); await assertPrebuiltArtifact(artifact, config, signal); await context.mutationGuard(); await verify.project(); };
+  const guard = async () => {
+    assertActive(signal); await context.assertFrozen();
+    if (artifact) await assertPrebuiltArtifact(artifact, config, signal);
+    else await assertRecordedPrebuiltArtifact(execution.cwd, config, sealed, signal);
+    await context.mutationGuard(); await verify.project();
+  };
   const admission = async (phase: 'create' | 'version-alias' | 'promote') => {
     await context.stage('admission');
     for (const [index, check] of delivery.admission.entries()) await execution.run(`admission:${phase}:${index}`, check, 'ADMISSION_FAILED',
-      { ...values, FORGE_RELEASE_PHASE: phase, FORGE_RELEASE_ARTIFACT_SHA256: artifact.artifactSha256,
+      { ...values, FORGE_RELEASE_PHASE: phase, FORGE_RELEASE_ARTIFACT_SHA256: sealed.artifactSha256,
         FORGE_RELEASE_SERIALIZATION_SCOPE: delivery.concurrencyControl.scope,
         FORGE_RELEASE_PROJECT_ID: config.vercel.projectId, FORGE_RELEASE_TEAM_ID: config.vercel.teamId,
         ...(state?.deploymentId ? { FORGE_RELEASE_DEPLOYMENT_ID: state.deploymentId } : {}) });
   };
   if (!state.deploymentId) {
+    if (!artifact) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'PREBUILT_RESUME_BINDING' });
     if (state.versionAlias) {
       versionAliasTransport(verify, true); await guard(); await context.stage('version-alias');
       await assertVersionAliasAvailable(verify, state.versionAlias.hostname);
@@ -97,6 +110,10 @@ export async function publishPrebuiltCandidate(context: ExecutionContext, comman
     if (creationFailed) throw creationError;
   }
   const candidate = await verify.ready(state);
+  if (context.resumePrebuilt) {
+    await context.assertFrozen();
+    await assertRecordedPrebuiltArtifact(execution.cwd, config, sealed, signal);
+  }
   if (state.promoteEffect !== 'not-attempted') {
     try { await observeVersionAlias(verify, state); await verify.alias(state); await save({ ...state, promoteEffect: 'accepted', promotionVerified: true }); return candidate; }
     catch (error) {
@@ -112,7 +129,7 @@ export async function publishPrebuiltCandidate(context: ExecutionContext, comman
   await context.stage('acceptance');
   for (const [index, check] of config.acceptance.entries()) await execution.run(`acceptance:${index}`, check, 'ACCEPTANCE_FAILED',
     { ...values, FORGE_RELEASE_URL: versionOrigin ?? candidate.url, FORGE_RELEASE_DEPLOYMENT_ID: candidate.id,
-      FORGE_RELEASE_ARTIFACT_SHA256: artifact.artifactSha256, ...versionAliasCandidateEnvironment(config, state) });
+      FORGE_RELEASE_ARTIFACT_SHA256: sealed.artifactSha256, ...versionAliasCandidateEnvironment(config, state) });
   state = await save({ ...state, acceptanceVerified: true });
   await admission('promote'); await guard(); await verify.ready(state); await context.stage('promote');
   await observeVersionAlias(verify, state);

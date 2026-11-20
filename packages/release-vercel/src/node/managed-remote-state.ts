@@ -19,7 +19,7 @@ import { assertPrebuiltEffectObserved, hasUnresolvedPrebuiltEffect, matchesPrebu
 export async function assertManagedRemoteSettled(paths: ManagedPaths, execution: Execution,
   intent?: { readonly effect: 'developmentPush' | 'releasePush'; readonly source: FrozenSource }, transport?: ReleaseTransport,
   persistResolution?: (proof: PrebuiltEffectResolution) => Promise<void>, http?: NodeHttpTransportOptions,
-  candidateMarkerHeaders?: CandidateMarkerHeaders): Promise<'already-current' | undefined> {
+  candidateMarkerHeaders?: CandidateMarkerHeaders, apiHttp?: NodeHttpTransportOptions): Promise<'already-current' | undefined> {
   const active = record(await readBoundedJson(paths.statePath));
   const state = parseManagedState(active, active.source as ManagedState['source'], String(active.slotId));
   await assertManagedHistory(paths, state);
@@ -53,7 +53,7 @@ export async function assertManagedRemoteSettled(paths: ManagedPaths, execution:
       if (hasUnresolvedPrebuiltEffect(state) && !resolutions.some(proof => matchesPrebuiltResolution(state, proof))) {
         const location = await readManagedLocation(paths.sourceRoot, state.source.configPath);
         frozenSource(state.source, location); await assertHistoricalSource(state.source, execution.signal);
-        const proof = await assertPrebuiltEffectObserved(state, execution, transport, http, candidateMarkerHeaders);
+        const proof = await assertPrebuiltEffectObserved(state, execution, transport, http, candidateMarkerHeaders, apiHttp);
         if (proof) {
           if (!persistResolution) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'PREBUILT_RESOLUTION_NOT_RECORDED' });
           await persistResolution(proof); resolutions.push(proof);

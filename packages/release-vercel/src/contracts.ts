@@ -188,6 +188,13 @@ export interface CandidateMarkerAuth {
 }
 export type ResolveCandidateMarkerAuth = (candidate: PrebuiltMarkerCandidate, signal: AbortSignal) =>
   CandidateMarkerAuth | undefined | Promise<CandidateMarkerAuth | undefined>;
+export interface PrebuiltResumeBinding {
+  readonly runId: string;
+  readonly sha: string;
+  readonly configSha256: string;
+  readonly artifactSha256: string;
+  readonly deploymentId: string;
+}
 export interface RunReleaseOptions {
   readonly command: ReleaseCommand;
   readonly cwd: string;
@@ -200,6 +207,8 @@ export interface RunReleaseOptions {
   readonly signal?: AbortSignal;
   readonly transport?: ReleaseTransport;
   readonly buildInfoHttp?: NodeHttpTransportOptions;
+  readonly vercelApiHttp?: NodeHttpTransportOptions;
+  readonly resumePrebuilt?: PrebuiltResumeBinding;
   readonly candidateMarkerAuth?: ResolveCandidateMarkerAuth;
   readonly onLoginOutput?: (text: string) => void;
 }

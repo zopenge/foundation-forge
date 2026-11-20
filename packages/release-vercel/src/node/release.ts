@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
 import type { ReleaseReport, RunReleaseOptions } from '../contracts.js';
-import { assertActive, ReleaseError } from './errors.js';
+import { assertActive, record, ReleaseError } from './errors.js';
 import { diagnostic, readConfig, runWorkspaceRelease } from './workspace-release.js';
 import { validateReleaseConfig } from './config.js';
 import { runManagedRelease } from './managed-release.js';
@@ -16,6 +16,17 @@ export async function runRelease(options: RunReleaseOptions): Promise<ReleaseRep
     if (!['check', 'publish', 'status', 'verify', 'recover', 'retire', 'login'].includes(options.command)
       || (options.sha !== undefined && (!['status', 'verify'].includes(options.command) || !/^[a-f0-9]{40}$/u.test(options.sha)))) throw new ReleaseError('ARGUMENT_INVALID');
     if (options.retryCompletion !== undefined && (options.command !== 'verify' || typeof options.retryCompletion !== 'boolean')) throw new ReleaseError('ARGUMENT_INVALID');
+    if (options.resumePrebuilt !== undefined) {
+      const binding = record(options.resumePrebuilt);
+      if (options.command !== 'publish' || typeof binding.runId !== 'string' || !/^[a-f0-9-]{36}$/u.test(binding.runId)
+        || typeof binding.sha !== 'string' || !/^[a-f0-9]{40}$/u.test(binding.sha)
+        || typeof binding.configSha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(binding.configSha256)
+        || typeof binding.artifactSha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(binding.artifactSha256)
+        || typeof binding.deploymentId !== 'string' || !/^dpl_[a-zA-Z0-9]{1,120}$/u.test(binding.deploymentId))
+        throw new ReleaseError('ARGUMENT_INVALID', { field: 'resumePrebuilt' });
+    }
+    if (options.vercelApiHttp !== undefined && (options.transport !== undefined || !['direct', 'proxy'].includes(options.vercelApiHttp?.route)))
+      throw new ReleaseError('ARGUMENT_INVALID', { field: 'vercelApiHttp' });
     if (options.discardCheckout !== undefined && (options.command !== 'recover' || typeof options.discardCheckout !== 'boolean')) throw new ReleaseError('ARGUMENT_INVALID');
     if (options.command === 'retire' || options.discardCheckout ? !options.runId || !/^[a-f0-9-]{36}$/u.test(options.runId) : options.runId !== undefined)
       throw new ReleaseError('ARGUMENT_INVALID');
@@ -25,6 +36,7 @@ export async function runRelease(options: RunReleaseOptions): Promise<ReleaseRep
     const markerHeaders = resolveMarkerAuth && createCandidateMarkerHeaders(resolveMarkerAuth);
     if (options.command === 'login') return await runWorkspaceRelease(options);
     const managed = await pathExists(resolve(options.cwd, 'state/forge-vercel-release/managed.json'));
+    if (options.resumePrebuilt && !managed) throw new ReleaseError('SOURCE_UNSUPPORTED', { reason: 'PREBUILT_RESUME_REQUIRES_MANAGED_RUN' });
     if (options.command === 'retire') {
       if (!managed) throw new ReleaseError('SOURCE_UNSUPPORTED', { reason: 'RETIREMENT_REQUIRES_MANAGED_RUN' });
       return await runManagedRetirement(options);

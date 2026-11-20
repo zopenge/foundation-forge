@@ -14,7 +14,7 @@ export async function observePrebuiltCandidate(config: ReleaseConfig, state: Pre
   const verify = new PrebuiltVerification(config, transport, signal);
   await verify.project(undefined, true); const deployment = await verify.ready(state, purpose);
   const observed: PrebuiltReleaseState = { ...state, createEffect: 'accepted' };
-  if (state.versionAlias) {
+  if (state.versionAlias && (purpose !== 'status' || state.versionAlias.effect !== 'not-attempted')) {
     await observeVersionAlias(verify, state);
     observed.versionAlias = { ...state.versionAlias, effect: 'accepted', verified: true };
   }
@@ -30,12 +30,12 @@ export function hasUnresolvedPrebuiltEffect(state: ManagedState): boolean {
     || candidate.versionAlias?.effect === 'unknown' || (candidate.versionAlias?.effect === 'accepted' && !candidate.versionAlias.verified));
 }
 export async function assertPrebuiltEffectObserved(state: ManagedState, execution: Execution, transport?: ReleaseTransport, http?: NodeHttpTransportOptions,
-  candidateMarkerHeaders?: CandidateMarkerHeaders): Promise<PrebuiltEffectResolution | undefined> {
+  candidateMarkerHeaders?: CandidateMarkerHeaders, apiHttp?: NodeHttpTransportOptions): Promise<PrebuiltEffectResolution | undefined> {
   if (!hasUnresolvedPrebuiltEffect(state)) return;
   const candidate = state.prebuilt; if (!candidate) return;
   if (!candidate.deploymentId) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'PREBUILT_CREATE_UNKNOWN', runId: state.runId });
   const verify = new PrebuiltVerification(state.source.config,
-    createPrebuiltTransport(execution, state.source.config, false, http, transport, candidateMarkerHeaders), execution.signal);
+    createPrebuiltTransport(execution, state.source.config, false, http, transport, candidateMarkerHeaders, apiHttp), execution.signal);
   await verify.project(undefined, true); await verify.candidate(candidate);
   let versionAlias: PrebuiltEffectResolution['versionAlias'];
   if (candidate.versionAlias && candidate.versionAlias.effect !== 'not-attempted') {

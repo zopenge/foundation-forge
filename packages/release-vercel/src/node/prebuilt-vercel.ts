@@ -24,9 +24,9 @@ export function candidateOrigin(value: unknown): string {
 }
 
 /** 单次公开 API 写入；固定 CLI 的 promote 内部会重试 POST，不能用于未决效果协议。 */
-export async function promotePrebuiltOnce(config: ReleaseConfig, deploymentId: string, signal: AbortSignal): Promise<void> {
+export async function promotePrebuiltOnce(config: ReleaseConfig, deploymentId: string, signal: AbortSignal, apiHttp?: NodeHttpTransportOptions): Promise<void> {
   const path = `/v10/projects/${encodeURIComponent(config.vercel.projectId)}/promote/${candidateId(deploymentId)}?teamId=${encodeURIComponent(config.vercel.teamId)}`;
-  await prebuiltApiOnce(config, path, 'POST', '{}', signal);
+  await prebuiltApiOnce(config, path, 'POST', '{}', signal, false, config.limits.requestMs, apiHttp);
 }
 function aliasHostname(config: ReleaseConfig, hostname: string): string {
   const sha = /-([a-f0-9]{40})\.vercel\.app$/u.exec(hostname)?.[1];
@@ -37,16 +37,17 @@ function jsonBody(body: Buffer): Record<string, unknown> {
   try { return record(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(body)) as unknown); }
   catch { throw new ReleaseError('VERCEL_API', { reason: 'INVALID_JSON' }); }
 }
-async function readApiOnce(config: ReleaseConfig, path: string, signal: AbortSignal, allowMissing: boolean, timeoutMs: number) {
-  try { return await prebuiltApiOnce(config, path, 'GET', '', signal, allowMissing, timeoutMs); }
+async function readApiOnce(config: ReleaseConfig, path: string, signal: AbortSignal, allowMissing: boolean, timeoutMs: number, apiHttp?: NodeHttpTransportOptions) {
+  try { return await prebuiltApiOnce(config, path, 'GET', '', signal, allowMissing, timeoutMs, apiHttp); }
   catch (error) {
     if (error instanceof ReleaseError) throw error;
     throw new ReleaseError('VERCEL_API', { reason: 'REQUEST_UNCONFIRMED' });
   }
 }
-export async function readPrebuiltVersionAlias(config: ReleaseConfig, hostname: string, signal: AbortSignal, timeoutMs = config.limits.requestMs): Promise<VersionAliasBinding | undefined> {
+export async function readPrebuiltVersionAlias(config: ReleaseConfig, hostname: string, signal: AbortSignal, timeoutMs = config.limits.requestMs,
+  apiHttp?: NodeHttpTransportOptions): Promise<VersionAliasBinding | undefined> {
   const path = `/v4/aliases/${aliasHostname(config, hostname)}?teamId=${encodeURIComponent(config.vercel.teamId)}`;
-  const response = await readApiOnce(config, path, signal, true, timeoutMs);
+  const response = await readApiOnce(config, path, signal, true, timeoutMs, apiHttp);
   if (response.status === 404) return;
   const value = jsonBody(response.body);
   if (value.alias !== hostname || typeof value.projectId !== 'string' || typeof value.deploymentId !== 'string'
@@ -55,10 +56,10 @@ export async function readPrebuiltVersionAlias(config: ReleaseConfig, hostname: 
   return { alias: hostname, projectId: value.projectId, deploymentId: value.deploymentId, routing: 'direct' };
 }
 export async function assignPrebuiltVersionAliasOnce(config: ReleaseConfig, deploymentId: string, hostname: string,
-  signal: AbortSignal): Promise<VersionAliasAssignment> {
+  signal: AbortSignal, apiHttp?: NodeHttpTransportOptions): Promise<VersionAliasAssignment> {
   aliasHostname(config, hostname);
   const path = `/v2/deployments/${candidateId(deploymentId)}/aliases?teamId=${encodeURIComponent(config.vercel.teamId)}`;
-  const response = await prebuiltApiOnce(config, path, 'POST', JSON.stringify({ alias: hostname }), signal);
+  const response = await prebuiltApiOnce(config, path, 'POST', JSON.stringify({ alias: hostname }), signal, false, config.limits.requestMs, apiHttp);
   const value = jsonBody(response.body);
   if (value.alias !== hostname || typeof value.uid !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/u.test(value.uid)
     || (value.oldDeploymentId !== undefined && typeof value.oldDeploymentId !== 'string'))
@@ -83,14 +84,12 @@ async function nativeRead<T>(execution: Execution, config: ReleaseConfig, operat
   if (deadline !== undefined && deadline <= Date.now()) throw new ReleaseError('DEPLOYMENT_TIMEOUT');
   return value;
 }
-async function nativeApiRead(execution: Execution, config: ReleaseConfig, path: string, signal?: AbortSignal, deadline?: number): Promise<unknown> {
-  const url = new URL(path, 'https://api.vercel.com');
-  if (!path.startsWith('/') || path.startsWith('//') || url.origin !== 'https://api.vercel.com' || url.hash)
-    throw new ReleaseError('VERCEL_API', { reason: 'INVALID_API_PATH' });
-  return nativeRead(execution, config, async (combined, timeoutMs) => jsonBody((await readApiOnce(config, path, combined, false, timeoutMs)).body), signal, deadline);
+async function nativeApiRead(execution: Execution, config: ReleaseConfig, path: string, signal?: AbortSignal, deadline?: number,
+  apiHttp?: NodeHttpTransportOptions): Promise<unknown> {
+  return nativeRead(execution, config, async (combined, timeoutMs) => jsonBody((await readApiOnce(config, path, combined, false, timeoutMs, apiHttp)).body), signal, deadline);
 }
-async function nativeAliasRead(execution: Execution, config: ReleaseConfig, hostname: string, signal?: AbortSignal, deadline?: number) {
-  try { return await nativeRead(execution, config, (combined, timeoutMs) => readPrebuiltVersionAlias(config, hostname, combined, timeoutMs), signal, deadline); }
+async function nativeAliasRead(execution: Execution, config: ReleaseConfig, hostname: string, signal?: AbortSignal, deadline?: number, apiHttp?: NodeHttpTransportOptions) {
+  try { return await nativeRead(execution, config, (combined, timeoutMs) => readPrebuiltVersionAlias(config, hostname, combined, timeoutMs, apiHttp), signal, deadline); }
   catch (error) {
     if (error instanceof ReleaseError && error.code === 'DEPLOYMENT_TIMEOUT') throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'VERSION_ALIAS_UNCONFIRMED' });
     throw error;
@@ -98,25 +97,25 @@ async function nativeAliasRead(execution: Execution, config: ReleaseConfig, host
 }
 /** 默认和 custom 在装配时显式选择；默认请求不会回退到 CLI 或 custom 路径。 */
 export function createPrebuiltTransport(execution: Execution, config: ReleaseConfig, writing: boolean, http?: NodeHttpTransportOptions,
-  supplied?: ReleaseTransport, candidateMarkerHeaders?: CandidateMarkerHeaders): PrebuiltAccess {
+  supplied?: ReleaseTransport, candidateMarkerHeaders?: CandidateMarkerHeaders, apiHttp?: NodeHttpTransportOptions): PrebuiltAccess {
   if (supplied) return { transport: supplied,
     apiRead: (path, signal, deadline) => request(combined => supplied.api(path, combined), requestLimit(config, deadline), signal),
     aliasRead: (adapter, hostname, signal, deadline) => request(combined => adapter.read(hostname, combined), requestLimit(config, deadline), signal) };
   if (!process.env.VERCEL_TOKEN) throw new ReleaseError('AUTH_REQUIRED', { reason: 'PREBUILT_TOKEN_REQUIRED' });
   let versionAlias: VersionAliasTransport | undefined;
-  if (config.delivery?.versionAlias) versionAlias = { read: (hostname, signal) => nativeAliasRead(execution, config, hostname, signal),
-    ...(writing ? { assign: (id: string, hostname: string, signal: AbortSignal) => assignPrebuiltVersionAliasOnce(config, id, hostname, signal) } : {}) };
+  if (config.delivery?.versionAlias) versionAlias = { read: (hostname, signal) => nativeAliasRead(execution, config, hostname, signal, undefined, apiHttp),
+    ...(writing ? { assign: (id: string, hostname: string, signal: AbortSignal) => assignPrebuiltVersionAliasOnce(config, id, hostname, signal, apiHttp) } : {}) };
   const transport: ReleaseTransport = {
-    api: (path, signal) => nativeApiRead(execution, config, path, signal),
+    api: (path, signal) => nativeApiRead(execution, config, path, signal, undefined, apiHttp),
     buildInfo: (url, signal) => readBuildInfo(url, signal, config.limits.maxOutputBytes, http),
-    promote: (id, signal) => promotePrebuiltOnce(config, id, signal), ...(versionAlias ? { versionAlias } : {}) };
-  return { transport, apiRead: (path, signal, deadline) => nativeApiRead(execution, config, path, signal, deadline),
+    promote: (id, signal) => promotePrebuiltOnce(config, id, signal, apiHttp), ...(versionAlias ? { versionAlias } : {}) };
+  return { transport, apiRead: (path, signal, deadline) => nativeApiRead(execution, config, path, signal, deadline, apiHttp),
     ...(candidateMarkerHeaders ? { candidateMarker: async (url, candidate, signal) => {
       const headers = await candidateMarkerHeaders(candidate, signal);
       assertActive(signal);
       return readBuildInfo(url, signal, config.limits.maxOutputBytes, http, headers);
     } } : {}),
-    aliasRead: (_adapter, hostname, signal, deadline) => nativeAliasRead(execution, config, hostname, signal, deadline) };
+    aliasRead: (_adapter, hostname, signal, deadline) => nativeAliasRead(execution, config, hostname, signal, deadline, apiHttp) };
 }
 const failedDeploymentStates = ['ERROR', 'CANCELED', 'CANCELLED'];
 

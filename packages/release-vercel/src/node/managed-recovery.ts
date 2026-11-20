@@ -240,11 +240,11 @@ async function runManagedVerification(options: RunReleaseOptions, candidateMarke
     const assertFrozen = async () => { await assertHistoricalSource(source, options.signal); await assertCheckoutFrozen(current); };
     await assertFrozen();
     deployment = await publishCandidate({ execution: session.execution, config: source.config, sha: source.sha, signal: options.signal, transport: options.transport, buildInfoHttp: options.buildInfoHttp,
-      effects: session.state.effects, prebuilt: managedPrebuiltContext(session), assertFrozen, candidateMarkerHeaders,
+      effects: session.state.effects, prebuilt: managedPrebuiltContext(session), assertFrozen, candidateMarkerHeaders, vercelApiHttp: options.vercelApiHttp,
       mutationGuard: async () => { throw new ReleaseError('SOURCE_UNSUPPORTED'); },
       stage: async stage => { current.state.stage = stage; await current.persist(); }, checkpoint: async () => { throw new ReleaseError('SOURCE_UNSUPPORTED'); } }, 'verify');
     await runCompletion(session, options, assertFrozen, candidateMarkerHeaders);
-    await recordVerifiedAlias(session, selected.receipt, options.transport, options.buildInfoHttp, candidateMarkerHeaders);
+    await recordVerifiedAlias(session, selected.receipt, options.transport, options.buildInfoHttp, candidateMarkerHeaders, options.vercelApiHttp);
     await session.assertClosed(); await session.budget.sample(); session.state.stage = 'complete';
   } catch (error) { failure = diagnostic(error); }
   retained = failure?.code === 'BUDGET_UNKNOWN' && failure.details.reason === 'OBSERVATION_DEADLINE';
@@ -312,7 +312,7 @@ export async function runManagedReceiptCommand(options: RunReleaseOptions, candi
     stage = 'deployment';
     if (source.config.delivery) {
       const found = await observePrebuiltCandidate(source.config, prebuilt ?? receipt.report.prebuilt,
-        createPrebuiltTransport(execution, source.config, false, options.buildInfoHttp, options.transport, candidateMarkerHeaders), options.signal, 'status');
+        createPrebuiltTransport(execution, source.config, false, options.buildInfoHttp, options.transport, candidateMarkerHeaders, options.vercelApiHttp), options.signal, 'status');
       deployment = found.deployment; prebuilt = found.observed;
       effects.deploymentCreate = prebuilt.createEffect; effects.deploymentPromote = prebuilt.promoteEffect;
       if (prebuilt.versionAlias) effects.versionAliasAssign = prebuilt.versionAlias.effect;
@@ -469,7 +469,7 @@ async function publicationIntentReceipt(location: ManagedLocation, selected: Non
     error: { code: 'RECOVERY_REQUIRED', details: { reason: archived ? 'ARCHIVED_PUBLICATION_INTENT' : 'ACTIVE_PUBLICATION_INTENT' } } };
   return parseManagedReceipt({ schemaVersion: 2, slotId: state.slotId, source, report }, source, state.slotId);
 }
-async function loadManagedPublication(cwd: string, configPath: string, sha?: string, signal?: AbortSignal,
+export async function loadManagedPublication(cwd: string, configPath: string, sha?: string, signal?: AbortSignal,
   allowActiveCompletion = false): Promise<{ receipt: ManagedReceipt; location: ManagedLocation; reportExists: boolean }> {
   assertActive(signal);
   const location = await readManagedLocation(cwd, configPath), selected = location.anchor.latestPublish;

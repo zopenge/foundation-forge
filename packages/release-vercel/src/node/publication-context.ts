@@ -7,6 +7,8 @@ export interface ExecutionContext {
   readonly execution: Execution; readonly config: ReleaseConfig; readonly sha: string;
   readonly signal: AbortSignal | undefined; readonly transport: ReleaseTransport | undefined;
   readonly buildInfoHttp?: NodeHttpTransportOptions | undefined;
+  readonly vercelApiHttp?: NodeHttpTransportOptions | undefined;
+  readonly resumePrebuilt?: boolean;
   readonly candidateMarkerHeaders?: CandidateMarkerHeaders | undefined;
   readonly effects: ReleaseReport['effects'];
   readonly prebuilt?: {
