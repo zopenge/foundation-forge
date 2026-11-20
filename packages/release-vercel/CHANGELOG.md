@@ -1,5 +1,11 @@
 # @openge/forge-release-vercel
 
+## 0.13.1
+
+### Patch Changes
+
+- d14e2f5: 支持显式退役已确认原 Job 清空的 Windows 失败检查。随后普通恢复可在同槽返回原运行的本地停止凭证，保留原失败收据和状态，无需重启调用方。
+
 ## 0.13.0
 
 ### Minor Changes
