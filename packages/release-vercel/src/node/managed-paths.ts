@@ -5,7 +5,7 @@ import { Execution } from './execution.js';
 import { createManagedExecution } from './managed-execution.js';
 import { record, ReleaseError } from './errors.js';
 import type { FrozenSource, ManagedPaths } from './managed-state-contracts.js';
-import type { ManagedSlot } from './managed-slot-contracts.js';
+import type { ManagedPrebuiltSelection, ManagedSlot } from './managed-slot-contracts.js';
 import type { OwnedLock } from './lock.js';
 import { assertPathChain, fileIdentity, measureManagedUsage, pathExists, readBoundedJson, sameIdentity, within } from './managed-io.js';
 import { gitBlob, gitRecords } from './git-stream.js';
@@ -14,11 +14,13 @@ import { createManagedStateStore } from './managed-state.js';
 import { currentCoordinator } from './process-identities.js';
 import { assertNoGitContext } from './git-context.js';
 import { hasVerifiedManagedClosure } from './managed-closure.js';
-import { hasFinalizedRetirement } from './retirement-record.js';
-import { metadataReserveBytes } from './managed-metadata.js';
-import { archiveManagedDisposition, hasManagedDisposition } from './managed-disposition.js';
-import { assertManagedHistory } from './managed-history.js';
+import { hasFinalizedRetirement, retirementArchivePath } from './retirement-record.js';
+import { inspectMetadataFile, metadataReserveBytes } from './managed-metadata.js';
+import { archiveManagedDisposition, dispositionPath, hasManagedDisposition } from './managed-disposition.js';
+import { assertManagedHistory, historyFileLimit } from './managed-history.js';
 import { admitCompletionSlot } from './completion-history.js';
+import { admitDrainedAcceptance } from './prebuilt-drained-continuation.js';
+import { drainedAcceptanceCandidate } from './drained-retirement.js';
 import type { ManagedSession } from './managed-session-contracts.js';
 import { acquireManagedCoordinatorLease, readRetirementHost } from './retirement-host.js';
 
@@ -83,7 +85,8 @@ export async function assertManagedPaths(paths: ManagedPaths): Promise<void> {
     }
   }
 }
-export async function openManagedSlot(source: FrozenSource, execution: Execution, command?: ManagedSession['command']): Promise<ManagedSlot> {
+export async function openManagedSlot(source: FrozenSource, execution: Execution, command?: ManagedSession['command'],
+  prebuilt?: ManagedPrebuiltSelection): Promise<ManagedSlot> {
   let paths = await resolveManagedPaths(source, execution);
   const existingAnchor = record(await readBoundedJson(paths.anchorPath, 65_536));
   const anchored = Object.keys(existingAnchor).length > 0;
@@ -138,12 +141,33 @@ export async function openManagedSlot(source: FrozenSource, execution: Execution
     const store = createManagedStateStore(paths, source, slotId, guard);
     const state = await store.read();
     if (state) await assertManagedHistory(paths, state);
-    if (state && !await hasManagedDisposition(paths, state, true) && !await hasFinalizedRetirement(paths, state)) {
-      if (state.status !== 'closed' || state.pendingPush || Object.values(state.effects).includes('unknown') || !state.processes.every(hasVerifiedManagedClosure)) throw new ReleaseError('RECOVERY_REQUIRED', { runId: state.runId });
-      await archiveManagedDisposition(paths, state, state, guard, undefined, true);
+    const protectHistory = state?.history.some(item => item.path.startsWith('retired/'));
+    let disposition = state && protectHistory ? await inspectMetadataFile(dispositionPath(paths, state.runId), historyFileLimit) : null;
+    let retirement;
+    if (state && !await hasManagedDisposition(paths, state, true, disposition ?? undefined)) {
+      const acceptance = drainedAcceptanceCandidate(state);
+      const file = acceptance ? await inspectMetadataFile(retirementArchivePath(paths, state.runId), historyFileLimit) : null;
+      if (await hasFinalizedRetirement(paths, state, file ?? undefined)) {
+        if (acceptance && !file) throw new ReleaseError('SLOT_STATE', { reason: 'HISTORY_MISSING' });
+        if (file) retirement = file;
+      } else {
+        if (state.status !== 'closed' || state.pendingPush || Object.values(state.effects).includes('unknown')
+          || !state.processes.every(hasVerifiedManagedClosure)) throw new ReleaseError('RECOVERY_REQUIRED', { runId: state.runId });
+        await archiveManagedDisposition(paths, state, state, guard, undefined, true);
+        if (protectHistory) {
+          disposition = await inspectMetadataFile(dispositionPath(paths, state.runId), historyFileLimit);
+          if (!disposition) throw new ReleaseError('SLOT_STATE', { reason: 'HISTORY_MISSING' });
+          await hasManagedDisposition(paths, state, true, disposition);
+        }
+      }
     }
+    const drainedAcceptance = state && await admitDrainedAcceptance(paths, state, source, {
+      ...(command ? { command } : {}), ...(prebuilt ? { prebuilt } : {}),
+      ...(coordinatorLease ? { host: coordinatorLease.host } : {}), ...(retirement ? { retirement } : {}), ...(disposition ? { disposition } : {}),
+    });
     const completionResume = await admitCompletionSlot(paths, slotId, source, command, state, execution.signal);
     return { paths, source, slotId, lock, store, runId, coordinator, ...(coordinatorLease ? { coordinatorLease } : {}),
+      ...(drainedAcceptance ? { drainedAcceptance } : {}),
       ...(completionResume ? { completionResume } : {}), assertMetadataOwned };
   } catch (error) { await lock.release(); throw error; }
 }

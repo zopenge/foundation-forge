@@ -28,7 +28,7 @@ export async function runManagedRelease(options: RunReleaseOptions, candidateMar
   let source: FrozenSource | undefined, slot: ManagedSlot | undefined, session: ManagedSession | undefined;
   let result: ReleaseDeployment | undefined, failure: ReleaseDiagnostic | undefined, stage: ReleaseStage = 'source';
   let closed = true, retained = false;
-  let expired = false, deadlineReceipt = false;
+  let expired = false, deadlineReceipt = false, anchorWritten = false;
   const emptyEffects: ReleaseReport['effects'] = { developmentPush: 'not-attempted', releasePush: 'not-attempted' };
   const buildReport = (): ReleaseReport => {
     const candidateContext = source && session ? prebuiltCandidateContext(source.config, session.state.prebuilt) : undefined;
@@ -55,7 +55,9 @@ export async function runManagedRelease(options: RunReleaseOptions, candidateMar
     const original = createManagedExecution(options.cwd, entry, options.signal, []);
     source = await freezeManagedSource(options.cwd, options.configPath ?? 'release.config.json', original);
     await inspectCommitTree(source, original);
-    stage = 'admission'; await settleManagedSlot(options); slot = await openManagedSlot(source, original, options.command === 'publish' ? 'publish' : 'check');
+    stage = 'admission'; await settleManagedSlot(options);
+    slot = await openManagedSlot(source, original, options.command === 'publish' ? 'publish' : 'check',
+      options.resumePrebuilt ? { binding: options.resumePrebuilt } : undefined);
     const selected = options.resumePrebuilt ? await loadManagedPublication(source.root, source.configPath, undefined, options.signal) : undefined;
     const previous = selected?.receipt ?? (source.config.delivery && options.command === 'publish' ? await slot.store.readReceipt('publish') : undefined);
     const continuation = options.resumePrebuilt ? await selectPrebuiltContinuation(slot, options.resumePrebuilt, previous, options.signal, selected?.reportExists) : undefined;
@@ -81,6 +83,7 @@ export async function runManagedRelease(options: RunReleaseOptions, candidateMar
     await slot.store.writeAnchor({ schemaVersion: 2, slotId: slot.slotId, slotPath: slot.paths.slotRoot, sourceRoot: source.root, configPath: source.configPath,
       ...(options.command === 'publish' ? { latestPublish: { sha: source.sha, runId: slot.runId, configSha256: source.configSha256 } }
         : previousPublish && typeof previousPublish.sha === 'string' && typeof previousPublish.runId === 'string' && typeof previousPublish.configSha256 === 'string' ? { latestPublish: { sha: previousPublish.sha, runId: previousPublish.runId, configSha256: previousPublish.configSha256 } } : {}) });
+    anchorWritten = true;
     if (!continuation) { await prepareCheckout(session); await prepareEnvironment(session); }
     const assertFrozen = async () => { await continuation?.assertCheckout(); await assertSourceFrozen(frozen, original); await assertCheckoutFrozen(currentSession); };
     if (continuation) await assertFrozen();
@@ -106,15 +109,18 @@ export async function runManagedRelease(options: RunReleaseOptions, candidateMar
     // 截止后保留原锁，避免收尾重新扫描整个 payload。
     retained = !closed || expired;
     session.state.status = retained ? 'unknown' : 'closed';
-    if (expired) {
+    // 续发尚未切换发布锚点时，原收据仍是该锚点的唯一发布输入。
+    const writeReceipt = !options.resumePrebuilt || anchorWritten;
+    if (expired && writeReceipt) {
       try {
         deadlineReceipt = true;
         await session.slot.store.writeReceipt(options.command === 'publish' ? 'publish' : 'check',
           { schemaVersion: 2, slotId: session.slot.slotId, source: session.slot.source, report: buildReport() }, 'observation-deadline');
       } catch { deadlineReceipt = false; }
-    } else try {
+    } else if (!expired) try {
       await session.persist();
-      await session.slot.store.writeReceipt(options.command === 'publish' ? 'publish' : 'check', { schemaVersion: 2, slotId: session.slot.slotId, source: session.slot.source, report: buildReport() });
+      if (writeReceipt) await session.slot.store.writeReceipt(options.command === 'publish' ? 'publish' : 'check',
+        { schemaVersion: 2, slotId: session.slot.slotId, source: session.slot.source, report: buildReport() });
       if (closed) {
         const completed = session;
         await completed.assertStopped();

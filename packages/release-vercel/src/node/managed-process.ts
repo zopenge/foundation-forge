@@ -17,7 +17,7 @@ import { hasObservationStopWitness, hasVerifiedManagedClosure, hasVerifiedManage
 import { checkoutObservationPlan } from './managed-observation.js';
 import { readRetirementHost } from './retirement-host.js';
 import { createTerminalWriter, restoreManagedTerminal, type TerminalWriter } from './managed-terminal.js';
-import { metadataReserveBytes } from './managed-metadata.js';
+import { metadataReserveBytes, sameMetadataFile } from './managed-metadata.js';
 import { assertManagedHistory, captureManagedHistory } from './managed-history.js';
 import { versionAliasBuildEnvironment, versionAliasCandidateEnvironment } from './version-alias.js';
 import { protectedCompletionEnvironment } from './completion-state.js';
@@ -276,10 +276,15 @@ class ManagedProcess implements ExecutionLifecycle {
 export async function createManagedSession(slot: ManagedSlot, command: 'check' | 'publish' | 'verify', signal?: AbortSignal): Promise<ManagedSession> {
   if (slot.source.config.source.mode !== 'managed-commit') throw new ReleaseError('SOURCE_UNSUPPORTED');
   const resumed = command === 'check' ? undefined : slot.completionResume;
+  const history = await captureManagedHistory(slot.paths);
+  for (const required of slot.drainedAcceptance?.history ?? []) {
+    if (!history.some(reference => reference.path === required.path && sameMetadataFile(reference.file, required.file)))
+      throw new ReleaseError('SLOT_STATE', { reason: 'DRAINED_ACCEPTANCE_HISTORY_CHANGED' });
+  }
   const state: ManagedState = { schemaVersion: 3, slotId: slot.slotId, runId: slot.runId, source: slot.source, command,
     coordinator: slot.coordinator, host: slot.coordinatorLease?.host ?? await readRetirementHost(signal),
     ...(slot.coordinatorLease ? { coordinatorLease: 'native-directory' as const } : {}),
-    history: await captureManagedHistory(slot.paths), stage: 'admission', status: 'running', processes: [],
+    history, stage: 'admission', status: 'running', processes: [],
     ...(resumed ? { prebuilt: structuredClone(resumed.prebuilt), completion: structuredClone(resumed.completion), completionInput: structuredClone(resumed.input) } : {}),
     effects: { developmentPush: 'not-attempted', releasePush: 'not-attempted', ...(resumed ? { deploymentCreate: resumed.prebuilt.createEffect,
       deploymentPromote: resumed.prebuilt.promoteEffect, ...(resumed.prebuilt.versionAlias ? { versionAliasAssign: resumed.prebuilt.versionAlias.effect } : {}) } : {}) } };

@@ -81,8 +81,9 @@ export async function assertDispositionSnapshot(paths: ManagedPaths, evidence: M
     await assertMetadataFile(path, evidence.files[key as Entry]);
   }
 }
-export async function hasManagedDisposition(paths: ManagedPaths, state: ManagedState, requireCheckoutDiscarded = false): Promise<boolean> {
-  const evidence = await readManagedDisposition(paths, state.runId);
+export async function hasManagedDisposition(paths: ManagedPaths, state: ManagedState, requireCheckoutDiscarded = false, expected?: MetadataFile): Promise<boolean> {
+  const evidence = await readManagedDisposition(paths, state.runId, expected);
+  if (expected && !evidence) throw new ReleaseError('SLOT_STATE', { reason: 'HISTORY_MISSING' });
   if (!evidence) return false;
   if (evidence.slotId !== state.slotId || JSON.stringify(JSON.parse(evidence.snapshot.state ?? 'null')) !== JSON.stringify(state)) throw new ReleaseError('SLOT_STATE', { reason: 'HISTORY_STATE_BINDING' });
   await assertDispositionSnapshot(paths, evidence, false);

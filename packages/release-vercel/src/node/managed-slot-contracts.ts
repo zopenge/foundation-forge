@@ -1,8 +1,13 @@
-import type { PrebuiltReleaseState, ReleaseCompletionState } from '../contracts.js';
+import type { PrebuiltReleaseState, PrebuiltResumeBinding, ReleaseCompletionState } from '../contracts.js';
 import type { OwnedLock } from './lock.js';
 import type { LocalDirectoryLease } from '@openge/forge-process-control-node';
 import type { RetirementHost } from './retirement-host.js';
-import type { CompletionInputBinding, FrozenSource, ManagedAnchor, ManagedPaths, ManagedReceipt, ManagedState, MetadataFile, RecordedIdentity } from './managed-state-contracts.js';
+import type { CompletionInputBinding, FileIdentity, FrozenSource, ManagedAnchor, ManagedHistoryReference, ManagedPaths, ManagedReceipt, ManagedState, MetadataFile, RecordedIdentity } from './managed-state-contracts.js';
+
+export interface ManagedPrebuiltSelection {
+  readonly binding: PrebuiltResumeBinding;
+  readonly verification?: { readonly receipt: ManagedReceipt; readonly reportExists: boolean };
+}
 
 export interface ManagedStateStore {
   read(): Promise<ManagedState | undefined>;
@@ -17,5 +22,6 @@ export interface ManagedSlot {
   assertMetadataOwned(): Promise<void>;
   readonly runId: string; readonly coordinator: RecordedIdentity;
   readonly coordinatorLease?: LocalDirectoryLease & { readonly host: RetirementHost };
+  readonly drainedAcceptance?: { readonly history: readonly ManagedHistoryReference[]; readonly verificationCheckout?: FileIdentity };
   readonly completionResume?: { readonly prebuilt: PrebuiltReleaseState; readonly completion: ReleaseCompletionState; readonly input: CompletionInputBinding };
 }

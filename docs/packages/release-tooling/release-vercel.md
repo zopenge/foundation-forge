@@ -142,6 +142,8 @@ Node 调用方可另传 `buildInfoHttp`，类型为 [`forge-http-transport`](../
 
 已取得 deployment ID 的受管候选可以通过 `runRelease({ command: 'publish', cwd, resumePrebuilt: { runId, sha, configSha256, artifactSha256, deploymentId } })` 在原槽续发。原 schema 2 收据和停止归档仍可用。SDK 核对精确 checkout 和封存字节，从 `deployment` 的候选观察继续，按原顺序执行适用的版本 alias 准入及绑定、验收、提升准入及提升、completion。`FORGE_RELEASE_COMMAND` 仍为 `publish`，原有阶段环境沿用。尚未尝试绑定版本 alias 时，`status` 可以确认候选 READY 和 marker。已接受或未知的提升只观察。待办 completion 使用现有 `status` 和显式续验入口。
 
+Windows 上，已经创建且尚未尝试推广的普通 prebuilt 候选可以在验收失败后通过 `retire --run-id <UUID>` 释放本地锁。SDK 要求原生 Job 终态证明排空、进程身份和原失败收据匹配、原 checkout 和封存制品可复核。此流程适用于没有版本别名且尚未启动 completion 的运行。随后 `status` 返回原运行 ID、候选状态和本地退役证明。续发时按照最新发布收据的绑定调用 `resumePrebuilt` 重做验收。如果同候选的后续发布已经尝试推广，可用既有 `verify` 流程核对推广结果。推广确认前，槽位保留该候选及其制品。旧失败及其状态保留在退役归档中。
+
 调用方在整个转换中继续持有目标侧串行锁。绑定或输入在准入前被拒绝时保留当前 `latest-publish`。接续创建独立运行 ID，写出结果后成为新的 `latest-publish`，原收据继续存于归档。中断导致新收据未写出时，可先恢复旧运行，再用 `status` 返回的精确归档身份续发。
 
 ## 恢复与资源所有权

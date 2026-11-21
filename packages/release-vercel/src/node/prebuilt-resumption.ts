@@ -12,7 +12,8 @@ import { readManagedDisposition } from './managed-disposition.js';
 import { assertMetadataFile } from './managed-metadata.js';
 import { fileIdentity, readBoundedJson, sameIdentity } from './managed-io.js';
 import { parseManagedState } from './managed-state.js';
-import { readRetirementRecord } from './retirement-record.js';
+import { hasFinalizedRetirement, readRetirementRecord } from './retirement-record.js';
+import { readDrainedAcceptance } from './prebuilt-drained-continuation.js';
 import { assertPrebuiltEffectObserved, matchesPrebuiltResolution } from './prebuilt-recovery.js';
 import { assertRecordedPrebuiltArtifact } from './prebuilt-artifact.js';
 
@@ -23,8 +24,20 @@ function hasAttemptedEffect(state: Pick<ManagedState, 'effects' | 'pendingPush' 
 async function stoppedPublication(slot: ManagedSlot, receipt: ManagedReceipt, reportExists = true): Promise<ManagedState | undefined> {
   const { paths, slotId } = slot, report = receipt.report;
   if (!report.runId || report.command !== 'publish' || !report.prebuilt) return;
-  const archive = await readManagedDisposition(paths, report.runId);
-  if (!archive || archive.slotId !== slotId || archive.stopped.command !== 'publish'
+  const retirementPath = 'retired/' + report.runId + '.json';
+  const pinned = slot.drainedAcceptance?.history.find(item => item.path === retirementPath);
+  const archive = pinned ? undefined : await readManagedDisposition(paths, report.runId);
+  if (!archive) {
+    if (!reportExists) return;
+    const current = await slot.store.read();
+    if (!current) return;
+    const reference = pinned ?? current.history.find(item => item.path === retirementPath);
+    if (current.runId === report.runId ? !await hasFinalizedRetirement(paths, current, reference?.file) : !reference) return;
+    const stopped = await readDrainedAcceptance(paths, slotId, report.runId, reference?.file);
+    if (!stopped || !isDeepStrictEqual(JSON.parse(stopped.evidence.snapshot.publish ?? 'null'), receipt)) return;
+    return stopped.state;
+  }
+  if (archive.slotId !== slotId || archive.stopped.command !== 'publish'
     || !isDeepStrictEqual(archive.stopped.source, receipt.source) || !isDeepStrictEqual(archive.stopped.prebuilt, report.prebuilt)
     || !isDeepStrictEqual(archive.stopped.effects, report.effects)) return;
   if (reportExists && (!archive.snapshot.publish || !isDeepStrictEqual(JSON.parse(archive.snapshot.publish), receipt))) return;

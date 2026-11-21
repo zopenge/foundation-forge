@@ -9,7 +9,7 @@ import { assertHistoricalSource } from './source.js';
 import { parseManagedState } from './managed-state.js';
 import { assertActive, record, ReleaseError } from './errors.js';
 import { assertManagedPaths, assertManagementUntracked } from './managed-paths.js';
-import { assertPathChain, pathExists, readBoundedJson } from './managed-io.js';
+import { assertPathChain, fileIdentity, pathExists, readBoundedJson, sameIdentity } from './managed-io.js';
 import { assertRetirementSnapshot, captureRetirementSnapshot, hasFinalizedRetirement, hasUnresolvedRetirementEffects, readRetirementRecord, retirementArchivePath, retirementCessation, retirementDigest, sealRetirementRecord, writeRetirementJson } from './retirement-record.js';
 import type { RetirementRecord } from './retirement-contracts.js';
 import { claimRetirement } from './retirement-claim.js';
@@ -21,6 +21,8 @@ import { managedCommandIdentities } from './managed-observation.js';
 import { assertManagedHistory } from './managed-history.js';
 import { restoreManagedTerminal } from './managed-terminal.js';
 import { hasPendingCheckoutIsolation, readManagedDisposition } from './managed-disposition.js';
+import { drainedAcceptanceCandidate } from './drained-retirement.js';
+import { assertRecordedPrebuiltArtifact } from './prebuilt-artifact.js';
 
 /** 宿主 reader 是内部 OS 观测边界；公开 API 不接受调用方注入身份或停止证明。 */
 export async function runManagedRetirement(options: RunReleaseOptions, hostReader: (signal?: AbortSignal) => Promise<RetirementHost> = readRetirementHost): Promise<ReleaseReport> {
@@ -109,6 +111,13 @@ export async function runManagedRetirement(options: RunReleaseOptions, hostReade
     if (hasUnresolvedRetirementEffects(current)) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'RETIREMENT_EFFECT_UNPROVEN' });
     if (!cessation || (cessation !== 'recorded-empty-unstarted-scope' && observation.processes !== 'closed'))
       throw new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'RETIREMENT_STOP_UNPROVEN' });
+    const candidate = cessation === 'recorded-empty-drained-scope' ? drainedAcceptanceCandidate(current) : undefined;
+    if (candidate) {
+      await assertPathChain(paths.slotRoot, paths.checkoutRoot);
+      if (!current.checkoutIdentity || !sameIdentity(await fileIdentity(paths.checkoutRoot), current.checkoutIdentity))
+        throw new ReleaseError('ARTIFACT_CHANGED', { reason: 'PREBUILT_RESUME_CHECKOUT' });
+      await assertRecordedPrebuiltArtifact(paths.checkoutRoot, source.config, candidate, options.signal);
+    }
     if (!finalized) {
       const checkpointPath = resolve(paths.slotRoot, 'retirement.json');
       if (retirementDigest(await readRetirementRecord(checkpointPath, paths)) !== retirementDigest(selected)) await writeRetirementJson(checkpointPath, selected, paths, current, writeGuard);
@@ -137,7 +146,7 @@ export async function runManagedRetirement(options: RunReleaseOptions, hostReade
   if (failure?.details.reason === 'RETIREMENT_EFFECT_UNPROVEN') nextCommand = 'status';
   if (retirement?.status === 'retired' && state) {
     nextCommand = 'publish';
-    if (state.prebuilt) nextCommand = state.prebuilt.deploymentId ? 'verify' : 'status';
+    if (state.prebuilt) nextCommand = drainedAcceptanceCandidate(state) ? 'status' : state.prebuilt.deploymentId ? 'verify' : 'status';
     else if (['pushed', 'already-current'].includes(state.effects.releasePush)) nextCommand = 'verify';
   }
   const reportPath = location ? retirement?.status === 'retired' && archivePath ? archivePath : resolve(location.paths.slotRoot, 'retirement.json') : undefined;

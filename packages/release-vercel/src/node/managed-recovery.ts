@@ -1,6 +1,7 @@
 import { realpath } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import type { FileIdentity, FrozenSource, ManagedAnchor, ManagedPaths, ManagedReceipt, ManagedState } from './managed-state-contracts.js';
 import type { ManagedSession } from './managed-session-contracts.js';
 import type { ManagedSlot } from './managed-slot-contracts.js';
@@ -43,6 +44,9 @@ import { observedCompletionState, parseCompletionState } from './completion-stat
 import { readCompletionSnapshots } from './completion-history.js';
 import { acquireManagedCoordinatorLease, readRetirementHost } from './retirement-host.js';
 import { assertMetadataFile, inspectMetadataFile, terminalLimit } from './managed-metadata.js';
+import { drainedAcceptanceCandidate } from './drained-retirement.js';
+import { assertRecordedPrebuiltArtifact } from './prebuilt-artifact.js';
+import { readDrainedAcceptance } from './prebuilt-drained-continuation.js';
 
 export async function classifyRemoteRef(execution: Execution, sha: string, ref: string): Promise<ReleaseRefRelation> {
   if (sha === ref) return 'candidate';
@@ -139,7 +143,7 @@ async function recoverManagedPublication(options: RunReleaseOptions): Promise<Re
       const retired = await observeDrainedRetirement(paths, state, options.signal);
       if (retired) return receiptReport(options, { startedAt, stage: 'complete', source, location, runId: state.runId, effects,
         steps: [], kind: state.command === 'check' ? 'check' : 'publish', reportExists: true, observation: retired,
-        refs: { ...retired, observedAt: new Date().toISOString() }, next: 'publish' });
+        refs: { ...retired, observedAt: new Date().toISOString() }, next: drainedAcceptanceCandidate(state) ? 'status' : 'publish' });
     }
     const observeRecovery = async (allowReleasedLock: boolean, heldLease?: Pick<OwnedLock, 'assertOwned'>) => {
       const restored = await restoreManagedTerminal(paths, original, { allowReleasedLock, ...(options.signal ? { signal: options.signal } : {}) });
@@ -260,16 +264,35 @@ async function runManagedVerification(options: RunReleaseOptions, candidateMarke
     if (options.retryCompletion && !source.config.completion) throw new ReleaseError('SOURCE_UNSUPPORTED', { reason: 'COMPLETION_NOT_CONFIGURED' });
     if (!await pathExists(resolve(selected.location.paths.checkoutRoot, '.git'))) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'CHECKOUT_MISSING' });
     const original = createManagedExecution(source.root, source.config, options.signal, []);
-    await settleManagedSlot(options); slot = await openManagedSlot(source, original, 'verify'); session = await createManagedSession(slot, 'verify', options.signal);
+    const { prebuilt, runId } = selected.receipt.report;
+    const binding = runId && prebuilt?.deploymentId ? { runId, sha: source.sha, configSha256: source.configSha256,
+      artifactSha256: prebuilt.artifactSha256, deploymentId: prebuilt.deploymentId } : undefined;
+    await settleManagedSlot(options);
+    slot = await openManagedSlot(source, original, 'verify', binding ? { binding, verification: selected } : undefined);
+    const { paths } = slot, drainedCheckout = slot.drainedAcceptance?.verificationCheckout;
+    const assertDrainedCheckout = async () => {
+      if (!drainedCheckout) return;
+      await assertPathChain(paths.slotRoot, paths.checkoutRoot);
+      if (!sameIdentity(drainedCheckout, await fileIdentity(paths.checkoutRoot)))
+        throw new ReleaseError('ARTIFACT_CHANGED', { reason: 'PREBUILT_RESUME_CHECKOUT' });
+    };
+    if (drainedCheckout && prebuilt) {
+      await assertDrainedCheckout();
+      await assertRecordedPrebuiltArtifact(paths.checkoutRoot, source.config, prebuilt, options.signal);
+    }
+    session = await createManagedSession(slot, 'verify', options.signal);
     const current = session;
     if (source.config.delivery && selected.receipt.report.prebuilt) {
       session.state.prebuilt = structuredClone(selected.receipt.report.prebuilt);
       session.state.effects.deploymentCreate = session.state.prebuilt.createEffect;
       session.state.effects.deploymentPromote = session.state.prebuilt.promoteEffect;
       if (session.state.prebuilt.versionAlias) session.state.effects.versionAliasAssign = session.state.prebuilt.versionAlias.effect;
+      if (drainedCheckout) session.state.checkoutIdentity = drainedCheckout;
       await session.persist();
     }
-    const assertFrozen = async () => { await assertHistoricalSource(source, options.signal); await assertCheckoutFrozen(current); };
+    const assertFrozen = async () => {
+      await assertDrainedCheckout(); await assertHistoricalSource(source, options.signal); await assertCheckoutFrozen(current);
+    };
     await assertFrozen();
     deployment = await publishCandidate({ execution: session.execution, config: source.config, sha: source.sha, signal: options.signal, transport: options.transport, buildInfoHttp: options.buildInfoHttp,
       effects: session.state.effects, prebuilt: managedPrebuiltContext(session), assertFrozen, candidateMarkerHeaders, vercelApiHttp: options.vercelApiHttp,
@@ -301,7 +324,8 @@ export async function runManagedReceiptCommand(options: RunReleaseOptions, candi
   if (options.command === 'verify') return runManagedVerification(options, candidateMarkerHeaders);
   const startedAt = new Date().toISOString();
   let selected: Awaited<ReturnType<typeof loadManagedPublication>> | undefined, observation: RecoveryObservation | undefined;
-  let deployment: ReleaseDeployment | undefined, failure: ReleaseDiagnostic | undefined, stage: ReleaseStage = 'source', needsRecovery = false;
+  let deployment: ReleaseDeployment | undefined, failure: ReleaseDiagnostic | undefined, stage: ReleaseStage = 'source';
+  let needsRecovery = false, retirement: ReleaseReport['retirement'];
   let refs: ReleaseRecoveryObservation | undefined;
   let effects: ReleaseReport['effects'] = { developmentPush: 'not-attempted', releasePush: 'not-attempted' };
   let prebuilt: PrebuiltReleaseState | undefined;
@@ -320,7 +344,28 @@ export async function runManagedReceiptCommand(options: RunReleaseOptions, candi
     const state = parseManagedState(stateValue, stateSource, location.anchor.slotId);
     await assertManagedHistory(location.paths, state);
     const restored = await restoreManagedTerminal(location.paths, state, { allowReleasedLock: !await pathExists(location.paths.lockPath), ...(options.signal ? { signal: options.signal } : {}) });
-    observation = await inspectManagedRecovery(restored.state, location.paths, options.signal);
+    const selectedRun = receipt.report.runId;
+    let retired = state.runId === selectedRun && drainedAcceptanceCandidate(state)
+      ? await observeDrainedRetirement(location.paths, state, options.signal) : undefined;
+    observation = retired ?? await inspectManagedRecovery(restored.state, location.paths, options.signal);
+    if (selectedRun && selectedRun !== state.runId && observation.owner === 'inactive' && observation.processes === 'closed'
+      && !await pathExists(location.paths.lockPath)) {
+      const reference = state.history.find(item => item.path === 'retired/' + selectedRun + '.json');
+      if (reference && await hasManagedDisposition(location.paths, state)) {
+        const archived = await readDrainedAcceptance(location.paths, state.slotId, selectedRun, reference.file);
+        if (archived && archived.state.host.hostId === state.host.hostId && archived.state.host.platform === state.host.platform
+          && isDeepStrictEqual(JSON.parse(archived.evidence.snapshot.publish ?? 'null'), receipt)) {
+          const knownCount = new Set(archived.state.processes.flatMap(managedCommandIdentities).map(identity => identity.pid + ':' + identity.startToken)).size;
+          retired = { owner: 'inactive', processes: 'closed', knownCount };
+          observation = retired;
+        }
+      }
+    }
+    if (retired && selectedRun) {
+      retirement = { status: 'retired', historicalVerification: 'unknown', origin: 'recorded-run-host',
+        cessation: 'recorded-empty-drained-scope', archivePath: retirementArchivePath(location.paths, selectedRun) };
+      prebuilt = receipt.report.prebuilt;
+    }
     if (source.config.completion) {
       const snapshots = await readCompletionSnapshots(location.paths, location.anchor.slotId, state, options.signal);
       const matches = snapshots.filter(snapshot => snapshot.origin.source.sha === source.sha && snapshot.origin.source.configSha256 === source.configSha256
@@ -331,7 +376,7 @@ export async function runManagedReceiptCommand(options: RunReleaseOptions, candi
       parseCompletionState(completion, source, receipt.report.prebuilt);
       if (completion) prebuilt = snapshot?.current.prebuilt ?? receipt.report.prebuilt;
     }
-    const locallyReady = await hasManagedDisposition(location.paths, state);
+    const locallyReady = !!retirement || await hasManagedDisposition(location.paths, state);
     needsRecovery = observation.owner !== 'inactive' || observation.processes !== 'closed' || (state.status !== 'closed' && !locallyReady);
     const execution = createManagedExecution(source.root, source.config, options.signal, []);
     refs = source.config.delivery ? { owner: observation.owner, processes: observation.processes, observedAt: new Date().toISOString() }
@@ -375,13 +420,14 @@ export async function runManagedReceiptCommand(options: RunReleaseOptions, candi
   return { schemaVersion: 2, command: options.command, ok: failure === undefined, startedAt, finishedAt: new Date().toISOString(), steps: [], stage,
     effects, ...(prebuilt ? { prebuilt } : {}),
     ...(completion ? { completion } : {}),
-    ...(candidateContext ? { candidateContext } : {}),
+    ...(candidateContext ? { candidateContext } : {}), ...(retirement ? { retirement } : {}),
     ...(source && selected ? { sourceRoot: source.root, executionRoot: selected.location.paths.checkoutRoot, configPath: source.configPath,
       slotId: selected.location.anchor.slotId, candidateSha: source.sha, configSha256: source.configSha256,
       ...(selected.receipt.report.runId ? { runId: selected.receipt.report.runId } : {}),
       recovery: { candidateSha: source.sha, reportPath: resolve(selected.location.paths.slotRoot, 'latest-publish.json'),
-        nextCommand: recoveryCommand(needsRecovery ? 'recover' : completion && completion.status !== 'completed' ? 'verify --retry-completion' : 'verify', source),
-        ...(selected.reportExists ? {} : { reportExists: false }),
+        nextCommand: recoveryCommand(needsRecovery ? 'recover'
+          : retirement ? 'status' : completion && completion.status !== 'completed' ? 'verify --retry-completion' : 'verify', source),
+        ...(retirement || !selected.reportExists ? { reportExists: selected.reportExists } : {}),
         ...(refs ? { observation: refs } : {}) } } : {}),
     ...(observation ? { processes: { status: observation.processes, knownCount: observation.knownCount } } : {}),
     ...(deployment ? { deployment } : {}), ...(failure ? { error: failure } : {}) };

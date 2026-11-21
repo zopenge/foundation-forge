@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, open, rename, unlink } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import type { FrozenSource, ManagedPaths, ManagedState } from './managed-state-contracts.js';
+import type { FrozenSource, ManagedPaths, ManagedState, MetadataFile } from './managed-state-contracts.js';
 import type { RetirementRecord, RetirementSnapshot } from './retirement-contracts.js';
 import { assertPathChain, fileIdentity, measureManagedUsage, readBoundedJson, readBoundedText, sameIdentity } from './managed-io.js';
 import { record, ReleaseError } from './errors.js';
@@ -80,9 +80,9 @@ export function parseRetirementRecord(value: unknown): RetirementRecord {
   }
   return evidence;
 }
-export async function readRetirementRecord(path: string, paths: ManagedPaths): Promise<RetirementRecord | undefined> {
+export async function readRetirementRecord(path: string, paths: ManagedPaths, expected?: MetadataFile): Promise<RetirementRecord | undefined> {
   await assertPathChain(paths.slotRoot, path);
-  const value = await readBoundedJson(path, archiveLimit);
+  const value = await readBoundedJson(path, archiveLimit, expected);
   return value === undefined ? undefined : parseRetirementRecord(value);
 }
 export async function assertRetirementSnapshot(paths: ManagedPaths, evidence: RetirementRecord, includeLock = true): Promise<void> {
@@ -98,8 +98,9 @@ export async function assertRetirementSnapshot(paths: ManagedPaths, evidence: Re
   }
   await assertMetadataFile(resolve(paths.slotRoot, 'terminal.json'), evidence.snapshot.terminal?.file ?? null, terminalLimit);
 }
-export async function hasFinalizedRetirement(paths: ManagedPaths, state: ManagedState): Promise<boolean> {
-  const evidence = await readRetirementRecord(retirementArchivePath(paths, state.runId), paths);
+export async function hasFinalizedRetirement(paths: ManagedPaths, state: ManagedState, expected?: MetadataFile): Promise<boolean> {
+  const evidence = await readRetirementRecord(retirementArchivePath(paths, state.runId), paths, expected);
+  if (expected && !evidence) throw new ReleaseError('SLOT_STATE', { reason: 'HISTORY_MISSING' });
   if (!evidence) return false;
   if (!evidence.final || evidence.runId !== state.runId || evidence.slotId !== state.slotId) throw new ReleaseError('SLOT_STATE', { reason: 'RETIREMENT_BINDING' });
   const original = record(JSON.parse(evidence.snapshot.state));
