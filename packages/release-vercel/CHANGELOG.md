@@ -1,5 +1,11 @@
 # @openge/forge-release-vercel
 
+## 0.13.3
+
+### Patch Changes
+
+- 4a6c7f7: Windows 上的受管 prebuilt 验收失败后，可以凭原生 Job 排空及原候选的绑定证据释放本地锁。续发复用同一候选与制品，重新执行验收，并保留原失败收据。
+
 ## 0.13.2
 
 ### Patch Changes
