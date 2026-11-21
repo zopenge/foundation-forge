@@ -24,7 +24,7 @@ jobs:
     env:
       FORGE_CHECK_TEST_WORKERS: '4'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: pnpm/action-setup@v6
