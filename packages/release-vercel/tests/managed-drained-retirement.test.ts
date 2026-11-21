@@ -1,13 +1,17 @@
 import { fixture } from './helpers/prebuilt-publication-fixture.js';
 import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { afterEach, beforeEach, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { ProcessControlError, processControlErrorCodes, type ProcessIdentityReader } from '@openge/forge-process-control';
 import type { ReleaseConfig } from '../src/contracts.js';
 import { runRelease } from '../src/node.js';
 import { Execution } from '../src/node/execution.js';
 import { ReleaseError } from '../src/node/errors.js';
 import { openManagedSlot } from '../src/node/managed-paths.js';
 import { retirementCessation } from '../src/node/retirement-record.js';
+import { inspectManagedRecovery, readManagedLocation } from '../src/node/managed-recovery.js';
+import { acquireManagedCoordinatorLease } from '../src/node/retirement-host.js';
+import * as identityBoundary from '../src/node/process-identities.js';
 import type { ManagedCommand, ManagedState } from '../src/node/managed-state-contracts.js';
 import type { RetirementRecord } from '../src/node/retirement-contracts.js';
 import { installReadQueryComponentExecution } from './helpers/component-command-runtime.mjs';
@@ -66,6 +70,46 @@ it.runIf(process.platform === 'win32' && process.arch === 'x64')('retires a fail
   expect(recovered, JSON.stringify(recovered.error)).toMatchObject({ command: 'recover', ok: true, runId: failed.runId,
     sourceRoot: failed.sourceRoot, candidateSha: sha, configSha256: failed.configSha256, effects: failed.effects,
     processes: { status: 'closed' }, recovery: { reportExists: true, observation: { owner: 'inactive', processes: 'closed' } } });
+  expect(await readFile(statePath, 'utf8')).toBe(state);
+  expect(await readFile(receiptPath, 'utf8')).toBe(receipt);
+  const identity = last.identity;
+  const ticks = /^\/Date\((\d+)\)\/$/u.exec(identity.startToken)?.[1];
+  if (!ticks) throw new Error('missing native Windows process creation time');
+  const newer = { ProcessId: identity.pid, CreationDate: '/Date(' + (Number(ticks) + 1000) + ')/' };
+  const nativeAccessDenied = (nativeCode: number): ProcessIdentityReader => ({
+    readIdentity: async request => {
+      if (request.pid !== identity.pid) return { status: 'ABSENT' };
+      throw new ProcessControlError(processControlErrorCodes.commandFailed, { backend: 'windows-native', stage: 'OPEN_PROCESS', nativeCode });
+    },
+  });
+  const query = vi.spyOn(identityBoundary, 'queryWindowsCimIdentity').mockResolvedValue([newer]);
+  const location = await readManagedLocation(value.cwd, 'release.config.json');
+  const nativeLease = await acquireManagedCoordinatorLease(location.paths, original.host);
+  try {
+    const inspect = (reader: ProcessIdentityReader, snapshot?: RetirementRecord['snapshot']) =>
+      inspectManagedRecovery(original, location.paths, undefined, reader, nativeLease, snapshot);
+    await expect(inspect(nativeAccessDenied(5), archive.snapshot)).resolves.toMatchObject({ owner: 'inactive', processes: 'closed' });
+    expect(query).toHaveBeenCalledExactlyOnceWith(identity.pid, expect.any(AbortSignal));
+    for (const evidence of [[], newer, [{ ...newer, CreationDate: identity.startToken }], [{ ...newer, ProcessId: identity.pid + 1 }],
+      [{ ...newer, CreationDate: 'unavailable' }], [{ ...newer, CreationDate: '/Date(' + (Number(ticks) - 1) + ')/' }],
+      [newer, newer], [newer, {}]]) {
+      query.mockResolvedValueOnce(evidence);
+      await expect(inspect(nativeAccessDenied(5), archive.snapshot)).resolves.toMatchObject({ processes: 'unknown' });
+    }
+    query.mockRejectedValueOnce(new Error('identity unavailable'));
+    await expect(inspect(nativeAccessDenied(5), archive.snapshot)).resolves.toMatchObject({ processes: 'unknown' });
+    query.mockClear();
+    await expect(inspect(nativeAccessDenied(87), archive.snapshot)).resolves.toMatchObject({ processes: 'unknown' });
+    await expect(inspect(nativeAccessDenied(5))).resolves.toMatchObject({ processes: 'unknown' });
+    await expect(inspect(nativeAccessDenied(5), { ...archive.snapshot, publish: null })).resolves.toMatchObject({ processes: 'unknown' });
+    await expect(inspect(nativeAccessDenied(5), { ...archive.snapshot, state: '{}' })).resolves.toMatchObject({ processes: 'unknown' });
+    await expect(inspect({ readIdentity: async () => ({ status: 'FOUND', identity }) }, archive.snapshot))
+      .resolves.toMatchObject({ processes: 'running' });
+    expect(query).not.toHaveBeenCalled();
+  } finally {
+    await nativeLease.release();
+    query.mockRestore();
+  }
   expect(await readFile(statePath, 'utf8')).toBe(state);
   expect(await readFile(receiptPath, 'utf8')).toBe(receipt);
   const next = await openManagedSlot(original.source, new Execution(value.cwd, original.source.config, undefined, []));

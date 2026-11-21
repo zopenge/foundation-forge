@@ -44,7 +44,9 @@ import { observedCompletionState, parseCompletionState } from './completion-stat
 import { readCompletionSnapshots } from './completion-history.js';
 import { acquireManagedCoordinatorLease, readRetirementHost } from './retirement-host.js';
 import { assertMetadataFile, inspectMetadataFile, terminalLimit } from './managed-metadata.js';
-import { drainedAcceptanceCandidate } from './drained-retirement.js';
+import { drainedAcceptanceCandidate, isDrainedRetirementSnapshot } from './drained-retirement.js';
+import type { RetirementSnapshot } from './retirement-contracts.js';
+import { observeWindowsPidReplacement } from './windows-drained-identity.js';
 import { assertRecordedPrebuiltArtifact } from './prebuilt-artifact.js';
 import { readDrainedAcceptance } from './prebuilt-drained-continuation.js';
 
@@ -114,7 +116,7 @@ async function observeDrainedRetirement(paths: ManagedPaths, state: ManagedState
       if (!await hasFinalizedRetirement(paths, state)) throw new ReleaseError('RECOVERY_REQUIRED', { reason: 'RETIREMENT_INCOMPLETE' });
     };
     await guard();
-    const observed = await inspectManagedRecovery(state, paths, signal, undefined, lease, state.processes.at(-1)?.id);
+    const observed = await inspectManagedRecovery(state, paths, signal, undefined, lease, archive.snapshot);
     if (observed.owner !== 'inactive' || observed.processes !== 'closed')
       throw new ReleaseError('PROCESS_STATE_UNKNOWN', { reason: 'CLOSURE_UNPROVEN', owner: observed.owner, processes: observed.processes });
     await guard();
@@ -435,7 +437,7 @@ export async function runManagedReceiptCommand(options: RunReleaseOptions, candi
 
 export interface RecoveryObservation { readonly owner: 'inactive' | 'active' | 'unknown'; readonly processes: 'closed' | 'running' | 'unknown'; readonly knownCount: number }
 export async function inspectManagedRecovery(state: ManagedState, paths: ManagedPaths, signal?: AbortSignal, reader = identityReader(),
-  heldLease?: Pick<OwnedLock, 'assertOwned'>, recordedDrainedCommandId?: string): Promise<RecoveryObservation> {
+  heldLease?: Pick<OwnedLock, 'assertOwned'>, drained?: RetirementSnapshot): Promise<RecoveryObservation> {
   assertActive(signal); await assertManagedPaths(paths);
   const controller = new AbortController(), timer = setTimeout(() => controller.abort(), Math.min(30_000, state.source.config.limits.commandMs));
   const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
@@ -444,7 +446,7 @@ export async function inspectManagedRecovery(state: ManagedState, paths: Managed
   const pendingIdentities = new Map(unresolved.flatMap(managedCommandIdentities).map(value => [`${String(value.pid)}:${value.startToken}`, value]));
   let owner: RecoveryObservation['owner'] = 'unknown';
   // 显式退役已核过收据及 Job 空集合；只有该命令可由本次身份观测补足停止事实。
-  const observingDrained = unresolved.length === 1 && unresolved[0]?.id === recordedDrainedCommandId;
+  const observingDrained = !!heldLease && !!drained && unresolved.length === 1 && isDrainedRetirementSnapshot(state, drained);
   let unknown = unresolved.length > 0 && !observingDrained, running = false;
   try {
     try {
@@ -475,7 +477,10 @@ export async function inspectManagedRecovery(state: ManagedState, paths: Managed
           else if (observed.identity.startToken === identity.startToken) running = true;
           else if (!observingDrained) unknown = true;
         }
-      } catch { assertActive(signal); unknown = true; }
+      } catch (error) {
+        assertActive(signal);
+        if (!observingDrained || owner !== 'inactive' || !await observeWindowsPidReplacement(identity, error, combined)) unknown = true;
+      }
     }
     assertActive(signal);
     return { owner, processes: unknown ? 'unknown' : running ? 'running' : 'closed', knownCount: identities.size };

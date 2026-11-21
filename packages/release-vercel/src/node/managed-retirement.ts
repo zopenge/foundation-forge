@@ -96,8 +96,8 @@ export async function runManagedRetirement(options: RunReleaseOptions, hostReade
     const ownedClaim = claim, writeGuard = async () => { await guard(); await ownedClaim.assertOwned(); };
     const restore = () => restoreManagedTerminal(paths, current, {
       allowReleasedLock: !hasOldLock, ...(options.signal ? { signal: options.signal } : {}) });
-    const recordedDrainedCommandId = cessation === 'recorded-empty-drained-scope' ? current.processes.at(-1)?.id : undefined;
-    let observation = await inspectManagedRecovery((await restore()).state, paths, options.signal, undefined, lease, recordedDrainedCommandId);
+    const drained = cessation === 'recorded-empty-drained-scope' ? selected.snapshot : undefined;
+    let observation = await inspectManagedRecovery((await restore()).state, paths, options.signal, undefined, lease, drained);
     processes = observation.processes;
     if (observation.owner === 'unknown') {
       try {

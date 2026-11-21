@@ -47,6 +47,7 @@ export function isDrainedRetirementSnapshot(state: ManagedState, snapshot: Retir
   const text = state.command === 'publish' ? snapshot.publish : snapshot.check;
   if (text === null) return false;
   try {
+    if (!isDeepStrictEqual(JSON.parse(snapshot.state), state)) return false;
     const receipt = parseManagedReceipt(JSON.parse(text) as unknown, source, state.slotId), report = receipt.report;
     const slot = resolve(source.root, source.config.source.slotPath);
     const anchor = record(JSON.parse(snapshot.anchor) as unknown), latest = record(anchor.latestPublish);
