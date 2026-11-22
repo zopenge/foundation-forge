@@ -17,6 +17,7 @@ Provider-neutral TypeScript foundation libraries for reusable cross-platform cap
 | --- | --- | --- |
 | Networking | Explicit Node HTTP(S) transport, Peer Network contracts, libp2p and WebSocket providers | [网络能力](docs/packages/networking/README.md) |
 | Wallet authentication | Portable wallet challenges, EVM signature verification, and explicit browser connectors | [钱包认证](docs/packages/wallet-authentication.md) |
+| Payment verification | Portable payment evidence and explicit EVM native-asset transfer verification | [支付凭证核验](docs/packages/payment-verification.md) |
 | Data formats | Deterministic JSON and bounded incremental text protocols | [数据格式与流式协议](docs/packages/data-formats/README.md) |
 | Artifacts | Path safety, integrity, archives, generated files, and configuration bundles | [制品与文件安全](docs/packages/artifacts/README.md) |
 | Repository tooling | Git file discovery, repository context planning, text integrity, and deterministic source snapshots | [仓库工具](docs/packages/repository-tooling/README.md) |

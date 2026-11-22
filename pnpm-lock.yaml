@@ -137,6 +137,14 @@ importers:
 
   packages/path-safety: {}
 
+  packages/payment-verification: {}
+
+  packages/payment-verification-evm:
+    dependencies:
+      '@openge/forge-payment-verification':
+        specifier: workspace:^
+        version: link:../payment-verification
+
   packages/peer-network: {}
 
   packages/peer-network-libp2p:
