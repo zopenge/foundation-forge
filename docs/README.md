@@ -9,6 +9,7 @@
 | HTTP(S) 显式代理、Peer 连接、发现、libp2p 或 WebSocket rendezvous | [网络](packages/networking/README.md) |
 | 稳定 JSON、JSON Lines、SSE 分帧与解析 | [数据格式与流式协议](packages/data-formats/README.md) |
 | 钱包挑战、EVM 签名验证和浏览器钱包连接 | [钱包认证](packages/wallet-authentication.md) |
+| 核验支付凭证与 EVM 原生资产转账 | [支付凭证核验](packages/payment-verification.md) |
 | 路径安全、完整性、归档、生成物、配置包 | [制品与文件安全](packages/artifacts/README.md) |
 | Git 文件发现、上下文规划、文本完整性、确定性源码快照 | [仓库工具](packages/repository-tooling/README.md) |
 | Workspace 依赖图、pnpm 读取与循环检查 | [Workspace 工具](packages/workspace-tooling/README.md) |
