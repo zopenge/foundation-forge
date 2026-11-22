@@ -1,6 +1,6 @@
 {
   "name": "@openge/forge-payment-verification",
-  "version": "0.1.0-rc.0",
+  "version": "0.1.0",
   "description": "Provider-neutral contracts for verification of payment evidence",
   "type": "module",
   "main": "./dist/index.js",

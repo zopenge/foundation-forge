@@ -1,6 +1,6 @@
 {
   "name": "@openge/forge-payment-verification-evm",
-  "version": "0.1.0-rc.0",
+  "version": "0.1.0",
   "description": "Explicit EVM verification of direct native-asset payments",
   "type": "module",
   "main": "./dist/index.js",
