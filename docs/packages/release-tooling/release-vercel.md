@@ -82,7 +82,7 @@ check 仅构建、检查和冻结本地产物，不访问云。publish 在消费
 
 默认 prebuilt API 读取和写入统一通过正常受保护配置提供 `VERCEL_TOKEN`，包括 status、verify 及远端未决效果核验；这些读取不再使用用户 CLI 登录凭据。缺少 token 在网络前失败，不读取、迁移认证文件或回退到 CLI。本地不查询 Vercel 的恢复仍不要求 Vercel 凭据。Git 交付和显式自定义 transport 保持各自原有认证契约。
 
-候选 READY 后，`candidateMarkerAuth` 在剩余部署预算内解析凭据，并接收用于取消的 `AbortSignal`。解析超时返回 `AUTH_REQUIRED`，原因为 `CANDIDATE_MARKER_AUTH_TIMEOUT`。凭据就绪后，候选 marker GET 才开始计入 `requestMs`，并遵守同一个部署绝对截止。HTTP 超时仍等待 transport 的清理操作，再返回 `VERCEL_API` 和 `REQUEST_TIMEOUT`。
+候选 READY 后，`candidateMarkerAuth` 在剩余部署预算内解析凭据，并接收用于取消凭据解析的 `AbortSignal`。回调须响应取消并释放自己持有的资源。解析超时返回 `AUTH_REQUIRED`，原因为 `CANDIDATE_MARKER_AUTH_TIMEOUT`。凭据就绪后，候选 marker GET 才开始计入 `requestMs`，并遵守同一个部署绝对截止。HTTP 超时仍等待 transport 的清理操作，再返回 `VERCEL_API` 和 `REQUEST_TIMEOUT`。
 
 默认项目、候选、生产 alias 和版本 alias API 读取使用固定 `api.vercel.com` 的单次 native HTTPS GET，仍核对原 project/team。请求不重试、不重定向、不读取宿主代理配置。每次 GET 的上限为 30 秒、64 KiB，配置较小的 requestMs/maxOutputBytes 仍生效；已有轮询绝对截止只会进一步缩短本次请求。受管路径、锁、历史、前台关闭和预算门禁继续执行，但宿主管理成本不计入 HTTP 请求计时，轮询总截止也不重置。成功、错误、取消和超时都等 request 与 socket 真实关闭后才交付；关闭和后续管理检查可使返回晚于请求截止，已过期请求仍为失败。不为 native GET 生成虚构的 CLI scope。
 
