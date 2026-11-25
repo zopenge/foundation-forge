@@ -15,7 +15,7 @@ export async function managedFixture() {
     const inside = relative(repositoryTemporary, resolve(ownedTemporary));
     if (!inside || inside.startsWith('..') || isAbsolute(inside)) throw new Error('managed fixture temporary root escaped the repository');
   }
-  const base = await ensureTestTemporaryDirectory(repositoryRoot, resolve(ownedTemporary ?? repositoryTemporary, 'managed-release-tests'));
+  const base = await ensureTestTemporaryDirectory(repositoryRoot, ownedTemporary ?? resolve(repositoryTemporary, 'managed-release-tests'));
   const root = await mkdtemp(resolve(base, 'r-'));
   const rootIdentity = await lstat(root, { bigint: true }), canonicalRoot = await realpath(root);
   const createdInside = relative(base, canonicalRoot);

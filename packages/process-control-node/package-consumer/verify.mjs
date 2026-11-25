@@ -5,7 +5,7 @@ import { log } from 'node:console';
 import process from 'node:process';
 import { mkdir, mkdtemp, realpath, rmdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { acquireLocalDirectoryLease, createWindowsNativeProcessIdentityReader, createWindowsProcessControl } from '@openge/forge-process-control-node';
+import { acquireLocalDirectoryLease, createWindowsNativeProcessIdentityReader, createWindowsOwnedProcessScopeProvider, createWindowsProcessControl } from '@openge/forge-process-control-node';
 
 // 独立SDK消费者：以外部Core reader复核身份，更新后的身份不能复用首次授权。
 let token = '/Date(123)/', reads = 0;
@@ -42,6 +42,28 @@ if (process.platform === 'win32' && process.arch === 'x64') {
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
     await closed;
   }
+
+  const binding = 'windows-tarball-job';
+  const scope = createWindowsOwnedProcessScopeProvider().start({
+    command: process.execPath,
+    args: ['-e', "require('node:child_process').execFileSync(process.execPath, ['-e', 'process.exit(0)'], { windowsHide: true })"],
+    environment: process.env,
+    binding,
+    startupTimeoutMs: 5000,
+    terminationTimeoutMs: 10000,
+  });
+  try {
+    const observed = await reader.readIdentity({ pid: await scope.rootPid, signal: globalThis.AbortSignal.timeout(5000) });
+    assert.equal(observed.status, 'FOUND');
+    await scope.bind(observed.identity);
+    await scope.authorize();
+    const { exitCode, signal: exitSignal, closure } = await scope.completion;
+    assert.equal(exitCode, 0);
+    assert.equal(exitSignal, null);
+    assert.deepEqual(closure, { scopeId: scope.scopeId, binding, observedAt: closure.observedAt,
+      status: 'closed', reason: 'normal', rootIdentity: observed.identity, empty: true });
+  } finally { await scope.dispose(); }
+  log('Process-control Node tarball consumer verified normal closure of a real Windows Job.');
 }
 log('Process-control Node tarball consumer verified explicit identity composition and fresh termination.');
 

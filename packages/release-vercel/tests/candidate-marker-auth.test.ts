@@ -4,6 +4,7 @@ import { createServer as httpServer, request as httpRequest, type IncomingMessag
 import { createServer as httpsServer } from 'node:https';
 import { connect, type Socket } from 'node:net';
 import { resolve } from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { setImmediate as immediate } from 'node:timers/promises';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { runRelease } from '../src/node.js';
@@ -119,7 +120,9 @@ it('binds credentials after native candidate observation and shares them through
   const candidateMarkerAuth = vi.fn(async () => auth);
   const options = { command: 'publish' as const, cwd: value.cwd, buildInfoHttp: networkFixture.http, candidateMarkerAuth };
   const report = await runRelease(options);
-  expect(report, JSON.stringify({ error: report.error, steps: report.steps.slice(-2) })).toMatchObject({ ok: true,
+  expect(report, JSON.stringify({ error: report.error, steps: report.steps.slice(-2),
+    providerPaths: networkFixture.providerRequests.map(({ method, path }) => [method, path]),
+    markerHosts: networkFixture.markerRequests.map(({ headers }) => headers.host) })).toMatchObject({ ok: true,
     completion: { status: 'completed' }, effects: { deploymentPromote: 'accepted' } });
   expect(candidateMarkerAuth).toHaveBeenCalledExactlyOnceWith(candidate, expect.any(AbortSignal));
   expect(await value.creates()).toBe(1);
@@ -205,4 +208,80 @@ it('preserves managed options implemented as prototype getters', async () => {
   }();
   expect(await runRelease(options)).toMatchObject({ command: 'publish', ok: false,
     error: { code: 'SOURCE_UNSUPPORTED', details: { reason: 'COMMITTED_CONFIG_REQUIRED' } } });
+});
+
+function gate() {
+  let release!: () => void;
+  const promise = new Promise<void>(accept => { release = accept; });
+  return { promise, release };
+}
+
+it.each(['reply', 'timeout', 'late-reply', 'late-credentials'] as const)('honors the candidate credential and HTTP deadlines for %s', async mode => {
+  const credentialsStarted = gate(), credentialsReady = gate(), markerReceived = gate(), transportClosed = gate(), returnRead = gate();
+  const networkFixture = await network((_request, response) => { response.end(JSON.stringify(providerCandidate)); }, (_request, response) => {
+    markerReceived.release();
+    if (mode !== 'timeout') response.end(JSON.stringify(marker));
+  });
+  const base = prebuiltConfiguration(), requestMs = 1827;
+  const config = { ...base, limits: { ...base.limits, requestMs, deploymentMs: 10_000 } };
+  const requestTimers: AbortController[] = [];
+  const timeout = AbortSignal.timeout.bind(AbortSignal);
+  vi.spyOn(AbortSignal, 'timeout').mockImplementation(ms => {
+    if (ms !== requestMs) return timeout(ms);
+    const timer = new AbortController(); requestTimers.push(timer); return timer.signal;
+  });
+  const read = buildInfoHttp.readBuildInfo;
+  if (mode === 'timeout' || mode === 'late-reply') vi.spyOn(buildInfoHttp, 'readBuildInfo').mockImplementation(async (...args) => {
+    try {
+      const value = await read(...args);
+      if (mode === 'late-reply') {
+        const now = performance.now.bind(performance);
+        vi.spyOn(performance, 'now').mockImplementation(() => now() + requestMs + 1);
+      }
+      return value;
+    } finally {
+      if (mode === 'timeout') { transportClosed.release(); await returnRead.promise; }
+    }
+  });
+  const headers = createCandidateMarkerHeaders(async () => {
+    credentialsStarted.release(); await credentialsReady.promise; return auth;
+  });
+  const caller = new AbortController();
+  const access = createPrebuiltTransport(new Execution(process.cwd(), config, undefined, []), config, false,
+    networkFixture.http, undefined, headers);
+  let settled = false;
+  const result = new PrebuiltVerification(config, access, caller.signal).ready(state)
+    .then(value => ({ value }), (error: unknown) => ({ error })).finally(() => { settled = true; });
+  try {
+    await credentialsStarted.promise;
+    expect(requestTimers).toHaveLength(0);
+    expect(networkFixture.markerRequests).toEqual([]);
+    expect(settled).toBe(false);
+    if (mode === 'late-credentials') {
+      const now = Date.now.bind(Date);
+      vi.spyOn(Date, 'now').mockImplementation(() => now() + config.limits.deploymentMs + 1);
+      credentialsReady.release();
+      expect(await result).toMatchObject({ error: { code: 'AUTH_REQUIRED', details: { reason: 'CANDIDATE_MARKER_AUTH_TIMEOUT' } } });
+      expect(networkFixture.markerRequests).toEqual([]);
+      expect(requestTimers).toHaveLength(0);
+      return;
+    }
+    credentialsReady.release();
+    await markerReceived.promise;
+    expect(requestTimers).toHaveLength(1);
+    expect(networkFixture.markerRequests).toEqual([expect.objectContaining({ method: 'GET',
+      path: `/.well-known/forge-prebuilt.json?artifact=${marker.artifactSha256}`, headers: expect.objectContaining(auth.headers) })]);
+    if (mode === 'timeout') {
+      requestTimers[0]?.abort();
+      await transportClosed.promise; await immediate();
+      expect(settled).toBe(false);
+      returnRead.release();
+      expect(await result).toMatchObject({ error: { code: 'VERCEL_API', details: { reason: 'REQUEST_TIMEOUT' } } });
+    } else if (mode === 'late-reply') {
+      expect(await result).toMatchObject({ error: { code: 'VERCEL_API', details: { reason: 'REQUEST_TIMEOUT' } } });
+    } else expect(await result).toMatchObject({ value: { id: candidate.deploymentId, state: 'READY' } });
+    await expect.poll(networkFixture.sockets).toBe(0);
+  } finally {
+    caller.abort(); credentialsReady.release(); returnRead.release(); await result;
+  }
 });

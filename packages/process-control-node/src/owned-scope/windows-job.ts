@@ -26,7 +26,7 @@ export async function createWindowsJob(): Promise<ScopeBackend> {
   const terminate = lib.func('int32_t __stdcall TerminateJobObject(void *job, uint32_t code)');
   const close = lib.func('int32_t __stdcall CloseHandle(void *handle)');
   const lastError = lib.func('uint32_t __stdcall GetLastError()');
-  const fail = (stage: string) => new ProcessControlError(processControlErrorCodes.scopeUnknown, { stage, nativeCode: Number(lastError()) });
+  const fail = (stage: string, nativeCode = Number(lastError())) => new ProcessControlError(processControlErrorCodes.scopeUnknown, { stage, nativeCode });
   let job: bigint | null = create(null, null), processHandle: bigint | null = null, actual: ProcessIdentity | undefined;
   if (!job) throw fail('CREATE_JOB');
   try {
@@ -49,32 +49,33 @@ export async function createWindowsJob(): Promise<ScopeBackend> {
     bind: async identity => { if (!actual || actual.pid !== identity.pid || actual.startToken !== identity.startToken) throw new ProcessControlError(processControlErrorCodes.scopeBinding, { reason: 'ROOT_IDENTITY' }); },
     empty: async (rootExited, budget) => {
       if (!job || !actual) throw fail('QUERY_STATE');
-      const rootIdentity = actual;
+      const rootPid = actual.pid;
       const value = { userTime: 0, kernelTime: 0, periodUser: 0, periodKernel: 0, faults: 0, total: 0, active: 0, terminated: 0 };
       const expected = rootExited ? 0 : 1;
       const handles = new Map<number, bigint>();
       const readMembers = () => {
         const list = { assigned: 0, count: 0, ids: Array<bigint>(4096).fill(0n) };
         if (!members(job, 3, list, k.sizeof(processList), null) || list.count !== list.assigned || list.count > 4096) throw fail('QUERY_JOB_MEMBERS');
-        return list;
+        const ids = Array.from(list.ids.slice(0, list.count), Number);
+        if (!rootExited && !ids.includes(rootPid)) throw fail('JOB_ROOT_MEMBERSHIP');
+        return ids;
       };
-      const rootOnly = (list: ReturnType<typeof readMembers>) => list.count === expected && (rootExited || Number(list.ids[0]) === rootIdentity.pid);
       const inspect = async () => { for (;;) {
         if (budget.signal?.aborted) throw new ProcessControlError(processControlErrorCodes.scopeUnknown, { stage: 'JOB_QUERY_ABORTED' });
         if (!query(job, 1, value, k.sizeof(accounting), null)) throw fail('QUERY_JOB');
         if (value.active === expected && handles.size === 0) return true;
-        const list = readMembers();
-        if (!rootExited && !list.ids.slice(0, list.count).some(pid => Number(pid) === rootIdentity.pid)) throw fail('JOB_ROOT_MEMBERSHIP');
-        for (const pid of list.ids.slice(0, list.count)) {
-          if (!rootExited && Number(pid) === rootIdentity.pid) continue;
-          if (handles.has(Number(pid))) continue;
-          const handle = open(0x1000 | 0x100000, 0, Number(pid));
+        for (const pid of readMembers()) {
+          if (!rootExited && pid === rootPid) continue;
+          if (handles.has(pid)) continue;
+          const handle = open(0x1000 | 0x100000, 0, pid);
           if (!handle) {
-            // 已删除实例不能打开；只有再次取得完整的 root-only Job 表才可继续，不以 PID 缺失代替关闭证据。
-            if (Number(lastError()) !== 87 || !rootOnly(readMembers())) throw fail('JOB_MEMBER_INSTANCE');
-            break;
+            // 只有完整清单确认该成员已消失才可跳过，其他成员及最终活跃计数仍须验证。
+            const nativeCode = Number(lastError());
+            if (nativeCode !== 87 || readMembers().includes(pid)) throw fail('JOB_MEMBER_INSTANCE', nativeCode);
+            if (performance.now() >= budget.deadline) break;
+            continue;
           }
-          handles.set(Number(pid), handle);
+          handles.set(pid, handle);
           const belongs = [0];
           if (!inJob(handle, job, belongs) || belongs[0] !== 1) throw fail('JOB_MEMBER_OWNERSHIP');
         }

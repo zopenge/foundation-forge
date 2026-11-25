@@ -1,4 +1,5 @@
 import { setTimeout as delay } from 'node:timers/promises';
+import { performance } from 'node:perf_hooks';
 import type { NodeHttpTransportOptions } from '@openge/forge-http-transport';
 import type { PrebuiltMarkerCandidate, PrebuiltReleaseState, ReleaseConfig, ReleaseDeployment, ReleaseTransport, VersionAliasAssignment, VersionAliasBinding, VersionAliasTransport } from '../contracts.js';
 import type { CandidateMarkerHeaders } from './candidate-marker-auth.js';
@@ -68,14 +69,17 @@ export async function assignPrebuiltVersionAliasOnce(config: ReleaseConfig, depl
 }
 export interface PrebuiltAccess {
   readonly transport: ReleaseTransport;
-  readonly candidateMarker?: (url: string, candidate: PrebuiltMarkerCandidate, signal: AbortSignal) => Promise<unknown>;
+  readonly candidateMarker?: (url: string, candidate: PrebuiltMarkerCandidate, signal: AbortSignal | undefined, deadline: number) => Promise<unknown>;
   apiRead(path: string, signal: AbortSignal | undefined, deadline?: number): Promise<unknown>;
   aliasRead(adapter: VersionAliasTransport, hostname: string, signal: AbortSignal | undefined, deadline?: number): Promise<VersionAliasBinding | undefined>;
 }
-function requestLimit(config: ReleaseConfig, deadline?: number): number {
-  const remaining = deadline === undefined ? config.limits.requestMs : deadline - Date.now();
+function deploymentTimeRemaining(deadline: number): number {
+  const remaining = deadline - Date.now();
   if (remaining <= 0) throw new ReleaseError('DEPLOYMENT_TIMEOUT');
-  return Math.min(config.limits.requestMs, remaining);
+  return remaining;
+}
+function requestLimit(config: ReleaseConfig, deadline?: number): number {
+  return deadline === undefined ? config.limits.requestMs : Math.min(config.limits.requestMs, deploymentTimeRemaining(deadline));
 }
 async function nativeRead<T>(execution: Execution, config: ReleaseConfig, operation: (signal: AbortSignal, timeoutMs: number) => Promise<T>,
   signal?: AbortSignal, deadline?: number): Promise<T> {
@@ -95,6 +99,36 @@ async function nativeAliasRead(execution: Execution, config: ReleaseConfig, host
     throw error;
   }
 }
+
+async function readCandidateMarker(config: ReleaseConfig, url: string, candidate: PrebuiltMarkerCandidate,
+  resolveHeaders: CandidateMarkerHeaders, http: NodeHttpTransportOptions | undefined, signal: AbortSignal | undefined, deadline: number) {
+  const credentialBudget = deploymentTimeRemaining(deadline);
+  let headers: Headers | undefined;
+  try { headers = await request(combined => resolveHeaders(candidate, combined), credentialBudget, signal); }
+  catch (error) {
+    if (error instanceof ReleaseError && error.code === 'VERCEL_API' && error.details.reason === 'REQUEST_TIMEOUT')
+      throw new ReleaseError('AUTH_REQUIRED', { reason: 'CANDIDATE_MARKER_AUTH_TIMEOUT' });
+    throw error;
+  }
+
+  assertActive(signal);
+  if (Date.now() >= deadline) throw new ReleaseError('AUTH_REQUIRED', { reason: 'CANDIDATE_MARKER_AUTH_TIMEOUT' });
+  const requestMs = requestLimit(config, deadline), requestDeadline = performance.now() + requestMs;
+  const timeout = AbortSignal.timeout(requestMs);
+  const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
+  // 超时取消真实请求，并等待 HTTP transport 完成清理后再返回诊断。
+  try {
+    const value = await readBuildInfo(url, combined, config.limits.maxOutputBytes, http, headers);
+    assertActive(signal);
+    if (performance.now() >= requestDeadline) throw new ReleaseError('VERCEL_API', { reason: 'REQUEST_TIMEOUT' });
+    timeout.throwIfAborted(); deploymentTimeRemaining(deadline);
+    return value;
+  } catch (error) {
+    assertActive(signal);
+    if (timeout.aborted) throw new ReleaseError('VERCEL_API', { reason: 'REQUEST_TIMEOUT' });
+    throw error;
+  }
+}
 /** 默认和 custom 在装配时显式选择；默认请求不会回退到 CLI 或 custom 路径。 */
 export function createPrebuiltTransport(execution: Execution, config: ReleaseConfig, writing: boolean, http?: NodeHttpTransportOptions,
   supplied?: ReleaseTransport, candidateMarkerHeaders?: CandidateMarkerHeaders, apiHttp?: NodeHttpTransportOptions): PrebuiltAccess {
@@ -110,11 +144,8 @@ export function createPrebuiltTransport(execution: Execution, config: ReleaseCon
     buildInfo: (url, signal) => readBuildInfo(url, signal, config.limits.maxOutputBytes, http),
     promote: (id, signal) => promotePrebuiltOnce(config, id, signal, apiHttp), ...(versionAlias ? { versionAlias } : {}) };
   return { transport, apiRead: (path, signal, deadline) => nativeApiRead(execution, config, path, signal, deadline, apiHttp),
-    ...(candidateMarkerHeaders ? { candidateMarker: async (url, candidate, signal) => {
-      const headers = await candidateMarkerHeaders(candidate, signal);
-      assertActive(signal);
-      return readBuildInfo(url, signal, config.limits.maxOutputBytes, http, headers);
-    } } : {}),
+    ...(candidateMarkerHeaders ? { candidateMarker: (url, candidate, signal, deadline) =>
+      readCandidateMarker(config, url, candidate, candidateMarkerHeaders, http, signal, deadline) } : {}),
     aliasRead: (_adapter, hostname, signal, deadline) => nativeAliasRead(execution, config, hostname, signal, deadline, apiHttp) };
 }
 const failedDeploymentStates = ['ERROR', 'CANCELED', 'CANCELLED'];
@@ -172,11 +203,11 @@ export class PrebuiltVerification {
     return deployment;
   }
   async marker(state: PrebuiltReleaseState, origin: string, deadline?: number): Promise<void> {
-    await this.assertMarker(state, origin, (url, signal) => this.transport.buildInfo(url, signal), deadline);
+    await this.assertMarker(state, origin, url => request(signal => this.transport.buildInfo(url, signal), this.requestMs(deadline), this.signal));
   }
-  private async assertMarker(state: PrebuiltReleaseState, origin: string, read: ReleaseTransport['buildInfo'], deadline?: number): Promise<void> {
+  private async assertMarker(state: PrebuiltReleaseState, origin: string, read: (url: string) => Promise<unknown>): Promise<void> {
     const url = new URL(prebuiltMarkerPath, origin); url.searchParams.set('artifact', state.artifactSha256);
-    const value = record(await request(signal => read(url.href, signal), this.requestMs(deadline), this.signal));
+    const value = record(await read(url.href));
     if (!matchesPrebuiltMarker(value, state)) throw new ReleaseError('ARTIFACT_CHANGED', { reason: 'REMOTE_MARKER' });
   }
   private async readyMarker(state: PrebuiltReleaseState, deployment: ReleaseDeployment, deadline: number): Promise<void> {
@@ -185,7 +216,7 @@ export class PrebuiltVerification {
     if (origin !== state.deploymentUrl || origin === new URL(this.config.vercel.productionUrl).origin
       || origin === versionAliasOrigin(this.config, state.sourceSha)) throw new ReleaseError('AUTH_REQUIRED', { reason: 'CANDIDATE_MARKER_ORIGIN' });
     const candidate = { deploymentId: deployment.id, origin, projectId: this.config.vercel.projectId, teamId: this.config.vercel.teamId };
-    await this.assertMarker(state, origin, (url, signal) => read(url, candidate, signal), deadline);
+    await this.assertMarker(state, origin, url => read(url, candidate, this.signal, deadline));
   }
   async ready(state: PrebuiltReleaseState, purpose?: 'status'): Promise<ReleaseDeployment> {
     const deadline = Date.now() + this.config.limits.deploymentMs;
